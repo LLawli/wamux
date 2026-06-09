@@ -9,3 +9,4 @@ pub mod isolate;
 pub mod jid_parse;
 pub mod media_transfer;
 pub mod messaging;
+pub(crate) mod wire_defaults;

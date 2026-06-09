@@ -1,9 +1,14 @@
-//! Validate sending VIDEO, AUDIO and STICKER over the socket. Video/audio are
-//! downloaded by this client and streamed inline (the core never fetches URLs);
-//! sticker is an inline generated 512x512 WebP.
+//! Validate sending VIDEO, AUDIO, STICKER and PTT (voice note) over the socket.
+//! Video/audio are downloaded by this client and streamed inline (the core never
+//! fetches URLs); sticker is an inline generated 512x512 WebP; ptt streams an
+//! OGG/Opus file (WhatsApp only renders voice notes for OGG/Opus).
 //!
-//! Usage: send_types [socket_path] [target_number]  (default /tmp/wamux.sock 5511999999999)
-//! Requires the daemon running with "pair-socket" paired. The core relays to the
+//! Usage: send_types [socket_path] [target_number] [all|video|audio|sticker|ptt]
+//!   defaults: /tmp/wamux.sock 5511999999999 all   ("all" excludes ptt: it needs a file)
+//! Env: WAMUX_REF       account external_ref (default "pair-socket")
+//!      WAMUX_PTT_FILE  OGG/Opus path for the ptt kind (default /tmp/wamux-ptt-test.ogg)
+//!      WAMUX_PTT_SECS  voice note duration shown in the bubble (default 3)
+//! Requires the daemon running with the account paired. The core relays to the
 //! JID verbatim (no routing); this client targets @c.us to dodge the PN->LID upgrade.
 
 use std::io::{Cursor, Read};
@@ -17,7 +22,7 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 
-const EXTERNAL_REF: &str = "pair-socket";
+const DEFAULT_REF: &str = "pair-socket";
 const VIDEO_URL: &str = "https://www.w3schools.com/html/mov_bbb.mp4";
 // WhatsApp does not process OGG/Vorbis; use MP3 (audio/mpeg) for an audio file.
 const AUDIO_URL: &str = "https://www.w3schools.com/html/horse.mp3";
@@ -36,7 +41,9 @@ async fn main() -> anyhow::Result<()> {
     let mut account = AccountServiceClient::new(channel.clone());
     let mut messaging = MessagingServiceClient::new(channel);
     let acct = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(EXTERNAL_REF.to_string())),
+        r#ref: Some(pb::account_ref::Ref::ExternalRef(
+            std::env::var("WAMUX_REF").unwrap_or_else(|_| DEFAULT_REF.to_string()),
+        )),
     };
 
     account
@@ -96,6 +103,31 @@ async fn main() -> anyhow::Result<()> {
                 "sticker",
                 "s.webp",
                 sticker_webp()?,
+                None,
+            )
+            .await,
+        );
+    }
+    // Explicit-only ("all" skips it): needs an OGG/Opus file on disk.
+    if kinds == "ptt" {
+        let path = std::env::var("WAMUX_PTT_FILE")
+            .unwrap_or_else(|_| "/tmp/wamux-ptt-test.ogg".to_string());
+        let secs: u32 = std::env::var("WAMUX_PTT_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3);
+        let data = std::fs::read(&path).map_err(|e| anyhow::anyhow!("read {path}: {e}"))?;
+        report(
+            "ptt",
+            send_inline(
+                &mut messaging,
+                &acct,
+                &target,
+                "audio/ogg; codecs=opus",
+                "audio",
+                "",
+                data,
+                Some(secs),
             )
             .await,
         );
@@ -132,9 +164,10 @@ async fn send_url(
     })
     .await
     .map_err(|e| e.to_string())??;
-    send_inline(m, acct, target, mime, media_type, "", data).await
+    send_inline(m, acct, target, mime, media_type, "", data, None).await
 }
 
+#[allow(clippy::too_many_arguments)] // flat wire-field list; a builder would obscure the proto shape
 async fn send_inline(
     m: &mut MessagingServiceClient<Channel>,
     acct: &pb::AccountRef,
@@ -143,6 +176,7 @@ async fn send_inline(
     media_type: &str,
     filename: &str,
     data: Vec<u8>,
+    ptt_seconds: Option<u32>,
 ) -> Result<String, String> {
     let header = pb::SendMediaChunk {
         part: Some(pb::send_media_chunk::Part::Header(pb::SendMediaHeader {
@@ -156,6 +190,10 @@ async fn send_inline(
             quote: None,
             media_type: media_type.to_string(),
             filename: filename.to_string(),
+            ptt: ptt_seconds.is_some(),
+            seconds: ptt_seconds.unwrap_or(0),
+            waveform: vec![],
+            ephemeral_seconds: 0,
         })),
     };
     let mut chunks = vec![header];

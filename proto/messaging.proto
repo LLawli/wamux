@@ -4,12 +4,32 @@ package wamux.v1;
 
 import "common.proto";
 
+// Link-preview card for an outgoing text. The EDGE fetches the URL and
+// supplies every field here; the core relays them verbatim and performs no
+// outbound HTTP (same doctrine as media: fetch policy and the SSRF surface
+// belong to the edge). Note: this waproto has no canonical_url field, so
+// matched_text doubles as the URL the preview belongs to.
+message LinkPreview {
+  string matched_text = 1;
+  string title = 2;
+  string description = 3;
+  bytes jpeg_thumbnail = 4;
+  // Numeric wa ExtendedTextMessage.PreviewType (0=NONE, 1=VIDEO, ...).
+  // 0 is the proto3 default and is relayed as "field absent".
+  int32 preview_type = 5;
+}
+
 message SendTextRequest {
   AccountRef account = 1;
   Jid to = 2;
   string text = 3;
   repeated Mention mentions = 4;
   QuoteContext quote = 5;
+  LinkPreview link_preview = 6;
+  // 0 = not ephemeral; otherwise relayed as ContextInfo.expiration. The edge
+  // supplies the chat's current disappearing-messages setting; the core never
+  // tracks or decides durations.
+  uint32 ephemeral_seconds = 7;
 }
 
 message SendResult {
@@ -31,6 +51,16 @@ message SendMediaHeader {
   QuoteContext quote = 8;
   string media_type = 9; // image|video|audio|document|sticker
   string filename = 10;
+  // Voice note (PTT): ptt=true plus seconds turn an audio into a voice note.
+  // WhatsApp only renders the PTT bubble for OGG/Opus payloads; the edge
+  // supplies the right bytes (the core does not transcode). waveform is the
+  // optional amplitude strip shown in the bubble.
+  bool ptt = 11;
+  uint32 seconds = 12;
+  bytes waveform = 13;
+  // 0 = not ephemeral; otherwise relayed as ContextInfo.expiration (the edge
+  // supplies the chat's setting, exactly as on SendTextRequest).
+  uint32 ephemeral_seconds = 14;
 }
 
 message SendMediaChunk {

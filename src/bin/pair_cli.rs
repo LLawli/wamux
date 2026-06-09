@@ -223,6 +223,8 @@ fn spawn_self_message(handle: Arc<AccountHandle>, target: String) {
                 "wamux: pareamento + envio OK ✅",
                 &[],
                 None,
+                None,
+                0,
             )
             .await
             {

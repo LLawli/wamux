@@ -35,8 +35,16 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let to = parse_jid(&require_jid(req.to)?)?;
-        let result =
-            messaging::send_text(&client, to, &req.text, &req.mentions, req.quote.as_ref()).await?;
+        let result = messaging::send_text(
+            &client,
+            to,
+            &req.text,
+            &req.mentions,
+            req.quote.as_ref(),
+            req.link_preview.as_ref(),
+            req.ephemeral_seconds,
+        )
+        .await?;
         Ok(Response::new(send_result_to_proto(result)))
     }
 

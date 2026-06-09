@@ -87,7 +87,8 @@ async fn main() -> anyhow::Result<()> {
     match found {
         Some(meta) => {
             println!("→ group: \"{}\"  jid={}", meta.subject, meta.id);
-            let result = messaging::send_text(&client, meta.id.clone(), &text, &[], None).await?;
+            let result =
+                messaging::send_text(&client, meta.id.clone(), &text, &[], None, None, 0).await?;
             println!("✅ sent to group, id={}", result.message_id);
         }
         None => {

@@ -381,6 +381,8 @@ async fn main() -> anyhow::Result<()> {
             text: "wamux e2e_all: texto ✅".to_string(),
             mentions: vec![],
             quote: None,
+            link_preview: None,
+            ephemeral_seconds: 0,
         })
         .await
     {
@@ -932,6 +934,10 @@ async fn send_media(
             quote: None,
             media_type: "image".to_string(),
             filename: "e2e.png".to_string(),
+            ptt: false,
+            seconds: 0,
+            waveform: vec![],
+            ephemeral_seconds: 0,
         })),
     };
     let mut chunks = vec![header];

@@ -95,6 +95,8 @@ async fn send_self(
         text: "wamux: pareamento via socket + envio OK ✅".to_string(),
         mentions: Vec::new(),
         quote: None,
+        link_preview: None,
+        ephemeral_seconds: 0,
     };
     match messaging.send_text(request).await {
         Ok(resp) => {

@@ -163,8 +163,13 @@ Gotchas conhecidos:
 - ~~Observabilidade: falta tower layer 1 linha/request e métricas reais.~~ **Feito (Sprint 2)**:
   `RequestObserveLayer` (1 linha/request: método/uid/latência/status) + facade `metrics` +
   `GetMetrics` real + `Check` (health/readiness) + logs JSON (`log_format`).
-- Eventos: `SubscribeEvents` “todas as contas” não inclui contas criadas **após** a inscrição;
-  sem filtro por tipo no core (a borda filtra).
+- ~~Eventos: `SubscribeEvents` “todas as contas” não inclui contas criadas **após** a inscrição.~~
+  **Feito (Sprint 5, 2026-06-09)**: assinatura “todas” é **dinâmica** — broadcast
+  `subscribe_created` no registry + follower no `EventSvc` (inscreve **antes** do snapshot e
+  dedupa por uuid); o stream “todas” agora fica **aberto indefinidamente**; lag no canal de
+  criação (>64 creates em rajada) vira marcador `gap` (a borda re-inscreve ou `ListAccounts`).
+  Teste de integração `tests/event_subscription.rs`.
+  Sem filtro por tipo no core (a borda filtra).
 - ~~Sem **CI**; poucos testes unitários.~~ **Feito (Sprint 4)**: CI local `scripts/ci.sh`
   (sem GitHub, por decisão) + 56 testes unitários no lib (+44). Sem `.sqlx`/`sqlx prepare`:
   as queries são runtime, não macros.
@@ -287,10 +292,30 @@ Gotchas conhecidos:
   vazio→None, send_result_to_proto; media_transfer 5 — case-sensitive pinado, build_media_message
   image/document; groups 2 — metadata_json round-trip).
 
-**Sprint 5 — Completude de features**
-- **Nota de voz (PTT)**: OGG/Opus + `ptt`/`seconds` no `SendMedia`; link preview; mensagens efêmeras.
-  (History sync: **feito** — backfill por conexão + `FetchMessageHistory` sob demanda, emitido como `HistorySyncEvent`.)
-- `SubscribeEvents`: inclusão dinâmica de novas contas na assinatura “todas”; filtro por tipo opcional.
+**Sprint 5 — Completude de features** ✅ (2026-06-09)
+- ✅ **Nota de voz (PTT)**: `SendMediaHeader` ganha `ptt`/`seconds`/`waveform` (relay verbatim;
+  forma ausente pinada em teste: ptt=false→None, seconds=0→None, waveform vazio→None). WhatsApp
+  só renderiza PTT para **OGG/Opus** — os bytes certos são responsabilidade da borda. **Validado
+  ao vivo**: `WAMUX_REF=m4-real send_types /tmp/wamux.sock 5511999999999 ptt` (OGG/Opus 3 s via
+  `WAMUX_PTT_FILE`) entregue ao primário sobre o socket.
+- ✅ **Link preview**: novo `LinkPreview` no `SendTextRequest` (`matched_text`/`title`/`description`/
+  `jpeg_thumbnail`/`preview_type`). A **borda** busca a URL e fornece os campos; o core relaya
+  verbatim (sem HTTP de saída — mesma doutrina da mídia). Este waproto não tem `canonical_url`;
+  `matched_text` é a URL. `preview_type=0` relaya como campo ausente (forma lib-natural).
+- ✅ **Mensagens efêmeras**: `ephemeral_seconds` no `SendTextRequest` e no `SendMediaHeader` →
+  `ContextInfo.expiration` (0 = não-efêmera; o valor — ex.: a configuração do chat — vem da borda).
+  Texto: `build_text_message` puro (conversation simples só quando nada extra; senão
+  ExtendedTextMessage). Mídia: contexto efêmero nos 5 tipos; mídia não-efêmera fica byte-idêntica.
+- ✅ `SubscribeEvents`: inclusão dinâmica de novas contas na assinatura “todas” — o registry emite
+  broadcast de contas criadas; o serviço assina **antes** do snapshot e dedupe por uuid (race
+  comentada). O stream “all” fica aberto indefinidamente (contrato no proto); lag no canal de
+  criações (>64) emite gap apontando re-subscribe/ListAccounts. Teste de integração
+  `tests/event_subscription.rs` cobre o caminho dinâmico e o snapshot.
+  Filtro por tipo **descartado** pelo litmus de pureza: a borda filtra com o que já recebe.
+- Refactors de apoio: `build_media_message(header, upload)` (assinatura wire-shaped), builders
+  por tipo `*_submessage`, `domain/wire_defaults.rs` (proto3 vazio→None compartilhado).
+  +15 testes unit (70 no lib) + 1 integração nova. `send_types` ganha o kind `ptt` + `WAMUX_REF`.
+  (History sync: **feito** — backfill por conexão + `FetchMessageHistory` sob demanda.)
 
 **Sprint 6 — A borda (projeto separado)**
 - Camada HTTP/auth/permissões consumindo o socket; webhooks; filtragem por usuário.

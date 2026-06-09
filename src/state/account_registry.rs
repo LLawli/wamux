@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
@@ -71,11 +72,16 @@ pub struct AccountRegistry {
     connected: Arc<AtomicUsize>,
     handles: DashMap<Uuid, Arc<AccountHandle>>,
     by_external: DashMap<String, Uuid>,
+    /// Fan-out of newly inserted handles so all-accounts event subscriptions can
+    /// attach a forwarder dynamically. Capacity 64 is plenty: account creation
+    /// is a rare, edge-driven action, never a hot path.
+    created_tx: broadcast::Sender<Arc<AccountHandle>>,
 }
 
 impl AccountRegistry {
     pub fn new(pool: PgPool, tuning: RegistryTuning) -> Self {
         let accounts = Accounts::new(pool.clone());
+        let (created_tx, _) = broadcast::channel(64);
         Self {
             pool,
             accounts,
@@ -83,6 +89,7 @@ impl AccountRegistry {
             connected: Arc::new(AtomicUsize::new(0)),
             handles: DashMap::new(),
             by_external: DashMap::new(),
+            created_tx,
         }
     }
 
@@ -101,6 +108,9 @@ impl AccountRegistry {
             self.by_external.insert(external.clone(), handle.uuid);
         }
         self.handles.insert(handle.uuid, handle.clone());
+        // Notify AFTER registering, so a receiver can immediately resolve the
+        // handle. No receivers is the normal case (no all-accounts subscriber).
+        let _ = self.created_tx.send(handle.clone());
         handle
     }
 
@@ -128,6 +138,12 @@ impl AccountRegistry {
 
     pub fn list(&self) -> Vec<Arc<AccountHandle>> {
         self.handles.iter().map(|h| h.clone()).collect()
+    }
+
+    /// Watch handles inserted after this call. All-accounts event subscriptions
+    /// combine this with `list()` to get dynamic membership (Sprint 5).
+    pub fn subscribe_created(&self) -> broadcast::Receiver<Arc<AccountHandle>> {
+        self.created_tx.subscribe()
     }
 
     /// Resolve a proto `AccountRef` (uuid or external_ref) to a handle.

@@ -8,6 +8,10 @@ import "account.proto";
 message SubscribeRequest {
   oneof selector {
     AccountRef account = 1;
+    // "all" is DYNAMIC: it includes accounts created after subscribing, so the
+    // stream stays open indefinitely. Under an extreme burst of creates the
+    // core may emit a `gap` RawEvent meaning some newly created accounts are
+    // missing from the stream: re-subscribe or reconcile via ListAccounts.
     Empty all_accounts = 2;
   }
   // 0 = live only; N = replay up to N buffered events for quick reconnect.
