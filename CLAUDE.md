@@ -80,6 +80,8 @@ primitives the core already exposes?" If yes, it does not belong in the core.
 - Postgres for tests/dev (docker): `docker run -d --name wamux-pg -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux -e POSTGRES_DB=wamux -p 5433:5432 postgres:16`
 - Poke the socket by hand:         `grpcurl -unix -plaintext /run/wamux.sock list`
   (needs `grpcurl` installed; reflection is on by default in dev)
+- CI (all gates, one command):     `scripts/ci.sh` (add `--full` for the #[ignore] scale tests).
+  There is no hosted CI; this script is the pipeline — run it before declaring work done.
 
 ## Code style
 - Functions: 4-20 lines. Split if longer.

@@ -207,3 +207,49 @@ pub async fn list_participating(client: Arc<Client>) -> Result<Vec<pb::GroupSumm
     summaries.sort_by(|a, b| a.subject.cmp(&b.subject));
     Ok(summaries)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use whatsapp_rust::features::{GroupParticipant, ParticipantType};
+    use whatsapp_rust::{GroupMetadata, Jid};
+
+    use super::*;
+
+    #[test]
+    fn metadata_json_round_trips_key_fields() {
+        let member = Jid::from_str("5511999999999@s.whatsapp.net").unwrap();
+        let md = GroupMetadata {
+            id: Jid::from_str("120363001234567890@g.us").unwrap(),
+            subject: "Test Group".to_string(),
+            description: Some("a description".to_string()),
+            participants: vec![GroupParticipant {
+                jid: member.clone(),
+                phone_number: None,
+                participant_type: ParticipantType::Member,
+            }],
+            ..GroupMetadata::default()
+        };
+        let bytes = metadata_json(&md);
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["id"], "120363001234567890@g.us");
+        assert_eq!(value["subject"], "Test Group");
+        assert_eq!(value["description"], "a description");
+        assert_eq!(value["participants"][0], member.to_string());
+    }
+
+    // None description must serialize as JSON null (not be omitted), so the
+    // edge can distinguish "no description" without schema guessing.
+    #[test]
+    fn metadata_json_none_description_is_null() {
+        let md = GroupMetadata {
+            id: Jid::from_str("120363009876543210@g.us").unwrap(),
+            subject: "No Desc".to_string(),
+            ..GroupMetadata::default()
+        };
+        let value: serde_json::Value = serde_json::from_slice(&metadata_json(&md)).unwrap();
+        assert!(value["description"].is_null());
+        assert_eq!(value["participants"].as_array().unwrap().len(), 0);
+    }
+}

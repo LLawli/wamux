@@ -198,3 +198,63 @@ pub fn send_result_to_proto(result: SendResult) -> pb::SendResult {
         server_timestamp: 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn send_result_maps_to_proto_key_with_from_me() {
+        let result = SendResult {
+            message_id: "3EB0ABCDEF".to_string(),
+            to: Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
+        };
+        let proto = send_result_to_proto(result);
+        let key = proto.key.expect("key must be set");
+        assert_eq!(key.remote_jid, "5511999999999@s.whatsapp.net");
+        assert_eq!(key.id, "3EB0ABCDEF");
+        assert!(key.from_me);
+        assert!(key.participant.is_empty());
+        // The lib's SendResult carries no server timestamp; we pin 0 so the
+        // edge knows the field is a placeholder, not a real clock reading.
+        assert_eq!(proto.server_timestamp, 0);
+    }
+
+    #[test]
+    fn proto_key_with_participant_maps_to_some() {
+        let key = pb::MessageKey {
+            remote_jid: "120363001234567890@g.us".to_string(),
+            id: "MSG-1".to_string(),
+            from_me: false,
+            participant: "5511888888888@s.whatsapp.net".to_string(),
+        };
+        let wa_key = proto_key_to_wa(&key);
+        assert_eq!(
+            wa_key.remote_jid.as_deref(),
+            Some("120363001234567890@g.us")
+        );
+        assert_eq!(wa_key.id.as_deref(), Some("MSG-1"));
+        assert_eq!(wa_key.from_me, Some(false));
+        assert_eq!(
+            wa_key.participant.as_deref(),
+            Some("5511888888888@s.whatsapp.net")
+        );
+    }
+
+    // Proto3 has no optional string here: empty string is the wire encoding
+    // of "no participant", so it must become None, never Some("").
+    #[test]
+    fn proto_key_empty_participant_maps_to_none() {
+        let key = pb::MessageKey {
+            remote_jid: "5511999999999@s.whatsapp.net".to_string(),
+            id: "MSG-2".to_string(),
+            from_me: true,
+            participant: String::new(),
+        };
+        let wa_key = proto_key_to_wa(&key);
+        assert_eq!(wa_key.participant, None);
+        assert_eq!(wa_key.from_me, Some(true));
+    }
+}

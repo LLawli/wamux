@@ -143,3 +143,89 @@ pub async fn download(
         .await
         .map_err(client_err)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_type_maps_each_accepted_string() {
+        assert_eq!(media_type("image").unwrap(), MediaType::Image);
+        assert_eq!(media_type("video").unwrap(), MediaType::Video);
+        assert_eq!(media_type("audio").unwrap(), MediaType::Audio);
+        assert_eq!(media_type("document").unwrap(), MediaType::Document);
+        assert_eq!(media_type("sticker").unwrap(), MediaType::Sticker);
+    }
+
+    #[test]
+    fn media_type_unknown_value_is_invalid_argument_with_value() {
+        let err = media_type("gif").unwrap_err();
+        match err {
+            WamuxError::InvalidArgument(msg) => assert!(msg.contains("gif"), "got: {msg}"),
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    // The match arms are exact lowercase literals: "Image" must be rejected.
+    // Pinned so a future "helpful" case-fold doesn't sneak policy into the core.
+    #[test]
+    fn media_type_is_case_sensitive() {
+        assert!(matches!(
+            media_type("Image"),
+            Err(WamuxError::InvalidArgument(_))
+        ));
+    }
+
+    fn fake_upload() -> UploadResponse {
+        UploadResponse {
+            url: "https://mmg.whatsapp.net/v/t62.7118-24/enc".to_string(),
+            direct_path: "/v/t62.7118-24/enc".to_string(),
+            media_key: [1u8; 32],
+            file_enc_sha256: [2u8; 32],
+            file_sha256: [3u8; 32],
+            file_length: 1234,
+            media_key_timestamp: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn image_message_carries_upload_mime_and_caption() {
+        let message = build_media_message(
+            "image",
+            fake_upload(),
+            Some("image/jpeg".to_string()),
+            Some("a caption".to_string()),
+            None,
+        );
+        let img = message.image_message.expect("image_message must be set");
+        assert_eq!(img.url.as_deref(), Some(fake_upload().url.as_str()));
+        assert_eq!(img.direct_path.as_deref(), Some("/v/t62.7118-24/enc"));
+        assert_eq!(img.media_key.as_deref(), Some(&[1u8; 32][..]));
+        assert_eq!(img.file_sha256.as_deref(), Some(&[3u8; 32][..]));
+        assert_eq!(img.file_enc_sha256.as_deref(), Some(&[2u8; 32][..]));
+        assert_eq!(img.file_length, Some(1234));
+        assert_eq!(img.mimetype.as_deref(), Some("image/jpeg"));
+        assert_eq!(img.caption.as_deref(), Some("a caption"));
+    }
+
+    #[test]
+    fn document_message_carries_filename_and_caption() {
+        let message = build_media_message(
+            "document",
+            fake_upload(),
+            Some("application/pdf".to_string()),
+            Some("the report".to_string()),
+            Some("report.pdf".to_string()),
+        );
+        let doc = message
+            .document_message
+            .expect("document_message must be set");
+        assert_eq!(doc.mimetype.as_deref(), Some("application/pdf"));
+        assert_eq!(doc.file_name.as_deref(), Some("report.pdf"));
+        assert_eq!(doc.caption.as_deref(), Some("the report"));
+        assert_eq!(doc.file_length, Some(1234));
+        // The other sub-messages must stay unset: exactly one media branch.
+        assert!(message.image_message.is_none());
+        assert!(message.video_message.is_none());
+    }
+}

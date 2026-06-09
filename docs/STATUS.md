@@ -165,7 +165,9 @@ Gotchas conhecidos:
   `GetMetrics` real + `Check` (health/readiness) + logs JSON (`log_format`).
 - Eventos: `SubscribeEvents` “todas as contas” não inclui contas criadas **após** a inscrição;
   sem filtro por tipo no core (a borda filtra).
-- Sem **CI** (cache `.sqlx` offline + Postgres de serviço); poucos testes unitários.
+- ~~Sem **CI**; poucos testes unitários.~~ **Feito (Sprint 4)**: CI local `scripts/ci.sh`
+  (sem GitHub, por decisão) + 56 testes unitários no lib (+44). Sem `.sqlx`/`sqlx prepare`:
+  as queries são runtime, não macros.
 - ~~**Escala** não foi stress-testada.~~ **Sprint 3**: supervisor por conta (`is_running`
   verdadeiro), budget de conexões (`ResourceExhausted`), history sync fora do ring, stop
   gracioso, contrato de gap explícito; load test sintético ~200 contas (`#[ignore]`) prova
@@ -265,10 +267,25 @@ Gotchas conhecidos:
   `client.is_logged_in()` (não o `Connected` de socket). Rodar:
   `cargo run --features stress --bin stress_live -- m4-real 199 3` (reusa a conta pareada, sem QR).
 
-**Sprint 4 — CI & qualidade**
-- GitHub Actions (serviço Postgres + `cargo sqlx prepare` offline + fmt/clippy/test como gates).
-- Mais testes unitários (round-trips de serialização do storage; cobertura de `event_mapping`);
-  testes de regressão dos bugs corrigidos (PN→LID, etc.).
+**Sprint 4 — CI & qualidade** ✅ (2026-06-09)
+- ✅ **Repositório git local** (`main`; decisão: **sem GitHub**) com commit baseline do fim do Sprint 3.
+- ✅ **CI local em vez de GitHub Actions**: `scripts/ci.sh` é O pipeline — fmt --check, clippy
+  (default **e** `--features stress`, all-targets, `-D warnings`), `cargo test` (unit+integração),
+  stress rápidos (M1/M2a/M2b); `--full` adiciona os `#[ignore]` (load HOL/gap, keepalive ~25 s,
+  M3 com `STRESS_ACCOUNTS`). Checagem early de Postgres com erro acionável. Registrado no CLAUDE.md.
+  (O passo `cargo sqlx prepare`/cache `.sqlx` da proposta caiu: as ~60 queries são **runtime**
+  `sqlx::query`, sem macros — só precisa do Postgres de serviço.)
+- ✅ **+44 testes unitários** (12 → 56 no lib): `event_mapping` 2→24 (mensagem texto/menção/quote/
+  reação/mídia×5, receipt, undecryptable, presence/chat-presence, history_sync passthrough, estados
+  de conexão, pairing, dropped Notification/RawNode→None, catch-all Raw+variant_name) — test mod
+  extraído p/ `event_mapping_tests.rs` (regra de 500 linhas); **storage blob round-trips** 6 novos
+  em `storage/postgres/mod.rs` (Device bincode com pn/push_name/key material, AppStateSyncKey,
+  HashState com hash [u8;128], Vec<DeviceInfo> serde_json espelhando protocol_store, determinismo
+  do encode, garbage→StoreError::Serialization sem panic; nota: `device_props` é #[serde(skip)] by
+  design — o load() restaura); **domain puro** 16 novos (jid_parse 6 — inclui **regressão `@c.us`
+  → Server::Legacy + to_string verbatim**, pureza PN→LID; messaging 3 — proto_key_to_wa participant
+  vazio→None, send_result_to_proto; media_transfer 5 — case-sensitive pinado, build_media_message
+  image/document; groups 2 — metadata_json round-trip).
 
 **Sprint 5 — Completude de features**
 - **Nota de voz (PTT)**: OGG/Opus + `ptt`/`seconds` no `SendMedia`; link preview; mensagens efêmeras.

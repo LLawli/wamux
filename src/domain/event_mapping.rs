@@ -291,42 +291,7 @@ fn variant_name(event: &Event) -> String {
         .to_string()
 }
 
+// Tests live in a sibling file to keep this one under the 500-line rule.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn maps_pairing_qr_code() {
-        let event = Event::PairingQrCode {
-            code: "QR-DATA".to_string(),
-            timeout: Duration::from_secs(60),
-        };
-        match map_event(&event) {
-            Some(pb::event_envelope::Event::Pairing(update)) => {
-                assert_eq!(
-                    update.event,
-                    Some(pb::pairing_update::Event::QrCode("QR-DATA".into()))
-                );
-            }
-            other => panic!("expected pairing qr, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn maps_pairing_code() {
-        let event = Event::PairingCode {
-            code: "12345678".to_string(),
-            timeout: Duration::from_secs(180),
-        };
-        match map_event(&event) {
-            Some(pb::event_envelope::Event::Pairing(update)) => {
-                assert_eq!(
-                    update.event,
-                    Some(pb::pairing_update::Event::PairCode("12345678".into()))
-                );
-            }
-            other => panic!("expected pairing code, got {other:?}"),
-        }
-    }
-}
+#[path = "event_mapping_tests.rs"]
+mod tests;
