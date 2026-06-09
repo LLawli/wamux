@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+message SendTextRequest {
+  AccountRef account = 1;
+  Jid to = 2;
+  string text = 3;
+  repeated Mention mentions = 4;
+  QuoteContext quote = 5;
+}
+
+message SendResult {
+  MessageKey key = 1;
+  int64 server_timestamp = 2;
+}
+
+message SendMediaHeader {
+  AccountRef account = 1;
+  Jid to = 2;
+  string mime_type = 3;
+  // Media bytes always stream inline as chunks after this header. The core does
+  // not fetch URLs (no outbound HTTP / SSRF surface): the edge downloads any
+  // remote media itself and streams the bytes.
+  reserved 4, 5;
+  reserved "inline", "url", "source";
+  string caption = 6;
+  repeated Mention mentions = 7;
+  QuoteContext quote = 8;
+  string media_type = 9; // image|video|audio|document|sticker
+  string filename = 10;
+}
+
+message SendMediaChunk {
+  oneof part {
+    SendMediaHeader header = 1;
+    bytes chunk = 2;
+  }
+}
+
+message SendReactionRequest {
+  AccountRef account = 1;
+  MessageKey target = 2;
+  string emoji = 3; // empty string removes the reaction
+}
+
+message EditMessageRequest {
+  AccountRef account = 1;
+  MessageKey target = 2;
+  string new_text = 3;
+}
+
+message DeleteMessageRequest {
+  AccountRef account = 1;
+  MessageKey target = 2;
+  bool for_everyone = 3; // true=revoke for all, false=delete for me
+}
+
+// On-demand history fetch (PDO HistorySyncOnDemand): asks the phone for `count`
+// messages OLDER than the anchor message the edge already has. The answer
+// arrives asynchronously on the event stream as HistorySyncEvent(s) whose
+// session_id matches the response below. Requires a live connection.
+message FetchMessageHistoryRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  string oldest_msg_id = 3;          // anchor: oldest message the edge holds
+  bool oldest_msg_from_me = 4;
+  int64 oldest_msg_timestamp_ms = 5;
+  int32 count = 6;                   // how many older messages to request
+}
+
+message FetchMessageHistoryResponse {
+  string session_id = 1;             // correlate with HistorySyncEvent.session_id
+}
+
+message SendPresenceRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  string state = 3; // available|unavailable|composing|recording|paused
+}
+
+message MarkReadRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  repeated string message_ids = 3;
+  Jid sender = 4;
+}
+
+service MessagingService {
+  rpc SendText(SendTextRequest) returns (SendResult);
+  rpc SendMedia(stream SendMediaChunk) returns (SendResult);
+  rpc SendReaction(SendReactionRequest) returns (SendResult);
+  rpc EditMessage(EditMessageRequest) returns (SendResult);
+  rpc DeleteMessage(DeleteMessageRequest) returns (SendResult);
+  rpc FetchMessageHistory(FetchMessageHistoryRequest) returns (FetchMessageHistoryResponse);
+  rpc SendPresence(SendPresenceRequest) returns (Empty);
+  rpc MarkRead(MarkReadRequest) returns (Empty);
+}

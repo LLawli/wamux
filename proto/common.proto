@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+// Empty reply (kept local so the contract needs no well-known-types import).
+message Empty {}
+
+// How a client names an account: the core's canonical UUID, or the optional
+// client-supplied external reference.
+message AccountRef {
+  oneof ref {
+    string uuid = 1;
+    string external_ref = 2;
+  }
+}
+
+// A WhatsApp JID, e.g. "5511999999999@s.whatsapp.net" or a group/lid jid.
+message Jid {
+  string value = 1;
+}
+
+message MessageKey {
+  string remote_jid = 1;  // chat jid
+  string id = 2;          // message id
+  bool from_me = 3;
+  string participant = 4; // sender jid inside a group (optional)
+}
+
+message Mention {
+  string jid = 1;
+}
+
+message QuoteContext {
+  MessageKey quoted = 1;
+  string participant = 2;
+}
+
+enum ConnectionState {
+  CONNECTION_STATE_UNSPECIFIED = 0;
+  DISCONNECTED = 1;
+  CONNECTING = 2;
+  CONNECTED = 3;
+  LOGGED_OUT = 4;
+  BANNED = 5;
+}
+
+// Carried on inbound media message events; passed back verbatim to DownloadMedia.
+message MediaDescriptor {
+  string direct_path = 1;
+  bytes media_key = 2;
+  bytes file_enc_sha256 = 3;
+  bytes file_sha256 = 4;
+  uint64 file_length = 5;
+  string mime_type = 6;
+  string media_type = 7; // image|video|audio|document|sticker
+}

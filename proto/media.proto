@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+message DownloadMediaRequest {
+  AccountRef account = 1;
+  MediaDescriptor descriptor = 2;
+}
+
+message MediaMeta {
+  string mime_type = 1;
+  uint64 file_length = 2;
+}
+
+message MediaChunk {
+  oneof part {
+    MediaMeta meta = 1;   // first frame
+    bytes chunk = 2;      // decrypted bytes
+  }
+}
+
+service MediaService {
+  rpc DownloadMedia(DownloadMediaRequest) returns (stream MediaChunk);
+}

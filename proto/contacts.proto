@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+message CheckOnWhatsAppRequest {
+  AccountRef account = 1;
+  // Full JIDs to check, e.g. "<number>@s.whatsapp.net". The core does not guess
+  // or normalize: the edge picks the namespace and sends well-formed JIDs.
+  repeated string jids = 2;
+}
+
+message CheckResult {
+  string query = 1;
+  bool is_on_whatsapp = 2;
+  string jid = 3;
+}
+
+message CheckOnWhatsAppResponse {
+  repeated CheckResult results = 1;
+}
+
+message JidRequest {
+  AccountRef account = 1;
+  string jid = 2;
+}
+
+message ProfilePictureResponse {
+  string url = 1;
+  bytes image = 2;
+}
+
+message SetProfilePictureRequest {
+  AccountRef account = 1;
+  bytes image = 2;
+}
+
+message PushNameResponse {
+  string push_name = 1;
+}
+
+message SetPushNameRequest {
+  AccountRef account = 1;
+  string push_name = 2;
+}
+
+message AboutResponse {
+  string about = 1;
+}
+
+message BusinessProfileResponse {
+  bytes raw = 1;
+}
+
+message SubscribePresenceRequest {
+  AccountRef account = 1;
+  string jid = 2;
+}
+
+service ContactService {
+  rpc CheckOnWhatsApp(CheckOnWhatsAppRequest) returns (CheckOnWhatsAppResponse);
+  rpc GetProfilePicture(JidRequest) returns (ProfilePictureResponse);
+  rpc SetProfilePicture(SetProfilePictureRequest) returns (Empty);
+  rpc RemoveProfilePicture(AccountRef) returns (Empty);
+  rpc GetPushName(JidRequest) returns (PushNameResponse);
+  rpc SetPushName(SetPushNameRequest) returns (Empty);
+  rpc GetAbout(JidRequest) returns (AboutResponse);
+  rpc GetBusinessProfile(JidRequest) returns (BusinessProfileResponse);
+  rpc SubscribePresence(SubscribePresenceRequest) returns (Empty);
+}

@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+message CreateGroupRequest {
+  AccountRef account = 1;
+  string subject = 2;
+  repeated string participants = 3;
+}
+
+message GroupJidResponse {
+  string group_jid = 1;
+  bytes metadata = 2;
+}
+
+message ParticipantsRequest {
+  AccountRef account = 1;
+  string group_jid = 2;
+  repeated string participants = 3;
+}
+
+message GroupTextRequest {
+  AccountRef account = 1;
+  string group_jid = 2;
+  string text = 3;
+}
+
+message GroupRef {
+  AccountRef account = 1;
+  string group_jid = 2;
+}
+
+message GroupMetadataResponse {
+  bytes metadata = 1;
+}
+
+message InviteLinkResponse {
+  string link = 1;
+}
+
+message JoinWithInviteRequest {
+  AccountRef account = 1;
+  string code = 2;
+}
+
+message GroupSummary {
+  string jid = 1;
+  string subject = 2;
+  uint32 participants = 3;
+  bytes metadata = 4; // projected JSON (id, subject, description, participants)
+}
+
+message ListGroupsResponse {
+  repeated GroupSummary groups = 1;
+}
+
+service GroupService {
+  rpc CreateGroup(CreateGroupRequest) returns (GroupJidResponse);
+  rpc AddParticipants(ParticipantsRequest) returns (Empty);
+  rpc RemoveParticipants(ParticipantsRequest) returns (Empty);
+  rpc PromoteAdmins(ParticipantsRequest) returns (Empty);
+  rpc DemoteAdmins(ParticipantsRequest) returns (Empty);
+  rpc SetGroupSubject(GroupTextRequest) returns (Empty);
+  rpc SetGroupDescription(GroupTextRequest) returns (Empty);
+  rpc GetGroupMetadata(GroupRef) returns (GroupMetadataResponse);
+  rpc GetInviteLink(GroupRef) returns (InviteLinkResponse);
+  rpc RevokeInviteLink(GroupRef) returns (InviteLinkResponse);
+  rpc JoinWithInvite(JoinWithInviteRequest) returns (GroupJidResponse);
+  rpc ListParticipating(AccountRef) returns (ListGroupsResponse);
+  rpc LeaveGroup(GroupRef) returns (Empty);
+}

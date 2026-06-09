@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+message CreateAccountRequest {
+  optional string external_ref = 1;
+  reserved 2; // was ConnectionPolicy policy (removed: connect is edge-driven)
+  reserved "policy";
+}
+
+message Account {
+  string uuid = 1;
+  string external_ref = 2;
+  reserved 3; // was ConnectionPolicy policy (removed: connect is edge-driven)
+  reserved "policy";
+  ConnectionState state = 4;
+  Jid jid = 5;
+  string push_name = 6;
+}
+
+message ListAccountsRequest {}
+
+message ListAccountsResponse {
+  repeated Account accounts = 1;
+}
+
+message AccountStatus {
+  string uuid = 1;
+  ConnectionState state = 2;
+  Jid jid = 3;
+  string push_name = 4;
+  int64 paired_at = 5;
+}
+
+message PairWithQrRequest {
+  AccountRef account = 1;
+  // true = connect with history backfill ON so the InitialBootstrap dump the
+  // phone pushes right after linking is emitted as HistorySyncEvent(s).
+  bool backfill_history = 2;
+}
+
+message PairWithCodeRequest {
+  AccountRef account = 1;
+  string phone_number = 2;
+  optional string custom_code = 3;
+  bool backfill_history = 4; // see PairWithQrRequest.backfill_history
+}
+
+message ConnectAccountRequest {
+  AccountRef account = 1;
+  // false (default) = skip the phone's history dump (relay-pure default).
+  // true = process and emit it as HistorySyncEvent(s) for backfill (e.g. a CRM).
+  bool backfill_history = 2;
+}
+
+message PairedInfo {
+  Jid jid = 1;
+  string push_name = 2;
+}
+
+message PairingError {
+  string message = 1;
+}
+
+// Streamed during pairing: QR refreshes, the pair code, then success or error.
+message PairingUpdate {
+  oneof event {
+    string qr_code = 1;
+    string pair_code = 2;
+    PairedInfo paired = 3;
+    PairingError error = 4;
+  }
+}
+
+service AccountService {
+  rpc CreateAccount(CreateAccountRequest) returns (Account);
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+  rpc GetAccountStatus(AccountRef) returns (AccountStatus);
+  rpc PairWithQr(PairWithQrRequest) returns (stream PairingUpdate);
+  rpc PairWithCode(PairWithCodeRequest) returns (stream PairingUpdate);
+  rpc ConnectAccount(ConnectAccountRequest) returns (AccountStatus);
+  rpc DisconnectAccount(AccountRef) returns (AccountStatus);
+  rpc Logout(AccountRef) returns (Empty);
+  rpc DeleteAccount(AccountRef) returns (Empty);
+}

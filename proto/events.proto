@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+import "account.proto";
+
+message SubscribeRequest {
+  oneof selector {
+    AccountRef account = 1;
+    Empty all_accounts = 2;
+  }
+  // 0 = live only; N = replay up to N buffered events for quick reconnect.
+  uint32 replay_from_ring = 3;
+}
+
+message InboundMessage {
+  MessageKey key = 1;
+  string chat = 2;
+  string sender = 3;
+  int64 timestamp = 4;
+  string push_name = 5;
+  string text = 6;
+  QuoteContext quote = 7;
+  repeated Mention mentions = 8;
+  MediaDescriptor media = 9;        // set for media messages
+  string caption = 10;
+  string reaction = 11;             // set for reaction messages
+  MessageKey reaction_target = 12;
+  bool is_edit = 13;
+  bool is_delete = 14;
+  bytes raw_message = 20;           // serialized wa.Message for advanced consumers
+}
+
+message ReceiptEvent {
+  string chat = 1;
+  string sender = 2;
+  repeated string message_ids = 3;
+  string type = 4;                  // delivered|read|played
+  int64 timestamp = 5;
+}
+
+message UndecryptableEvent {
+  string chat = 1;
+  string sender = 2;
+  string reason = 3;
+}
+
+message ConnectionStateChanged {
+  ConnectionState state = 1;
+  string detail = 2;
+}
+
+message PresenceUpdate {
+  string jid = 1;
+  bool online = 2;
+  int64 last_seen = 3;
+  string chat_state = 4;            // composing|recording|paused|""
+}
+
+message GroupUpdate {
+  string group_jid = 1;
+  string kind = 2;
+  bytes raw = 3;
+}
+
+message PushNameUpdate {
+  string jid = 1;
+  string push_name = 2;
+}
+
+message ContactUpdate {
+  string jid = 1;
+  string kind = 2;
+  bytes raw = 3;
+}
+
+// History-sync chunk, only emitted when the account connected with backfill
+// enabled (ConnectAccountRequest.backfill_history) or in answer to
+// FetchMessageHistory. The core relays the blob verbatim: the edge decodes
+// `raw` (a `wa.HistorySync` protobuf) itself. Delivered in chunks.
+message HistorySyncEvent {
+  int32 sync_type = 1;            // wa.HistorySync.HistorySyncType (InitialBootstrap|Recent|PushName|OnDemand|...)
+  optional uint32 chunk_order = 2;
+  optional uint32 progress = 3;   // 0-100
+  // Set for on-demand syncs: correlate with FetchMessageHistoryResponse.session_id.
+  optional string session_id = 4;
+  bytes raw = 20;                 // decompressed `wa.HistorySync` protobuf
+}
+
+// Catch-all so the edge never silently loses an event type or a broadcast gap.
+message RawEvent {
+  string kind = 1;
+  bytes payload = 2;
+  string note = 3;
+}
+
+message EventEnvelope {
+  string account_uuid = 1;
+  int64 monotonic_seq = 2;
+  int64 ts_unix_ms = 3;
+  oneof event {
+    InboundMessage message = 10;
+    ReceiptEvent receipt = 11;
+    UndecryptableEvent undecryptable = 12;
+    ConnectionStateChanged connection = 13;
+    PairingUpdate pairing = 14;
+    PresenceUpdate presence = 15;
+    GroupUpdate group = 16;
+    PushNameUpdate push_name = 17;
+    ContactUpdate contact = 18;
+    HistorySyncEvent history_sync = 19;
+    RawEvent raw = 99;
+  }
+}
+
+service EventService {
+  rpc SubscribeEvents(SubscribeRequest) returns (stream EventEnvelope);
+}

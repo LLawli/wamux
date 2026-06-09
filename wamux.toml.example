@@ -1,0 +1,48 @@
+# wamux configuration. Copy to wamux.toml (or set WAMUX_CONFIG to a path).
+# Every key can be overridden by an env var: WAMUX_<UPPERCASE_KEY>.
+
+# Unix socket the gRPC server binds.
+socket_path = "/run/wamux.sock"
+# Socket file mode. TOML has no octal literal; 432 == 0o660.
+socket_mode = 432
+# Informational only: the socket inherits the daemon's process group.
+# socket_group = "wamux"
+
+# Postgres connection + pool size.
+database_url = "postgres://wamux:wamux@localhost:5432/wamux"
+db_max_connections = 16
+
+# Per-account in-memory replay ring (events kept for quick reconnect).
+event_ring_capacity = 256
+
+# Per-account live broadcast capacity. A subscriber slower than this lags past
+# the buffer and gets a "gap" marker (resync via GetAccountStatus).
+broadcast_capacity = 1024
+
+# Largest event (encoded bytes) still kept in the replay ring; 0 = no cap.
+# History-sync blobs are always excluded from the ring (they are bulk, not live).
+replay_max_event_bytes = 0
+
+# Max accounts kept connected at once (fd/resource budget); 0 = unlimited.
+# Connect past this returns ResourceExhausted. The edge owns connect policy.
+max_connected_accounts = 200
+
+# Grace period (ms) for a graceful per-account stop before a hard abort.
+graceful_stop_timeout_ms = 3000
+
+# Max bytes accepted for an inbound media send (inline or URL).
+media_max_bytes = 104857600
+
+# tracing env-filter (RUST_LOG overrides this when set).
+log_level = "info,wamux=debug"
+
+# Log output format: "json" (structured, for ingestion) or "text" (default).
+log_format = "text"
+
+# gRPC reflection (handy with grpcurl in dev).
+enable_reflection = true
+
+# Note: there is no DM-routing knob. The core relays to whatever recipient JID
+# the client sends, verbatim. To dodge the library's PN->LID upgrade (1:1 message
+# gets an id but never delivers on some companion accounts), the EDGE sends the
+# legacy "<number>@c.us" JID instead of "<number>@s.whatsapp.net".

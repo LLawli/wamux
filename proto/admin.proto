@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+message MetricsResponse {
+  string prometheus = 1; // rendered Prometheus exposition text
+}
+
+message HealthResponse {
+  bool serving = 1;   // liveness: the daemon is up and answering this RPC
+  bool ready = 2;     // readiness: Postgres is reachable (SELECT 1 ok)
+  string version = 3; // wamux crate version
+}
+
+// Admin/observability surface. Exposed via RPC over the socket (no TCP listener).
+service AdminService {
+  rpc GetMetrics(Empty) returns (MetricsResponse);
+  // Liveness + readiness for the daemon itself (not per-account WhatsApp state).
+  rpc Check(Empty) returns (HealthResponse);
+}

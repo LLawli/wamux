@@ -1,0 +1,6 @@
+# Pinned nightly: whatsapp-rust enables `simd` (core::simd / portable_simd) and
+# edition 2024, both nightly-only. This date is validated to build the graph.
+[toolchain]
+channel = "nightly-2026-06-08"
+components = ["rustfmt", "clippy", "rust-src"]
+profile = "default"
