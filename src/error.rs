@@ -30,8 +30,44 @@ pub enum WamuxError {
     #[error("whatsapp client error: {0}")]
     Client(String),
 
+    /// Upstream WhatsApp server refused the request with an IQ error stanza
+    /// (e.g. `<error code="403"/>`). Code + text relay verbatim so the boundary
+    /// can map auth-shaped codes honestly instead of a blanket Unavailable
+    /// (edge-review-insights.md achado #3).
+    #[error("whatsapp server rejected the request: code={code}, text='{text}'")]
+    WaServer { code: u16, text: String },
+
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+/// Wrap an error from a whatsapp-rust client call. Walks the cause chain for a
+/// server IQ rejection and lifts its code into `WaServer`; anything else keeps
+/// the full anyhow cause chain (`{:#}`) as an opaque `Client` error.
+pub(crate) fn client_err(err: impl Into<anyhow::Error>) -> WamuxError {
+    let err: anyhow::Error = err.into();
+    match err.chain().find_map(iq_server_rejection) {
+        Some((code, text)) => WamuxError::WaServer { code, text },
+        None => WamuxError::Client(format!("{err:#}")),
+    }
+}
+
+/// The lib surfaces server rejections as three types depending on the path:
+/// `ServerErrorCode` (its own cross-crate wrapper), the high-level `IqError`,
+/// or wacore's `IqError`. Probe all three.
+fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
+    use wacore::request::{IqError as WacoreIq, ServerErrorCode};
+    use whatsapp_rust::request::IqError as ClientIq;
+    if let Some(e) = cause.downcast_ref::<ServerErrorCode>() {
+        return Some((e.code, e.text.clone()));
+    }
+    if let Some(ClientIq::ServerError { code, text }) = cause.downcast_ref::<ClientIq>() {
+        return Some((*code, text.clone()));
+    }
+    if let Some(WacoreIq::ServerError { code, text }) = cause.downcast_ref::<WacoreIq>() {
+        return Some((*code, text.clone()));
+    }
+    None
 }
 
 /// Full `Display` cause chain ("outer: middle: root"), for integral logging.
@@ -53,6 +89,9 @@ fn cause_chain(err: &dyn std::error::Error) -> String {
 ///   invalid_argument) carry a safe message and log at debug.
 /// - Internal and upstream errors log the full chain at error/warn and the
 ///   client only sees a generic message + code.
+/// - `WaServer` is the exception: the WhatsApp server's own code/text relay
+///   verbatim (upstream protocol info, not internal state) so the edge can
+///   compose policy on it.
 impl From<WamuxError> for tonic::Status {
     fn from(err: WamuxError) -> Self {
         use tonic::Status;
@@ -81,6 +120,83 @@ impl From<WamuxError> for tonic::Status {
                 tracing::warn!(cause = %cause_chain(&err), "upstream whatsapp error");
                 Status::unavailable("whatsapp operation failed")
             }
+            WamuxError::WaServer { code, text } => {
+                tracing::warn!(code, text = %text, "whatsapp server rejected the request");
+                wa_server_status(*code, err.to_string())
+            }
         }
+    }
+}
+
+/// Honest relay of an upstream IQ rejection: the request DID reach WhatsApp
+/// and was refused, so auth-shaped codes must not read as "core down" (the
+/// edge turned them into 503). Unmapped codes keep the legacy Unavailable.
+fn wa_server_status(code: u16, message: String) -> tonic::Status {
+    use tonic::Status;
+    match code {
+        400 => Status::invalid_argument(message),
+        401 => Status::unauthenticated(message),
+        403 => Status::permission_denied(message),
+        404 => Status::not_found(message),
+        429 => Status::resource_exhausted(message),
+        _ => Status::unavailable(message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whatsapp_rust::request::IqError;
+
+    fn status_for(err: anyhow::Error) -> tonic::Status {
+        tonic::Status::from(client_err(err))
+    }
+
+    fn iq(code: u16, text: &str) -> anyhow::Error {
+        anyhow::Error::new(IqError::ServerError {
+            code,
+            text: text.into(),
+        })
+    }
+
+    // Regression for edge-review-insights.md achado #3: WhatsApp auth errors
+    // must not surface as Unavailable ("core down" / 503 at the edge).
+    #[test]
+    fn iq_401_maps_to_unauthenticated() {
+        let status = status_for(iq(401, "not-authorized"));
+        assert_eq!(status.code(), tonic::Code::Unauthenticated);
+        assert!(status.message().contains("code=401"));
+    }
+
+    #[test]
+    fn iq_403_maps_to_permission_denied_even_under_context() {
+        let status = status_for(iq(403, "forbidden").context("query group invite link"));
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        assert!(status.message().contains("forbidden"));
+    }
+
+    #[test]
+    fn server_error_code_wrapper_is_detected() {
+        let err = anyhow::Error::new(wacore::request::ServerErrorCode {
+            code: 404,
+            text: "item-not-found".into(),
+        });
+        assert_eq!(status_for(err).code(), tonic::Code::NotFound);
+    }
+
+    #[test]
+    fn unmapped_iq_code_stays_unavailable() {
+        assert_eq!(
+            status_for(iq(500, "internal-server-error")).code(),
+            tonic::Code::Unavailable
+        );
+    }
+
+    #[test]
+    fn non_iq_client_error_stays_unavailable_and_generic() {
+        let status = status_for(anyhow::anyhow!("websocket torn down"));
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        // Opaque failures keep the generic non-leaking message.
+        assert_eq!(status.message(), "whatsapp operation failed");
     }
 }

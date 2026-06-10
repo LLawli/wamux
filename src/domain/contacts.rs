@@ -5,12 +5,8 @@ use std::sync::Arc;
 use whatsapp_rust::Client;
 
 use crate::domain::jid_parse::parse_jid;
-use crate::error::WamuxError;
+use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
-
-fn client_err<E: std::fmt::Display>(e: E) -> WamuxError {
-    WamuxError::Client(format!("{e:#}"))
-}
 
 pub async fn check_on_whatsapp(
     client: Arc<Client>,

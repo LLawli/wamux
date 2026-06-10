@@ -12,7 +12,7 @@ use uuid::Uuid;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use crate::domain::bot_factory::build_bot;
-use crate::error::WamuxError;
+use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 use crate::state::account_handle::RunningBot;
 use crate::state::event_bridge::EventCtx;
@@ -217,12 +217,9 @@ impl AccountRegistry {
             self.tuning.ws_url_override.as_deref(),
         )
         .await
-        .map_err(|e| WamuxError::Client(format!("{e:#}")))?;
+        .map_err(client_err)?;
         handle.set_client(bot.client()).await;
-        let bot_handle = bot
-            .run()
-            .await
-            .map_err(|e| WamuxError::Client(format!("{e:#}")))?;
+        let bot_handle = bot.run().await.map_err(client_err)?;
 
         self.connected.fetch_add(1, Ordering::SeqCst);
         // Supervisor: own the Bot for the connection's lifetime and await the run
@@ -255,10 +252,7 @@ impl AccountRegistry {
         if !client.is_connected() {
             return Err(WamuxError::NotConnected);
         }
-        client
-            .logout()
-            .await
-            .map_err(|e| WamuxError::Client(format!("{e:#}")))?;
+        client.logout().await.map_err(client_err)?;
         handle.stop().await;
         Ok(())
     }

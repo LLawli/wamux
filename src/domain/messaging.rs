@@ -8,13 +8,8 @@ use whatsapp_rust::{Client, Jid, RevokeType, SendResult};
 
 use crate::domain::jid_parse::parse_jid;
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string};
-use crate::error::WamuxError;
+use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
-
-fn client_err<E: std::fmt::Display>(e: E) -> WamuxError {
-    // `{:#}` yields anyhow's full cause chain (plain Display for other errors).
-    WamuxError::Client(format!("{e:#}"))
-}
 
 // The core does NOT rewrite recipient JIDs. Routing (e.g. sending via `@c.us`
 // vs `@s.whatsapp.net` to work around the library's PN->LID upgrade) is the

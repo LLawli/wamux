@@ -8,12 +8,8 @@ use wacore::iq::groups::{
 use whatsapp_rust::Client;
 
 use crate::domain::jid_parse::{parse_jid, parse_jids};
-use crate::error::WamuxError;
+use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
-
-fn client_err<E: std::fmt::Display>(e: E) -> WamuxError {
-    WamuxError::Client(format!("{e:#}"))
-}
 
 fn invalid<E: std::fmt::Display>(e: E) -> WamuxError {
     WamuxError::InvalidArgument(e.to_string())

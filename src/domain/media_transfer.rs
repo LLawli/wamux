@@ -6,12 +6,8 @@ use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::{Client, Jid, SendResult};
 
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string};
-use crate::error::WamuxError;
+use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
-
-fn client_err<E: std::fmt::Display>(e: E) -> WamuxError {
-    WamuxError::Client(format!("{e:#}"))
-}
 
 fn media_type(value: &str) -> Result<MediaType, WamuxError> {
     Ok(match value {
