@@ -3,3 +3,4 @@
 *.db-*
 *.sock
 /wamux.toml
+/.claude/
