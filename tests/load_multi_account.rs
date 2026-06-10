@@ -22,22 +22,13 @@ use wamux::services::event_service::EventSvc;
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage;
 
+mod common;
+
 const ACCOUNTS: usize = 200;
 
 fn database_url() -> String {
     std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
-}
-
-/// Delete leftover synthetic `load-%` accounts. Called at setup (self-heal from
-/// an aborted prior run, whose best-effort teardown never ran) and at the end.
-/// Setup-sweep bounds accumulation to at most one aborted run's rows (B5).
-async fn sweep_load_orphans(pool: &sqlx::PgPool) -> u64 {
-    sqlx::query("DELETE FROM accounts WHERE external_ref LIKE 'load-%'")
-        .execute(pool)
-        .await
-        .map(|r| r.rows_affected())
-        .unwrap_or(0)
 }
 
 fn subscribe_account(uuid: &str) -> pb::SubscribeRequest {
@@ -83,7 +74,7 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
 
     // Self-heal before provisioning: clear any `load-%` rows an aborted prior run
     // left behind (the registry is fresh, so this doesn't touch live handles).
-    let swept = sweep_load_orphans(registry.pool()).await;
+    let swept = common::sweep_orphans(registry.pool(), "load-").await;
     if swept > 0 {
         eprintln!("(swept {swept} orphan load- account(s) from a prior run)");
     }
@@ -185,5 +176,5 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
     // Tidy on success with a single sweep (not 200 sequential deletes that an
     // earlier panic could leave half-run). An aborted run is caught by the next
     // run's setup-sweep, so orphans never accumulate past one run (B5).
-    let _ = sweep_load_orphans(registry.pool()).await;
+    let _ = common::sweep_orphans(registry.pool(), "load-").await;
 }

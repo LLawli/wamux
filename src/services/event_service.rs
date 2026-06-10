@@ -112,17 +112,19 @@ fn forward_all_accounts(
     tx: mpsc::Sender<Result<pb::EventEnvelope, Status>>,
 ) {
     // Order matters: subscribe to creations BEFORE snapshotting. An account
-    // created between the two calls then shows up in both, and `seen` dedupes
-    // it (two forwarders would duplicate its every event); the opposite order
-    // would miss that account entirely.
+    // created between the two calls then shows up in both, and the snapshot set
+    // dedupes it (two forwarders would duplicate its every event); the opposite
+    // order would miss that account entirely. The set stays IMMUTABLE: a fresh
+    // v4 uuid is broadcast exactly once per insert, so only snapshot membership
+    // can ever collide — tracking created uuids too would just grow per-stream
+    // memory forever on a long-lived subscription.
     let created_rx = registry.subscribe_created();
     let snapshot = registry.list();
-    let mut seen: HashSet<Uuid> = HashSet::with_capacity(snapshot.len());
+    let snapshot_uuids: HashSet<Uuid> = snapshot.iter().map(|a| a.uuid).collect();
     for account in snapshot {
-        seen.insert(account.uuid);
         forward(account, replay, tx.clone());
     }
-    follow_created_accounts(created_rx, seen, replay, tx);
+    follow_created_accounts(created_rx, snapshot_uuids, replay, tx);
 }
 
 /// Attach a forwarder for each account created after the subscribe. The same
@@ -130,12 +132,12 @@ fn forward_all_accounts(
 /// is a harmless no-op for it.
 fn follow_created_accounts(
     mut created_rx: broadcast::Receiver<Arc<AccountHandle>>,
-    mut seen: HashSet<Uuid>,
+    snapshot_uuids: HashSet<Uuid>,
     replay: usize,
     tx: mpsc::Sender<Result<pb::EventEnvelope, Status>>,
 ) {
     tokio::spawn(async move {
-        while follow_created_step(&mut created_rx, &mut seen, replay, &tx).await {}
+        while follow_created_step(&mut created_rx, &snapshot_uuids, replay, &tx).await {}
     });
 }
 
@@ -143,7 +145,7 @@ fn follow_created_accounts(
 /// registry dropped).
 async fn follow_created_step(
     created_rx: &mut broadcast::Receiver<Arc<AccountHandle>>,
-    seen: &mut HashSet<Uuid>,
+    snapshot_uuids: &HashSet<Uuid>,
     replay: usize,
     tx: &mpsc::Sender<Result<pb::EventEnvelope, Status>>,
 ) -> bool {
@@ -156,8 +158,8 @@ async fn follow_created_step(
     };
     match received {
         Ok(account) => {
-            // `seen` skips the subscribe/snapshot overlap (see forward_all_accounts).
-            if seen.insert(account.uuid) {
+            // Skips the subscribe/snapshot overlap (see forward_all_accounts).
+            if !snapshot_uuids.contains(&account.uuid) {
                 forward(account, replay, tx.clone());
             }
             true

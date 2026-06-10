@@ -19,20 +19,11 @@ use wamux::services::event_service::EventSvc;
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage;
 
+mod common;
+
 fn database_url() -> String {
     std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
-}
-
-/// Delete leftover synthetic `evsub-%` accounts. Called at setup (self-heal
-/// from an aborted prior run) and at the end, bounding accumulation to at most
-/// one aborted run's rows (the load_multi_account.rs B5 pattern, own prefix).
-async fn sweep_evsub_orphans(pool: &sqlx::PgPool) -> u64 {
-    sqlx::query("DELETE FROM accounts WHERE external_ref LIKE 'evsub-%'")
-        .execute(pool)
-        .await
-        .map(|r| r.rows_affected())
-        .unwrap_or(0)
 }
 
 fn subscribe_all() -> pb::SubscribeRequest {
@@ -96,7 +87,7 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
         .expect("migrate");
 
     let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(8)));
-    let swept = sweep_evsub_orphans(registry.pool()).await;
+    let swept = common::sweep_orphans(registry.pool(), "evsub-").await;
     if swept > 0 {
         eprintln!("(swept {swept} orphan evsub- account(s) from a prior run)");
     }
@@ -137,5 +128,5 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
     // (an aborted run is caught by the next run's setup-sweep).
     registry.delete(&before).await.expect("delete before");
     registry.delete(&after).await.expect("delete after");
-    let _ = sweep_evsub_orphans(registry.pool()).await;
+    let _ = common::sweep_orphans(registry.pool(), "evsub-").await;
 }
