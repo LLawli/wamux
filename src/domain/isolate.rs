@@ -13,14 +13,15 @@ where
     E: Into<anyhow::Error>,
 {
     tokio::task::spawn_blocking(move || {
+        // Everything funnels through the shared classifier: the library error
+        // keeps its honest IQ Status code, and the infra errors (runtime
+        // build, join) just fall through to the opaque Client arm.
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| WamuxError::Client(e.to_string()))?;
-        // The library error goes through the shared classifier so IQ server
-        // rejections keep their honest Status code on this path too.
+            .map_err(client_err)?;
         runtime.block_on(make()).map_err(client_err)
     })
     .await
-    .map_err(|e| WamuxError::Client(e.to_string()))?
+    .map_err(client_err)?
 }

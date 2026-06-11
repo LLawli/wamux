@@ -50,3 +50,8 @@ pub(crate) fn require_jid(jid: Option<pb::Jid>) -> Result<String, Status> {
         .filter(|v| !v.is_empty())
         .ok_or_else(|| Status::invalid_argument("missing jid"))
 }
+
+/// Extract a required proto sub-message, or `InvalidArgument("missing <name>")`.
+pub(crate) fn require_field<T>(field: Option<T>, name: &str) -> Result<T, Status> {
+    field.ok_or_else(|| Status::invalid_argument(format!("missing {name}")))
+}

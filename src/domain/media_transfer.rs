@@ -3,6 +3,9 @@
 use wacore::download::MediaType;
 use whatsapp_rust::upload::{UploadOptions, UploadResponse};
 use whatsapp_rust::waproto::whatsapp as wa;
+use whatsapp_rust::waproto::whatsapp::message::{
+    AudioMessage, DocumentMessage, ImageMessage, StickerMessage, VideoMessage,
+};
 use whatsapp_rust::{Client, Jid, SendResult};
 
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string};
@@ -81,23 +84,40 @@ fn ephemeral_context(ephemeral_seconds: u32) -> Option<Box<wa::ContextInfo>> {
     })
 }
 
+/// The five wa media sub-messages duplicate the exact same upload/mime/context
+/// field names, but prost generates no shared trait to abstract over them —
+/// this macro expands the struct literal so each builder states only its
+/// type-specific fields.
+macro_rules! submessage_with_upload {
+    ($ty:ident { $($field:ident : $value:expr),* $(,)? }, $header:expr, $up:expr, $context:expr) => {
+        $ty {
+            url: Some($up.url),
+            direct_path: Some($up.direct_path),
+            media_key: Some($up.media_key.to_vec()),
+            file_sha256: Some($up.file_sha256.to_vec()),
+            file_enc_sha256: Some($up.file_enc_sha256.to_vec()),
+            file_length: Some($up.file_length),
+            mimetype: nonempty_string(&$header.mime_type),
+            context_info: $context,
+            $($field: $value,)*
+            ..Default::default()
+        }
+    };
+}
+
 fn video_submessage(
     header: &pb::SendMediaHeader,
     up: UploadResponse,
     context: Option<Box<wa::ContextInfo>>,
 ) -> wa::message::VideoMessage {
-    wa::message::VideoMessage {
-        url: Some(up.url),
-        direct_path: Some(up.direct_path),
-        media_key: Some(up.media_key.to_vec()),
-        file_sha256: Some(up.file_sha256.to_vec()),
-        file_enc_sha256: Some(up.file_enc_sha256.to_vec()),
-        file_length: Some(up.file_length),
-        mimetype: nonempty_string(&header.mime_type),
-        caption: nonempty_string(&header.caption),
-        context_info: context,
-        ..Default::default()
-    }
+    submessage_with_upload!(
+        VideoMessage {
+            caption: nonempty_string(&header.caption),
+        },
+        header,
+        up,
+        context
+    )
 }
 
 fn audio_submessage(
@@ -105,23 +125,19 @@ fn audio_submessage(
     up: UploadResponse,
     context: Option<Box<wa::ContextInfo>>,
 ) -> wa::message::AudioMessage {
-    wa::message::AudioMessage {
-        url: Some(up.url),
-        direct_path: Some(up.direct_path),
-        media_key: Some(up.media_key.to_vec()),
-        file_sha256: Some(up.file_sha256.to_vec()),
-        file_enc_sha256: Some(up.file_enc_sha256.to_vec()),
-        file_length: Some(up.file_length),
-        mimetype: nonempty_string(&header.mime_type),
-        // Voice note: relayed flags only. WhatsApp renders PTT solely for
-        // OGG/Opus payloads; supplying those bytes is the edge's job.
-        // "Not a voice note" is the absent field (None), never Some(false).
-        ptt: header.ptt.then_some(true),
-        seconds: (header.seconds > 0).then_some(header.seconds),
-        waveform: nonempty_bytes(&header.waveform),
-        context_info: context,
-        ..Default::default()
-    }
+    submessage_with_upload!(
+        AudioMessage {
+            // Voice note: relayed flags only. WhatsApp renders PTT solely for
+            // OGG/Opus payloads; supplying those bytes is the edge's job.
+            // "Not a voice note" is the absent field (None), never Some(false).
+            ptt: header.ptt.then_some(true),
+            seconds: (header.seconds > 0).then_some(header.seconds),
+            waveform: nonempty_bytes(&header.waveform),
+        },
+        header,
+        up,
+        context
+    )
 }
 
 fn document_submessage(
@@ -129,19 +145,15 @@ fn document_submessage(
     up: UploadResponse,
     context: Option<Box<wa::ContextInfo>>,
 ) -> wa::message::DocumentMessage {
-    wa::message::DocumentMessage {
-        url: Some(up.url),
-        direct_path: Some(up.direct_path),
-        media_key: Some(up.media_key.to_vec()),
-        file_sha256: Some(up.file_sha256.to_vec()),
-        file_enc_sha256: Some(up.file_enc_sha256.to_vec()),
-        file_length: Some(up.file_length),
-        mimetype: nonempty_string(&header.mime_type),
-        file_name: nonempty_string(&header.filename),
-        caption: nonempty_string(&header.caption),
-        context_info: context,
-        ..Default::default()
-    }
+    submessage_with_upload!(
+        DocumentMessage {
+            file_name: nonempty_string(&header.filename),
+            caption: nonempty_string(&header.caption),
+        },
+        header,
+        up,
+        context
+    )
 }
 
 fn sticker_submessage(
@@ -149,17 +161,7 @@ fn sticker_submessage(
     up: UploadResponse,
     context: Option<Box<wa::ContextInfo>>,
 ) -> wa::message::StickerMessage {
-    wa::message::StickerMessage {
-        url: Some(up.url),
-        direct_path: Some(up.direct_path),
-        media_key: Some(up.media_key.to_vec()),
-        file_sha256: Some(up.file_sha256.to_vec()),
-        file_enc_sha256: Some(up.file_enc_sha256.to_vec()),
-        file_length: Some(up.file_length),
-        mimetype: nonempty_string(&header.mime_type),
-        context_info: context,
-        ..Default::default()
-    }
+    submessage_with_upload!(StickerMessage {}, header, up, context)
 }
 
 fn image_submessage(
@@ -167,18 +169,14 @@ fn image_submessage(
     up: UploadResponse,
     context: Option<Box<wa::ContextInfo>>,
 ) -> wa::message::ImageMessage {
-    wa::message::ImageMessage {
-        url: Some(up.url),
-        direct_path: Some(up.direct_path),
-        media_key: Some(up.media_key.to_vec()),
-        file_sha256: Some(up.file_sha256.to_vec()),
-        file_enc_sha256: Some(up.file_enc_sha256.to_vec()),
-        file_length: Some(up.file_length),
-        mimetype: nonempty_string(&header.mime_type),
-        caption: nonempty_string(&header.caption),
-        context_info: context,
-        ..Default::default()
-    }
+    submessage_with_upload!(
+        ImageMessage {
+            caption: nonempty_string(&header.caption),
+        },
+        header,
+        up,
+        context
+    )
 }
 
 /// Lazy download from a descriptor the edge got off an inbound message event.

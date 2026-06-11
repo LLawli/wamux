@@ -185,100 +185,42 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
     out
 }
 
-/// Build a `MediaDescriptor` from whichever media sub-message is present.
-fn extract_media(msg: &wa::Message) -> Option<(pb::MediaDescriptor, String)> {
-    if let Some(m) = &msg.image_message {
-        return Some((
-            descriptor(
-                m.direct_path.as_deref(),
-                m.media_key.as_deref(),
-                m.file_enc_sha256.as_deref(),
-                m.file_sha256.as_deref(),
-                m.file_length,
-                m.mimetype.as_deref(),
-                "image",
-            ),
-            m.caption.clone().unwrap_or_default(),
-        ));
-    }
-    if let Some(m) = &msg.video_message {
-        return Some((
-            descriptor(
-                m.direct_path.as_deref(),
-                m.media_key.as_deref(),
-                m.file_enc_sha256.as_deref(),
-                m.file_sha256.as_deref(),
-                m.file_length,
-                m.mimetype.as_deref(),
-                "video",
-            ),
-            m.caption.clone().unwrap_or_default(),
-        ));
-    }
-    if let Some(m) = &msg.audio_message {
-        return Some((
-            descriptor(
-                m.direct_path.as_deref(),
-                m.media_key.as_deref(),
-                m.file_enc_sha256.as_deref(),
-                m.file_sha256.as_deref(),
-                m.file_length,
-                m.mimetype.as_deref(),
-                "audio",
-            ),
-            String::new(),
-        ));
-    }
-    if let Some(m) = &msg.document_message {
-        return Some((
-            descriptor(
-                m.direct_path.as_deref(),
-                m.media_key.as_deref(),
-                m.file_enc_sha256.as_deref(),
-                m.file_sha256.as_deref(),
-                m.file_length,
-                m.mimetype.as_deref(),
-                "document",
-            ),
-            m.caption.clone().unwrap_or_default(),
-        ));
-    }
-    if let Some(m) = &msg.sticker_message {
-        return Some((
-            descriptor(
-                m.direct_path.as_deref(),
-                m.media_key.as_deref(),
-                m.file_enc_sha256.as_deref(),
-                m.file_sha256.as_deref(),
-                m.file_length,
-                m.mimetype.as_deref(),
-                "sticker",
-            ),
-            String::new(),
-        ));
-    }
-    None
+/// The five wa media sub-messages share identical descriptor field names but
+/// no common trait (prost-generated structs), so a macro projects whichever
+/// one is present into a `MediaDescriptor` uniformly.
+macro_rules! media_descriptor {
+    ($m:expr, $kind:literal) => {
+        pb::MediaDescriptor {
+            direct_path: $m.direct_path.clone().unwrap_or_default(),
+            media_key: $m.media_key.clone().unwrap_or_default(),
+            file_enc_sha256: $m.file_enc_sha256.clone().unwrap_or_default(),
+            file_sha256: $m.file_sha256.clone().unwrap_or_default(),
+            file_length: $m.file_length.unwrap_or(0),
+            mime_type: $m.mimetype.clone().unwrap_or_default(),
+            media_type: $kind.to_string(),
+        }
+    };
 }
 
-#[allow(clippy::too_many_arguments)]
-fn descriptor(
-    direct_path: Option<&str>,
-    media_key: Option<&[u8]>,
-    file_enc_sha256: Option<&[u8]>,
-    file_sha256: Option<&[u8]>,
-    file_length: Option<u64>,
-    mime_type: Option<&str>,
-    media_type: &str,
-) -> pb::MediaDescriptor {
-    pb::MediaDescriptor {
-        direct_path: direct_path.unwrap_or_default().to_string(),
-        media_key: media_key.map(|b| b.to_vec()).unwrap_or_default(),
-        file_enc_sha256: file_enc_sha256.map(|b| b.to_vec()).unwrap_or_default(),
-        file_sha256: file_sha256.map(|b| b.to_vec()).unwrap_or_default(),
-        file_length: file_length.unwrap_or(0),
-        mime_type: mime_type.unwrap_or_default().to_string(),
-        media_type: media_type.to_string(),
+/// Build a `MediaDescriptor` from whichever media sub-message is present.
+fn extract_media(msg: &wa::Message) -> Option<(pb::MediaDescriptor, String)> {
+    let caption_of = |caption: &Option<String>| -> String { caption.clone().unwrap_or_default() };
+    if let Some(m) = &msg.image_message {
+        return Some((media_descriptor!(m, "image"), caption_of(&m.caption)));
     }
+    if let Some(m) = &msg.video_message {
+        return Some((media_descriptor!(m, "video"), caption_of(&m.caption)));
+    }
+    if let Some(m) = &msg.audio_message {
+        return Some((media_descriptor!(m, "audio"), String::new()));
+    }
+    if let Some(m) = &msg.document_message {
+        return Some((media_descriptor!(m, "document"), caption_of(&m.caption)));
+    }
+    if let Some(m) = &msg.sticker_message {
+        return Some((media_descriptor!(m, "sticker"), String::new()));
+    }
+    None
 }
 
 /// Best-effort variant name for the catch-all `RawEvent.kind`.

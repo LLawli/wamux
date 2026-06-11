@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tonic::{Request, Response, Status, Streaming};
 
-use super::{client_of, require_jid};
+use super::{client_of, require_field, require_jid};
 use crate::domain::jid_parse::parse_jid;
 use crate::domain::media_transfer;
 use crate::domain::messaging::{self, send_result_to_proto};
@@ -79,9 +79,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let target = req
-            .target
-            .ok_or_else(|| Status::invalid_argument("missing target"))?;
+        let target = require_field(req.target, "target")?;
         let result = messaging::send_reaction(&client, &target, &req.emoji).await?;
         Ok(Response::new(send_result_to_proto(result)))
     }
@@ -92,9 +90,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let target = req
-            .target
-            .ok_or_else(|| Status::invalid_argument("missing target"))?;
+        let target = require_field(req.target, "target")?;
         let new_id = messaging::edit_message(&client, &target, &req.new_text).await?;
         Ok(Response::new(pb::SendResult {
             key: Some(pb::MessageKey {
@@ -113,9 +109,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let target = req
-            .target
-            .ok_or_else(|| Status::invalid_argument("missing target"))?;
+        let target = require_field(req.target, "target")?;
         messaging::delete_message(&client, &target, req.for_everyone).await?;
         Ok(Response::new(pb::SendResult {
             key: Some(target),

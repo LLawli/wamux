@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
-use super::client_of;
+use super::{client_of, require_field};
 use crate::domain::media_transfer;
 use crate::proto::v1 as pb;
 use crate::proto::v1::media_service_server::MediaService;
@@ -35,9 +35,7 @@ impl MediaService for MediaSvc {
     ) -> Result<Response<Self::DownloadMediaStream>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let descriptor = req
-            .descriptor
-            .ok_or_else(|| Status::invalid_argument("missing descriptor"))?;
+        let descriptor = require_field(req.descriptor, "descriptor")?;
 
         // Eager decrypt-to-memory, then stream out in chunks.
         let data = media_transfer::download(&client, &descriptor).await?;
