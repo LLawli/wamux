@@ -99,7 +99,10 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Some(pb::pairing_update::Event::Paired(info)) => {
                     let jid = info.jid.map(|j| j.value).unwrap_or_default();
-                    println!("\n✅ PAIRED as {jid} (push_name={})", info.push_name);
+                    println!(
+                        "\n✅ PAIRED as {jid} (business_name={})",
+                        info.business_name
+                    );
                     let target = if phone.is_empty() {
                         jid
                     } else {
@@ -220,11 +223,10 @@ fn spawn_self_message(handle: Arc<AccountHandle>, target: String) {
             Ok(jid) => match messaging::send_text(
                 &client,
                 jid,
-                "wamux: pareamento + envio OK ✅",
-                &[],
-                None,
-                None,
-                0,
+                &pb::SendTextRequest {
+                    text: "wamux: pareamento + envio OK ✅".to_string(),
+                    ..Default::default()
+                },
             )
             .await
             {

@@ -116,7 +116,11 @@ async fn main() -> anyhow::Result<()> {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(3);
-        let data = std::fs::read(&path).map_err(|e| anyhow::anyhow!("read {path}: {e}"))?;
+        // Async read: this file already pays spawn_blocking for ureq (no async
+        // alternative); fs has one, so don't block the runtime worker.
+        let data = tokio::fs::read(&path)
+            .await
+            .map_err(|e| anyhow::anyhow!("read {path}: {e}"))?;
         report(
             "ptt",
             send_inline(
@@ -185,15 +189,11 @@ async fn send_inline(
                 value: target.to_string(),
             }),
             mime_type: mime.to_string(),
-            caption: String::new(),
-            mentions: vec![],
-            quote: None,
             media_type: media_type.to_string(),
             filename: filename.to_string(),
             ptt: ptt_seconds.is_some(),
             seconds: ptt_seconds.unwrap_or(0),
-            waveform: vec![],
-            ephemeral_seconds: 0,
+            ..Default::default()
         })),
     };
     let mut chunks = vec![header];

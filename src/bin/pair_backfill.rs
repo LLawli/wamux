@@ -96,7 +96,10 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Some(pb::pairing_update::Event::Paired(info)) => {
                     let jid = info.jid.map(|j| j.value).unwrap_or_default();
-                    println!("\n✅ PAIRED as {jid} (push_name={})", info.push_name);
+                    println!(
+                        "\n✅ PAIRED as {jid} (business_name={})",
+                        info.business_name
+                    );
                     println!("watching {watch_secs}s for the InitialBootstrap history dump ...\n");
                     paired = true;
                     deadline = tokio::time::Instant::now() + Duration::from_secs(watch_secs);

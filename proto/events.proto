@@ -10,11 +10,17 @@ message SubscribeRequest {
     AccountRef account = 1;
     // "all" is DYNAMIC: it includes accounts created after subscribing, so the
     // stream stays open indefinitely. Under an extreme burst of creates the
-    // core may emit a `gap` RawEvent meaning some newly created accounts are
-    // missing from the stream: re-subscribe or reconcile via ListAccounts.
+    // core may emit a `subscription_gap` RawEvent meaning some newly created
+    // accounts are missing from the stream: re-subscribe or reconcile via
+    // ListAccounts.
     Empty all_accounts = 2;
   }
   // 0 = live only; N = replay up to N buffered events for quick reconnect.
+  // No duplicates within one stream: live events already delivered by the
+  // replay are skipped (filtered by monotonic_seq). Accounts created AFTER an
+  // all-accounts subscribe always replay their full ring regardless of N —
+  // "live only" cannot apply to events emitted before their forwarder
+  // attached, so e.g. a just-created account's pairing QR is never lost.
   uint32 replay_from_ring = 3;
 }
 
@@ -40,7 +46,10 @@ message ReceiptEvent {
   string chat = 1;
   string sender = 2;
   repeated string message_ids = 3;
-  string type = 4;                  // delivered|read|played
+  // Lowercase tokens: delivered|read|played plus the rarer read-self|
+  // played-self|sender|retry|enc_rekey_retry|server-error|inactive|peer_msg|
+  // hist_sync; an unknown type relays the raw stanza attribute verbatim.
+  string type = 4;
   int64 timestamp = 5;
 }
 
@@ -93,6 +102,12 @@ message HistorySyncEvent {
 }
 
 // Catch-all so the edge never silently loses an event type or a broadcast gap.
+// Reserved kinds (both carry monotonic_seq -1 and an empty payload):
+//   "gap"              one account's subscriber lagged its broadcast buffer;
+//                      account_uuid is set: resync it via GetAccountStatus.
+//   "subscription_gap" the all-accounts created-channel lagged; account_uuid
+//                      is empty: re-subscribe or reconcile via ListAccounts.
+// Any other kind is a forward-compat relay of a lib event (payload = JSON).
 message RawEvent {
   string kind = 1;
   bytes payload = 2;

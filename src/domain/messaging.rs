@@ -7,7 +7,8 @@ use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::{Client, Jid, RevokeType, SendResult};
 
 use crate::domain::jid_parse::parse_jid;
-use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string};
+use crate::domain::outgoing_context::outgoing_context;
+use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_i32};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
@@ -16,16 +17,17 @@ use crate::proto::v1 as pb;
 // edge's responsibility: it passes the exact JID it wants and the core relays
 // to it verbatim. Keeping this transport-pure is a deliberate design choice.
 
+/// Wire-shaped like the media path (`send_media` + its header): the routing
+/// fields `req.account`/`req.to` were already consumed by the caller and are
+/// ignored here; every content field relays through `build_text_message`, so
+/// a new proto field touches only the builder, never this signature or its
+/// call sites (code-review 2026-06-11).
 pub async fn send_text(
     client: &Client,
     to: Jid,
-    text: &str,
-    mentions: &[pb::Mention],
-    quote: Option<&pb::QuoteContext>,
-    link_preview: Option<&pb::LinkPreview>,
-    ephemeral_seconds: u32,
+    req: &pb::SendTextRequest,
 ) -> Result<SendResult, WamuxError> {
-    let message = build_text_message(text, mentions, quote, link_preview, ephemeral_seconds);
+    let message = build_text_message(req);
     client.send_message(to, message).await.map_err(client_err)
 }
 
@@ -34,72 +36,34 @@ pub async fn send_text(
 /// upgrades it to an `ExtendedTextMessage`. Everything is relayed verbatim:
 /// the EDGE fetched the preview and chose the expiration (the core does no
 /// outbound HTTP and tracks no chat settings).
-pub(crate) fn build_text_message(
-    text: &str,
-    mentions: &[pb::Mention],
-    quote: Option<&pb::QuoteContext>,
-    link_preview: Option<&pb::LinkPreview>,
-    ephemeral_seconds: u32,
-) -> wa::Message {
-    let plain =
-        mentions.is_empty() && quote.is_none() && link_preview.is_none() && ephemeral_seconds == 0;
+pub(crate) fn build_text_message(req: &pb::SendTextRequest) -> wa::Message {
+    let plain = req.mentions.is_empty()
+        && req.quote.is_none()
+        && req.link_preview.is_none()
+        && req.ephemeral_seconds == 0;
     if plain {
         return wa::Message {
-            conversation: Some(text.to_string()),
+            conversation: Some(req.text.clone()),
             ..Default::default()
         };
     }
-    let extended = extended_text(text, mentions, quote, link_preview, ephemeral_seconds);
     wa::Message {
-        extended_text_message: Some(Box::new(extended)),
+        extended_text_message: Some(Box::new(extended_text(req))),
         ..Default::default()
     }
 }
 
-fn extended_text(
-    text: &str,
-    mentions: &[pb::Mention],
-    quote: Option<&pb::QuoteContext>,
-    link_preview: Option<&pb::LinkPreview>,
-    ephemeral_seconds: u32,
-) -> wa::message::ExtendedTextMessage {
+fn extended_text(req: &pb::SendTextRequest) -> wa::message::ExtendedTextMessage {
     let mut extended = wa::message::ExtendedTextMessage {
-        text: Some(text.to_string()),
-        context_info: Some(Box::new(text_context(mentions, quote, ephemeral_seconds))),
+        text: Some(req.text.clone()),
+        // None for a preview-only message: shared builder, see outgoing_context.
+        context_info: outgoing_context(&req.mentions, req.quote.as_ref(), req.ephemeral_seconds),
         ..Default::default()
     };
-    if let Some(preview) = link_preview {
+    if let Some(preview) = &req.link_preview {
         copy_link_preview(&mut extended, preview);
     }
     extended
-}
-
-fn text_context(
-    mentions: &[pb::Mention],
-    quote: Option<&pb::QuoteContext>,
-    ephemeral_seconds: u32,
-) -> wa::ContextInfo {
-    let mut context = wa::ContextInfo::default();
-    if !mentions.is_empty() {
-        context.mentioned_jid = mentions.iter().map(|m| m.jid.clone()).collect();
-    }
-    copy_quote(&mut context, quote);
-    if ephemeral_seconds > 0 {
-        context.expiration = Some(ephemeral_seconds);
-    }
-    context
-}
-
-fn copy_quote(context: &mut wa::ContextInfo, quote: Option<&pb::QuoteContext>) {
-    let Some(q) = quote else { return };
-    let Some(key) = &q.quoted else { return };
-    context.stanza_id = Some(key.id.clone());
-    let participant = if q.participant.is_empty() {
-        key.participant.clone()
-    } else {
-        q.participant.clone()
-    };
-    context.participant = Some(participant);
 }
 
 /// Relay the edge-supplied preview verbatim onto the extended text. This
@@ -111,7 +75,7 @@ fn copy_link_preview(extended: &mut wa::message::ExtendedTextMessage, preview: &
     extended.title = nonempty_string(&preview.title);
     extended.description = nonempty_string(&preview.description);
     extended.jpeg_thumbnail = nonempty_bytes(&preview.jpeg_thumbnail);
-    extended.preview_type = (preview.preview_type != 0).then_some(preview.preview_type);
+    extended.preview_type = nonzero_i32(preview.preview_type);
 }
 
 pub async fn send_reaction(
@@ -233,11 +197,7 @@ fn proto_key_to_wa(key: &pb::MessageKey) -> wa::MessageKey {
         remote_jid: Some(key.remote_jid.clone()),
         id: Some(key.id.clone()),
         from_me: Some(key.from_me),
-        participant: if key.participant.is_empty() {
-            None
-        } else {
-            Some(key.participant.clone())
-        },
+        participant: nonempty_string(&key.participant),
     }
 }
 
@@ -322,22 +282,27 @@ mod tests {
         }
     }
 
+    /// Content-only request: routing fields stay at their (ignored) defaults.
+    fn text_req(text: &str) -> pb::SendTextRequest {
+        pb::SendTextRequest {
+            text: text.to_string(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn plain_text_stays_conversation() {
-        let message = build_text_message("oi", &[], None, None, 0);
+        let message = build_text_message(&text_req("oi"));
         assert_eq!(message.conversation.as_deref(), Some("oi"));
         assert!(message.extended_text_message.is_none());
     }
 
     #[test]
     fn link_preview_forces_extended_with_fields_relayed_verbatim() {
-        let message = build_text_message(
-            "look https://example.com/post",
-            &[],
-            None,
-            Some(&full_preview()),
-            0,
-        );
+        let message = build_text_message(&pb::SendTextRequest {
+            link_preview: Some(full_preview()),
+            ..text_req("look https://example.com/post")
+        });
         assert!(message.conversation.is_none());
         let ext = message.extended_text_message.expect("must be extended");
         assert_eq!(ext.text.as_deref(), Some("look https://example.com/post"));
@@ -362,9 +327,12 @@ mod tests {
             jpeg_thumbnail: vec![],
             preview_type: 0,
         };
-        let ext = build_text_message("https://example.com", &[], None, Some(&preview), 0)
-            .extended_text_message
-            .expect("preview presence alone must force extended");
+        let ext = build_text_message(&pb::SendTextRequest {
+            link_preview: Some(preview),
+            ..text_req("https://example.com")
+        })
+        .extended_text_message
+        .expect("preview presence alone must force extended");
         assert_eq!(ext.matched_text.as_deref(), Some("https://example.com"));
         assert_eq!(ext.title, None);
         assert_eq!(ext.description, None);
@@ -372,9 +340,51 @@ mod tests {
         assert_eq!(ext.preview_type, None);
     }
 
+    // Regression (code-review 2026-06-11): a preview-only extended text must
+    // NOT carry a present-but-empty ContextInfo — regular clients send the
+    // field absent, and an empty submessage is a fingerprintable wire shape.
+    #[test]
+    fn link_preview_only_leaves_context_absent() {
+        let ext = build_text_message(&pb::SendTextRequest {
+            link_preview: Some(full_preview()),
+            ..text_req("https://example.com")
+        })
+        .extended_text_message
+        .expect("preview presence alone must force extended");
+        assert_eq!(ext.context_info, None);
+    }
+
+    // Regression (code-review 2026-06-11): quoting in a DM leaves both
+    // participant fields empty; that must relay as the absent field, never
+    // Some("") — an empty JID on the WhatsApp wire.
+    #[test]
+    fn dm_quote_with_empty_participants_maps_participant_to_none() {
+        let quote = pb::QuoteContext {
+            quoted: Some(pb::MessageKey {
+                remote_jid: "5511999999999@s.whatsapp.net".to_string(),
+                id: "QUOTED-DM".to_string(),
+                from_me: false,
+                participant: String::new(),
+            }),
+            participant: String::new(),
+        };
+        let ext = build_text_message(&pb::SendTextRequest {
+            quote: Some(quote),
+            ..text_req("re: that")
+        })
+        .extended_text_message
+        .expect("quote forces extended");
+        let context = ext.context_info.expect("quote must build a context");
+        assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-DM"));
+        assert_eq!(context.participant, None);
+    }
+
     #[test]
     fn ephemeral_text_sets_context_expiration() {
-        let message = build_text_message("fugaz", &[], None, None, 86_400);
+        let message = build_text_message(&pb::SendTextRequest {
+            ephemeral_seconds: 86_400,
+            ..text_req("fugaz")
+        });
         let ext = message.extended_text_message.expect("must be extended");
         let context = ext.context_info.expect("context_info must be set");
         assert_eq!(context.expiration, Some(86_400));
@@ -385,25 +395,23 @@ mod tests {
 
     #[test]
     fn preview_mentions_quote_and_ephemeral_compose_in_one_extended() {
-        let mentions = [pb::Mention {
-            jid: "5511888888888@s.whatsapp.net".to_string(),
-        }];
-        let quote = pb::QuoteContext {
-            quoted: Some(pb::MessageKey {
-                remote_jid: "120363001234567890@g.us".to_string(),
-                id: "QUOTED-1".to_string(),
-                from_me: false,
-                participant: "5511777777777@s.whatsapp.net".to_string(),
+        let message = build_text_message(&pb::SendTextRequest {
+            mentions: vec![pb::Mention {
+                jid: "5511888888888@s.whatsapp.net".to_string(),
+            }],
+            quote: Some(pb::QuoteContext {
+                quoted: Some(pb::MessageKey {
+                    remote_jid: "120363001234567890@g.us".to_string(),
+                    id: "QUOTED-1".to_string(),
+                    from_me: false,
+                    participant: "5511777777777@s.whatsapp.net".to_string(),
+                }),
+                participant: String::new(),
             }),
-            participant: String::new(),
-        };
-        let message = build_text_message(
-            "all of it",
-            &mentions,
-            Some(&quote),
-            Some(&full_preview()),
-            90,
-        );
+            link_preview: Some(full_preview()),
+            ephemeral_seconds: 90,
+            ..text_req("all of it")
+        });
         let ext = message.extended_text_message.expect("must be extended");
         assert_eq!(
             ext.matched_text.as_deref(),
@@ -427,12 +435,14 @@ mod tests {
     // exists, expiration must stay absent (the core invents no duration).
     #[test]
     fn zero_ephemeral_leaves_expiration_absent() {
-        let mentions = [pb::Mention {
-            jid: "5511888888888@s.whatsapp.net".to_string(),
-        }];
-        let ext = build_text_message("@you", &mentions, None, None, 0)
-            .extended_text_message
-            .expect("mentions force extended");
+        let ext = build_text_message(&pb::SendTextRequest {
+            mentions: vec![pb::Mention {
+                jid: "5511888888888@s.whatsapp.net".to_string(),
+            }],
+            ..text_req("@you")
+        })
+        .extended_text_message
+        .expect("mentions force extended");
         let context = ext.context_info.expect("context_info must be set");
         assert_eq!(context.expiration, None);
     }

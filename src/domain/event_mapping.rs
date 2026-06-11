@@ -7,6 +7,7 @@ use std::sync::Arc;
 use prost014::Message as _;
 use wacore::types::events::Event;
 use wacore::types::message::MessageInfo;
+use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::proto::v1 as pb;
@@ -30,11 +31,19 @@ pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
         Event::PairingCode { code, .. } => {
             Some(pairing(pb::pairing_update::Event::PairCode(code.clone())))
         }
+        // PairSuccess has NO push name (push names arrive later via
+        // PushNameUpdate); the proto field is named for what the lib actually
+        // hands over (code-review 2026-06-11: it used to masquerade as
+        // push_name, empty for every personal account).
         Event::PairSuccess(p) => Some(pairing(pb::pairing_update::Event::Paired(pb::PairedInfo {
             jid: Some(pb::Jid {
                 value: p.id.to_string(),
             }),
-            push_name: p.business_name.clone(),
+            business_name: p.business_name.clone(),
+            lid: Some(pb::Jid {
+                value: p.lid.to_string(),
+            }),
+            platform: p.platform.clone(),
         }))),
         Event::PairError(p) => Some(pairing(pb::pairing_update::Event::Error(
             pb::PairingError {
@@ -47,7 +56,7 @@ pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
             chat: r.source.chat.to_string(),
             sender: r.source.sender.to_string(),
             message_ids: r.message_ids.iter().map(|m| m.to_string()).collect(),
-            r#type: format!("{:?}", r.r#type),
+            r#type: receipt_type_label(&r.r#type),
             timestamp: r.timestamp.timestamp_millis(),
         })),
         Event::UndecryptableMessage(u) => Some(Pb::Undecryptable(pb::UndecryptableEvent {
@@ -66,7 +75,7 @@ pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
             jid: c.source.sender.to_string(),
             online: true,
             last_seen: 0,
-            chat_state: format!("{:?}", c.state),
+            chat_state: chat_state_label(c.state, c.media).to_string(),
         })),
 
         Event::GroupUpdate(g) => Some(Pb::Group(pb::GroupUpdate {
@@ -104,6 +113,39 @@ pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
             payload: serde_json::to_vec(other).unwrap_or_default(),
             note: String::new(),
         })),
+    }
+}
+
+/// Receipt types relay as the lowercase tokens `ReceiptEvent.type` documents
+/// (code-review 2026-06-11: the old `{:?}` Debug casing — "Read" — broke any
+/// edge written against the proto contract). `Other` already carries the raw
+/// stanza attribute, so it relays verbatim.
+fn receipt_type_label(receipt: &ReceiptType) -> String {
+    match receipt {
+        ReceiptType::Delivered => "delivered".to_string(),
+        ReceiptType::Sender => "sender".to_string(),
+        ReceiptType::Retry => "retry".to_string(),
+        ReceiptType::EncRekeyRetry => "enc_rekey_retry".to_string(),
+        ReceiptType::Read => "read".to_string(),
+        ReceiptType::ReadSelf => "read-self".to_string(),
+        ReceiptType::Played => "played".to_string(),
+        ReceiptType::PlayedSelf => "played-self".to_string(),
+        ReceiptType::ServerError => "server-error".to_string(),
+        ReceiptType::Inactive => "inactive".to_string(),
+        ReceiptType::PeerMsg => "peer_msg".to_string(),
+        ReceiptType::HistorySync => "hist_sync".to_string(),
+        ReceiptType::Other(raw) => raw.clone(),
+    }
+}
+
+/// The lib models "recording" as Composing with media=Audio; the wire contract
+/// (`composing|recording|paused`, the same tokens SendPresence accepts back)
+/// flattens that pair into one token.
+fn chat_state_label(state: ChatPresence, media: ChatPresenceMedia) -> &'static str {
+    match (state, media) {
+        (ChatPresence::Composing, ChatPresenceMedia::Audio) => "recording",
+        (ChatPresence::Composing, ChatPresenceMedia::Text) => "composing",
+        (ChatPresence::Paused, _) => "paused",
     }
 }
 
@@ -233,7 +275,10 @@ fn variant_name(event: &Event) -> String {
         .to_string()
 }
 
-// Tests live in a sibling file to keep this one under the 500-line rule.
+// Tests live in sibling files to keep each one under the 500-line rule.
+#[cfg(test)]
+#[path = "event_mapping_media_tests.rs"]
+mod media_tests;
 #[cfg(test)]
 #[path = "event_mapping_tests.rs"]
 mod tests;

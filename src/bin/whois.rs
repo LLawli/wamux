@@ -104,10 +104,7 @@ async fn probe(
             value: to.to_string(),
         }),
         text: text.to_string(),
-        mentions: Vec::new(),
-        quote: None,
-        link_preview: None,
-        ephemeral_seconds: 0,
+        ..Default::default()
     };
     match messaging.send_text(request).await {
         Ok(resp) => {

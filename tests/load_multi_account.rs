@@ -20,16 +20,10 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::event_service_server::EventService;
 use wamux::services::event_service::EventSvc;
 use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage;
 
 mod common;
 
 const ACCOUNTS: usize = 200;
-
-fn database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
-}
 
 fn subscribe_account(uuid: &str) -> pb::SubscribeRequest {
     pb::SubscribeRequest {
@@ -40,28 +34,15 @@ fn subscribe_account(uuid: &str) -> pb::SubscribeRequest {
     }
 }
 
+/// 64-byte payload: enough flood weight to overrun the slow account's buffer.
 fn live_event(seq: i64) -> pb::EventEnvelope {
-    pb::EventEnvelope {
-        account_uuid: String::new(),
-        monotonic_seq: seq,
-        ts_unix_ms: 0,
-        event: Some(pb::event_envelope::Event::Raw(pb::RawEvent {
-            kind: "synthetic".to_string(),
-            payload: vec![0u8; 64],
-            note: String::new(),
-        })),
-    }
+    common::synthetic_envelope("", seq, 64)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "scale/stress test; run explicitly with --ignored"]
 async fn no_head_of_line_blocking_and_gap_under_load() {
-    let pool = storage::postgres::connect(&database_url(), 8)
-        .await
-        .expect("connect pg");
-    storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
+    let pool = common::connect_and_migrate(8).await;
 
     // Realistic broadcast: the modest probe burst fits cleanly, while the slow
     // account's heavy flood still overruns it and forces a lag → gap.

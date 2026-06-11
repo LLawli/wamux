@@ -102,10 +102,7 @@ async fn main() -> anyhow::Result<()> {
                 value: target.clone(),
             }),
             text: "wamux e2e: mensagem de texto ✅".to_string(),
-            mentions: Vec::new(),
-            quote: None,
-            link_preview: None,
-            ephemeral_seconds: 0,
+            ..Default::default()
         })
         .await?
         .into_inner();
@@ -200,14 +197,9 @@ async fn send_media(
             }),
             mime_type: mime.to_string(),
             caption: caption.to_string(),
-            mentions: Vec::new(),
-            quote: None,
             media_type: media_type.to_string(),
             filename: filename.to_string(),
-            ptt: false,
-            seconds: 0,
-            waveform: Vec::new(),
-            ephemeral_seconds: 0,
+            ..Default::default()
         })),
     };
     let mut chunks = vec![header];

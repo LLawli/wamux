@@ -54,7 +54,9 @@ fn mapped_inbound(msg: wa::Message) -> pb::InboundMessage {
     }
 }
 
-fn mapped_media(msg: wa::Message) -> (pb::MediaDescriptor, String) {
+/// pub(super): the media-descriptor suite lives in a sibling test file
+/// (event_mapping_media_tests.rs) to keep both under the 500-line rule.
+pub(super) fn mapped_media(msg: wa::Message) -> (pb::MediaDescriptor, String) {
     let out = mapped_inbound(msg);
     let media = out
         .media
@@ -157,106 +159,7 @@ fn maps_reaction_message_with_target_key() {
     assert_eq!(target.participant, SENDER_JID);
 }
 
-#[test]
-fn maps_image_media_descriptor_with_caption() {
-    let (media, caption) = mapped_media(wa::Message {
-        image_message: Some(Box::new(wa::message::ImageMessage {
-            mimetype: Some("image/jpeg".to_string()),
-            caption: Some("a cat".to_string()),
-            file_length: Some(2048),
-            direct_path: Some("/v/t62.image".to_string()),
-            media_key: Some(vec![1, 2, 3]),
-            file_enc_sha256: Some(vec![4, 5]),
-            file_sha256: Some(vec![6, 7]),
-            ..Default::default()
-        })),
-        ..Default::default()
-    });
-    assert_eq!(media.media_type, "image");
-    assert_eq!(media.mime_type, "image/jpeg");
-    assert_eq!(media.file_length, 2048);
-    assert_eq!(media.direct_path, "/v/t62.image");
-    assert_eq!(media.media_key, [1u8, 2, 3]);
-    assert_eq!(media.file_enc_sha256, [4u8, 5]);
-    assert_eq!(media.file_sha256, [6u8, 7]);
-    assert_eq!(caption, "a cat");
-}
-
-#[test]
-fn maps_video_media_descriptor_with_caption() {
-    let (media, caption) = mapped_media(wa::Message {
-        video_message: Some(Box::new(wa::message::VideoMessage {
-            mimetype: Some("video/mp4".to_string()),
-            caption: Some("a clip".to_string()),
-            file_length: Some(2048),
-            direct_path: Some("/v/t62.video".to_string()),
-            ..Default::default()
-        })),
-        ..Default::default()
-    });
-    assert_eq!(media.media_type, "video");
-    assert_eq!(media.mime_type, "video/mp4");
-    assert_eq!(media.file_length, 2048);
-    assert_eq!(media.direct_path, "/v/t62.video");
-    assert_eq!(caption, "a clip");
-}
-
-#[test]
-fn maps_audio_media_descriptor_without_caption() {
-    let (media, caption) = mapped_media(wa::Message {
-        audio_message: Some(Box::new(wa::message::AudioMessage {
-            mimetype: Some("audio/ogg; codecs=opus".to_string()),
-            file_length: Some(2048),
-            direct_path: Some("/v/t62.audio".to_string()),
-            ..Default::default()
-        })),
-        ..Default::default()
-    });
-    assert_eq!(media.media_type, "audio");
-    assert_eq!(media.mime_type, "audio/ogg; codecs=opus");
-    assert_eq!(media.file_length, 2048);
-    assert_eq!(media.direct_path, "/v/t62.audio");
-    // AudioMessage has no caption field in the WA proto.
-    assert!(caption.is_empty());
-}
-
-#[test]
-fn maps_document_media_descriptor_with_caption() {
-    let (media, caption) = mapped_media(wa::Message {
-        document_message: Some(Box::new(wa::message::DocumentMessage {
-            mimetype: Some("application/pdf".to_string()),
-            caption: Some("the invoice".to_string()),
-            file_length: Some(2048),
-            direct_path: Some("/v/t62.document".to_string()),
-            ..Default::default()
-        })),
-        ..Default::default()
-    });
-    assert_eq!(media.media_type, "document");
-    assert_eq!(media.mime_type, "application/pdf");
-    assert_eq!(media.file_length, 2048);
-    assert_eq!(media.direct_path, "/v/t62.document");
-    assert_eq!(caption, "the invoice");
-}
-
-#[test]
-fn maps_sticker_media_descriptor_without_caption() {
-    let (media, caption) = mapped_media(wa::Message {
-        sticker_message: Some(Box::new(wa::message::StickerMessage {
-            mimetype: Some("image/webp".to_string()),
-            file_length: Some(2048),
-            direct_path: Some("/v/t62.sticker".to_string()),
-            ..Default::default()
-        })),
-        ..Default::default()
-    });
-    assert_eq!(media.media_type, "sticker");
-    assert_eq!(media.mime_type, "image/webp");
-    assert_eq!(media.file_length, 2048);
-    assert_eq!(media.direct_path, "/v/t62.sticker");
-    // StickerMessage has no caption field in the WA proto.
-    assert!(caption.is_empty());
-}
+// The five media-descriptor tests live in event_mapping_media_tests.rs.
 
 #[test]
 fn maps_receipt_with_ids_type_and_millis() {
@@ -271,7 +174,8 @@ fn maps_receipt_with_ids_type_and_millis() {
             assert_eq!(r.chat, CHAT_JID);
             assert_eq!(r.sender, SENDER_JID);
             assert_eq!(r.message_ids, ["AAA111", "BBB222"]);
-            assert_eq!(r.r#type, "Read");
+            // Lowercase wire token per the proto contract, never Debug casing.
+            assert_eq!(r.r#type, "read");
             assert_eq!(r.timestamp, 1_717_932_111_000);
         }
         other => panic!("expected receipt, got {other:?}"),
@@ -331,8 +235,21 @@ fn maps_chat_presence_to_composing_state() {
     assert_eq!(p.jid, SENDER_JID);
     // A contact that is typing is by definition online.
     assert!(p.online);
-    assert_eq!(p.chat_state, "Composing");
-    assert!(!p.chat_state.is_empty());
+    // Lowercase wire token per the proto contract (composing|recording|paused),
+    // round-trippable into SendPresenceRequest.state.
+    assert_eq!(p.chat_state, "composing");
+}
+
+// The lib has no Recording variant: it models recording as Composing with
+// media=Audio. The wire contract flattens that pair back to "recording".
+#[test]
+fn maps_chat_presence_audio_to_recording_state() {
+    let p = mapped_presence(&Event::ChatPresence(ChatPresenceUpdate {
+        source: sample_source(),
+        state: ChatPresence::Composing,
+        media: ChatPresenceMedia::Audio,
+    }));
+    assert_eq!(p.chat_state, "recording");
 }
 
 #[test]
@@ -436,7 +353,13 @@ fn maps_pair_success_to_paired_info() {
         Some(PbEvent::Pairing(update)) => match update.event {
             Some(pb::pairing_update::Event::Paired(info)) => {
                 assert_eq!(info.jid.expect("paired jid must be set").value, SENDER_JID);
-                assert_eq!(info.push_name, "ACME Corp");
+                // business_name relays as itself; PairSuccess has no push name.
+                assert_eq!(info.business_name, "ACME Corp");
+                assert_eq!(
+                    info.lid.expect("lid must be set").value,
+                    "204255232763170@lid"
+                );
+                assert_eq!(info.platform, "smba");
             }
             other => panic!("expected paired info, got {other:?}"),
         },

@@ -8,23 +8,51 @@ use whatsapp_rust::waproto::whatsapp::message::{
 };
 use whatsapp_rust::{Client, Jid, SendResult};
 
-use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string};
+use crate::domain::outgoing_context::outgoing_context;
+use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_u32};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
-fn media_type(value: &str) -> Result<MediaType, WamuxError> {
-    Ok(match value {
-        "image" => MediaType::Image,
-        "video" => MediaType::Video,
-        "audio" => MediaType::Audio,
-        "document" => MediaType::Document,
-        "sticker" => MediaType::Sticker,
-        other => {
-            return Err(WamuxError::InvalidArgument(format!(
-                "unknown media_type '{other}'"
-            )));
+/// The five media kinds wamux relays, parsed ONCE from the wire string. Both
+/// the upload `MediaType` and the outgoing sub-message derive from this enum,
+/// so the two can never drift (code-review 2026-06-11: two independent string
+/// matches let a payload upload under one type yet ship mislabeled as image).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MediaKind {
+    Image,
+    Video,
+    Audio,
+    Document,
+    Sticker,
+}
+
+impl MediaKind {
+    pub(crate) fn parse(value: &str) -> Result<Self, WamuxError> {
+        Ok(match value {
+            "image" => Self::Image,
+            "video" => Self::Video,
+            "audio" => Self::Audio,
+            "document" => Self::Document,
+            "sticker" => Self::Sticker,
+            other => {
+                return Err(WamuxError::InvalidArgument(format!(
+                    "unknown media_type '{other}'"
+                )));
+            }
+        })
+    }
+
+    /// The wacore upload/download type for this kind (wacore's enum has many
+    /// more variants — history, app state — that are not relay media).
+    fn upload_type(self) -> MediaType {
+        match self {
+            Self::Image => MediaType::Image,
+            Self::Video => MediaType::Video,
+            Self::Audio => MediaType::Audio,
+            Self::Document => MediaType::Document,
+            Self::Sticker => MediaType::Sticker,
         }
-    })
+    }
 }
 
 pub async fn send_media(
@@ -33,55 +61,54 @@ pub async fn send_media(
     header: &pb::SendMediaHeader,
     data: Vec<u8>,
 ) -> Result<SendResult, WamuxError> {
-    let kind = media_type(&header.media_type)?;
+    let kind = MediaKind::parse(&header.media_type)?;
     let upload = client
-        .upload(data, kind, UploadOptions::new())
+        .upload(data, kind.upload_type(), UploadOptions::new())
         .await
         .map_err(client_err)?;
-    let message = build_media_message(header, upload);
+    let message = build_media_message(kind, header, upload);
     client.send_message(to, message).await.map_err(client_err)
 }
 
 /// Pure construction of the outgoing media `wa::Message` from the wire header
 /// plus the finished upload. Header fields relay verbatim; proto3 defaults
-/// (empty string/bytes, zero) map to absent waproto fields.
-pub(crate) fn build_media_message(header: &pb::SendMediaHeader, up: UploadResponse) -> wa::Message {
-    let context = ephemeral_context(header.ephemeral_seconds);
-    match header.media_type.as_str() {
-        "video" => wa::Message {
-            video_message: Some(Box::new(video_submessage(header, up, context))),
-            ..Default::default()
-        },
-        "audio" => wa::Message {
-            audio_message: Some(Box::new(audio_submessage(header, up, context))),
-            ..Default::default()
-        },
-        "document" => wa::Message {
-            document_message: Some(Box::new(document_submessage(header, up, context))),
-            ..Default::default()
-        },
-        "sticker" => wa::Message {
-            sticker_message: Some(Box::new(sticker_submessage(header, up, context))),
-            ..Default::default()
-        },
-        _ => wa::Message {
+/// (empty string/bytes, zero) map to absent waproto fields. The exhaustive
+/// `MediaKind` match (no catch-all) keeps builder and upload type in lockstep.
+pub(crate) fn build_media_message(
+    kind: MediaKind,
+    header: &pb::SendMediaHeader,
+    up: UploadResponse,
+) -> wa::Message {
+    // Each wa media sub-message carries its own ContextInfo; the shared
+    // builder relays mentions + quote + ephemeral (or omits the field when
+    // all three are the proto3 default), same composition as the text path.
+    let context = outgoing_context(
+        &header.mentions,
+        header.quote.as_ref(),
+        header.ephemeral_seconds,
+    );
+    match kind {
+        MediaKind::Image => wa::Message {
             image_message: Some(Box::new(image_submessage(header, up, context))),
             ..Default::default()
         },
-    }
-}
-
-/// Ephemeral relay: each wa media sub-message carries its own ContextInfo, so
-/// every branch attaches this one. Zero (the proto3 default) means "not
-/// ephemeral" and omits the ContextInfo entirely; the edge supplies the
-/// chat's setting, the core never tracks it.
-fn ephemeral_context(ephemeral_seconds: u32) -> Option<Box<wa::ContextInfo>> {
-    (ephemeral_seconds > 0).then(|| {
-        Box::new(wa::ContextInfo {
-            expiration: Some(ephemeral_seconds),
+        MediaKind::Video => wa::Message {
+            video_message: Some(Box::new(video_submessage(header, up, context))),
             ..Default::default()
-        })
-    })
+        },
+        MediaKind::Audio => wa::Message {
+            audio_message: Some(Box::new(audio_submessage(header, up, context))),
+            ..Default::default()
+        },
+        MediaKind::Document => wa::Message {
+            document_message: Some(Box::new(document_submessage(header, up, context))),
+            ..Default::default()
+        },
+        MediaKind::Sticker => wa::Message {
+            sticker_message: Some(Box::new(sticker_submessage(header, up, context))),
+            ..Default::default()
+        },
+    }
 }
 
 /// The five wa media sub-messages duplicate the exact same upload/mime/context
@@ -131,7 +158,7 @@ fn audio_submessage(
             // OGG/Opus payloads; supplying those bytes is the edge's job.
             // "Not a voice note" is the absent field (None), never Some(false).
             ptt: header.ptt.then_some(true),
-            seconds: (header.seconds > 0).then_some(header.seconds),
+            seconds: nonzero_u32(header.seconds),
             waveform: nonempty_bytes(&header.waveform),
         },
         header,
@@ -184,7 +211,7 @@ pub async fn download(
     client: &Client,
     descriptor: &pb::MediaDescriptor,
 ) -> Result<Vec<u8>, WamuxError> {
-    let kind = media_type(&descriptor.media_type)?;
+    let kind = MediaKind::parse(&descriptor.media_type)?;
     client
         .download_from_params(
             &descriptor.direct_path,
@@ -192,7 +219,7 @@ pub async fn download(
             &descriptor.file_sha256,
             &descriptor.file_enc_sha256,
             descriptor.file_length,
-            kind,
+            kind.upload_type(),
         )
         .await
         .map_err(client_err)
@@ -203,17 +230,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn media_type_maps_each_accepted_string() {
-        assert_eq!(media_type("image").unwrap(), MediaType::Image);
-        assert_eq!(media_type("video").unwrap(), MediaType::Video);
-        assert_eq!(media_type("audio").unwrap(), MediaType::Audio);
-        assert_eq!(media_type("document").unwrap(), MediaType::Document);
-        assert_eq!(media_type("sticker").unwrap(), MediaType::Sticker);
+    fn media_kind_parses_each_accepted_string_to_its_upload_type() {
+        assert_eq!(
+            MediaKind::parse("image").unwrap().upload_type(),
+            MediaType::Image
+        );
+        assert_eq!(
+            MediaKind::parse("video").unwrap().upload_type(),
+            MediaType::Video
+        );
+        assert_eq!(
+            MediaKind::parse("audio").unwrap().upload_type(),
+            MediaType::Audio
+        );
+        assert_eq!(
+            MediaKind::parse("document").unwrap().upload_type(),
+            MediaType::Document
+        );
+        assert_eq!(
+            MediaKind::parse("sticker").unwrap().upload_type(),
+            MediaType::Sticker
+        );
     }
 
     #[test]
-    fn media_type_unknown_value_is_invalid_argument_with_value() {
-        let err = media_type("gif").unwrap_err();
+    fn media_kind_unknown_value_is_invalid_argument_with_value() {
+        let err = MediaKind::parse("gif").unwrap_err();
         match err {
             WamuxError::InvalidArgument(msg) => assert!(msg.contains("gif"), "got: {msg}"),
             other => panic!("expected InvalidArgument, got {other:?}"),
@@ -223,9 +265,9 @@ mod tests {
     // The match arms are exact lowercase literals: "Image" must be rejected.
     // Pinned so a future "helpful" case-fold doesn't sneak policy into the core.
     #[test]
-    fn media_type_is_case_sensitive() {
+    fn media_kind_is_case_sensitive() {
         assert!(matches!(
-            media_type("Image"),
+            MediaKind::parse("Image"),
             Err(WamuxError::InvalidArgument(_))
         ));
     }
@@ -252,6 +294,7 @@ mod tests {
     #[test]
     fn image_message_carries_upload_mime_and_caption() {
         let message = build_media_message(
+            MediaKind::Image,
             &pb::SendMediaHeader {
                 mime_type: "image/jpeg".to_string(),
                 caption: "a caption".to_string(),
@@ -275,6 +318,7 @@ mod tests {
     #[test]
     fn document_message_carries_filename_and_caption() {
         let message = build_media_message(
+            MediaKind::Document,
             &pb::SendMediaHeader {
                 mime_type: "application/pdf".to_string(),
                 caption: "the report".to_string(),
@@ -298,6 +342,7 @@ mod tests {
     #[test]
     fn audio_with_ptt_seconds_waveform_is_a_voice_note() {
         let message = build_media_message(
+            MediaKind::Audio,
             &pb::SendMediaHeader {
                 mime_type: "audio/ogg; codecs=opus".to_string(),
                 ptt: true,
@@ -319,6 +364,7 @@ mod tests {
     #[test]
     fn audio_without_ptt_stays_plain_audio() {
         let message = build_media_message(
+            MediaKind::Audio,
             &pb::SendMediaHeader {
                 mime_type: "audio/mp4".to_string(),
                 ..header("audio")
@@ -335,6 +381,7 @@ mod tests {
     #[test]
     fn audio_ptt_with_empty_waveform_maps_waveform_to_none() {
         let message = build_media_message(
+            MediaKind::Audio,
             &pb::SendMediaHeader {
                 ptt: true,
                 seconds: 3,
@@ -351,6 +398,7 @@ mod tests {
     #[test]
     fn ephemeral_image_sets_context_expiration() {
         let message = build_media_message(
+            MediaKind::Image,
             &pb::SendMediaHeader {
                 ephemeral_seconds: 86_400,
                 ..header("image")
@@ -362,12 +410,53 @@ mod tests {
         assert_eq!(context.expiration, Some(86_400));
     }
 
+    // Regression (code-review 2026-06-11): SendMediaHeader.quote and .mentions
+    // were silently dropped — only ephemeral reached the ContextInfo. A media
+    // reply must carry the quote exactly like the text path does.
+    #[test]
+    fn media_quote_and_mentions_relay_into_context() {
+        let message = build_media_message(
+            MediaKind::Image,
+            &pb::SendMediaHeader {
+                mentions: vec![pb::Mention {
+                    jid: "5511888888888@s.whatsapp.net".to_string(),
+                }],
+                quote: Some(pb::QuoteContext {
+                    quoted: Some(pb::MessageKey {
+                        remote_jid: "120363001234567890@g.us".to_string(),
+                        id: "QUOTED-1".to_string(),
+                        from_me: false,
+                        participant: "5511777777777@s.whatsapp.net".to_string(),
+                    }),
+                    participant: String::new(),
+                }),
+                ephemeral_seconds: 90,
+                ..header("image")
+            },
+            fake_upload(),
+        );
+        let img = message.image_message.expect("image_message must be set");
+        let context = img.context_info.expect("context_info must be set");
+        assert_eq!(
+            context.mentioned_jid,
+            vec!["5511888888888@s.whatsapp.net".to_string()]
+        );
+        assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-1"));
+        assert_eq!(
+            context.participant.as_deref(),
+            Some("5511777777777@s.whatsapp.net")
+        );
+        // Quote/mentions compose with ephemeral in the one shared ContextInfo.
+        assert_eq!(context.expiration, Some(90));
+    }
+
     // Every media branch must relay the expiration, not just image/audio.
     #[test]
     fn ephemeral_applies_to_every_media_branch() {
         let kinds = ["video", "audio", "document", "sticker"];
         for kind in kinds {
             let message = build_media_message(
+                MediaKind::parse(kind).expect("test kinds are valid"),
                 &pb::SendMediaHeader {
                     ephemeral_seconds: 604_800,
                     ..header(kind)

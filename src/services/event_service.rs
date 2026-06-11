@@ -25,45 +25,52 @@ impl EventSvc {
     }
 }
 
+/// Shared shell for both gap kinds: the load-bearing discriminators
+/// (monotonic_seq -1, empty payload, the `kind` string documented on
+/// `RawEvent`) must stay in lockstep between them.
+fn gap_envelope(account_uuid: String, kind: &str, note: String) -> pb::EventEnvelope {
+    pb::EventEnvelope {
+        account_uuid,
+        monotonic_seq: -1,
+        ts_unix_ms: 0,
+        event: Some(pb::event_envelope::Event::Raw(pb::RawEvent {
+            kind: kind.to_string(),
+            payload: Vec::new(),
+            note,
+        })),
+    }
+}
+
 /// Lossy-delivery contract: when a subscriber falls behind the broadcast buffer,
 /// the core emits this marker instead of the dropped events. State transitions
 /// can be among the dropped events, so the note carries the current connection
 /// state and tells the edge to resync via `GetAccountStatus` (which reads the
 /// authoritative watch channel).
 fn gap_marker(account_uuid: &str, lagged: u64, state: pb::ConnectionState) -> pb::EventEnvelope {
-    pb::EventEnvelope {
-        account_uuid: account_uuid.to_string(),
-        monotonic_seq: -1,
-        ts_unix_ms: 0,
-        event: Some(pb::event_envelope::Event::Raw(pb::RawEvent {
-            kind: "gap".to_string(),
-            payload: Vec::new(),
-            note: format!("dropped {lagged} events; state={state:?}; resync via GetAccountStatus"),
-        })),
-    }
+    gap_envelope(
+        account_uuid.to_string(),
+        "gap",
+        format!("dropped {lagged} events; state={state:?}; resync via GetAccountStatus"),
+    )
 }
 
 /// Gap marker for the account-created broadcast itself (all-accounts streams
 /// only). Lagging here takes a burst of >64 creates while the follower is
 /// starved; it means forwarders for some new accounts were never attached, so
-/// their events are silently absent from this stream. The note hands the edge
-/// the recovery primitives (re-subscribe or reconcile via `ListAccounts`) —
-/// mechanism, not policy.
+/// their events are silently absent from this stream. A DISTINCT kind
+/// (code-review 2026-06-11): the edge dispatches on `kind`, never on note
+/// prose, and the recovery differs from the per-account gap (re-subscribe or
+/// reconcile via `ListAccounts` — mechanism, not policy).
 fn created_gap_marker(lagged: u64) -> pb::EventEnvelope {
-    pb::EventEnvelope {
-        account_uuid: String::new(),
-        monotonic_seq: -1,
-        ts_unix_ms: 0,
-        event: Some(pb::event_envelope::Event::Raw(pb::RawEvent {
-            kind: "gap".to_string(),
-            payload: Vec::new(),
-            note: format!(
-                "dropped {lagged} account-created notifications; newly created \
-                 accounts may be missing from this stream; re-subscribe or \
-                 reconcile via ListAccounts"
-            ),
-        })),
-    }
+    gap_envelope(
+        String::new(),
+        "subscription_gap",
+        format!(
+            "dropped {lagged} account-created notifications; newly created \
+             accounts may be missing from this stream; re-subscribe or \
+             reconcile via ListAccounts"
+        ),
+    )
 }
 
 /// Forward one account's events (with optional ring replay) into `tx`.
@@ -74,8 +81,15 @@ fn forward(
 ) {
     tokio::spawn(async move {
         let mut rx = handle.subscribe();
+        // Subscribe-before-snapshot means an event published in between lands
+        // in BOTH the ring snapshot and the live receiver (at-least-once by
+        // construction; the reverse order would lose it). Tracking the highest
+        // replayed seq and skipping live copies upgrades that overlap to
+        // exactly-once, the contract documented on `replay_from_ring`.
+        let mut last_replayed: i64 = -1;
         if replay > 0 {
             for envelope in handle.ring.snapshot(replay).await {
+                last_replayed = last_replayed.max(envelope.monotonic_seq);
                 if tx.send(Ok(envelope)).await.is_err() {
                     return;
                 }
@@ -83,8 +97,19 @@ fn forward(
         }
         let uuid = handle.uuid.to_string();
         loop {
-            match rx.recv().await {
+            // Same guard as follow_created_step: this task's own `handle`
+            // keeps the broadcast sender alive, so `Closed` never fires and an
+            // idle (or deleted) account would otherwise park this task — and
+            // pin the AccountHandle — until the next event, i.e. forever.
+            let received = tokio::select! {
+                () = tx.closed() => break,
+                received = rx.recv() => received,
+            };
+            match received {
                 Ok(envelope) => {
+                    if envelope.monotonic_seq <= last_replayed {
+                        continue; // already delivered by the replay above
+                    }
                     if tx.send(Ok(envelope)).await.is_err() {
                         break;
                     }
@@ -124,20 +149,19 @@ fn forward_all_accounts(
     for account in snapshot {
         forward(account, replay, tx.clone());
     }
-    follow_created_accounts(created_rx, snapshot_uuids, replay, tx);
+    follow_created_accounts(created_rx, snapshot_uuids, tx);
 }
 
-/// Attach a forwarder for each account created after the subscribe. The same
-/// `replay` is passed through: a brand-new account's ring is empty, so replay
-/// is a harmless no-op for it.
+/// Attach a forwarder for each account created after the subscribe. The
+/// client's `replay_from_ring` is deliberately NOT passed through: created
+/// accounts always replay their FULL ring (see `follow_created_step`).
 fn follow_created_accounts(
     mut created_rx: broadcast::Receiver<Arc<AccountHandle>>,
     snapshot_uuids: HashSet<Uuid>,
-    replay: usize,
     tx: mpsc::Sender<Result<pb::EventEnvelope, Status>>,
 ) {
     tokio::spawn(async move {
-        while follow_created_step(&mut created_rx, &snapshot_uuids, replay, &tx).await {}
+        while follow_created_step(&mut created_rx, &snapshot_uuids, &tx).await {}
     });
 }
 
@@ -146,7 +170,6 @@ fn follow_created_accounts(
 async fn follow_created_step(
     created_rx: &mut broadcast::Receiver<Arc<AccountHandle>>,
     snapshot_uuids: &HashSet<Uuid>,
-    replay: usize,
     tx: &mpsc::Sender<Result<pb::EventEnvelope, Status>>,
 ) -> bool {
     let received = tokio::select! {
@@ -159,8 +182,17 @@ async fn follow_created_step(
     match received {
         Ok(account) => {
             // Skips the subscribe/snapshot overlap (see forward_all_accounts).
+            // Full-ring replay regardless of the client's replay_from_ring
+            // (code-review 2026-06-11): events this account emitted between
+            // created_tx.send and this forwarder's subscribe were broadcast to
+            // zero receivers, but the dispatch path pushes to the ring FIRST,
+            // so replaying the whole (young) ring recovers them — for an
+            // account created after the subscribe, "live only" starts at its
+            // creation. forward()'s seq filter dedupes the overlap. (With
+            // ring_capacity 0 the ring stores nothing and the window remains;
+            // replay is config-disabled then.)
             if !snapshot_uuids.contains(&account.uuid) {
-                forward(account, replay, tx.clone());
+                forward(account, usize::MAX, tx.clone());
             }
             true
         }
@@ -216,6 +248,8 @@ mod tests {
         assert!(raw.note.contains("GetAccountStatus"));
     }
 
+    // The kind string IS the dispatch contract (proto/events.proto RawEvent):
+    // distinct from the per-account "gap" so the edge never sniffs note prose.
     #[test]
     fn created_gap_marker_points_edge_at_list_accounts() {
         let marker = created_gap_marker(7);
@@ -224,7 +258,7 @@ mod tests {
         let Some(pb::event_envelope::Event::Raw(raw)) = marker.event else {
             panic!("created gap marker must be a raw event");
         };
-        assert_eq!(raw.kind, "gap");
+        assert_eq!(raw.kind, "subscription_gap");
         assert!(raw.note.contains("dropped 7 account-created"));
         assert!(raw.note.contains("re-subscribe"));
         assert!(raw.note.contains("ListAccounts"));

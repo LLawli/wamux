@@ -57,7 +57,14 @@ message ConnectAccountRequest {
 
 message PairedInfo {
   Jid jid = 1;
-  string push_name = 2;
+  // Removed: the lib's PairSuccess carries no push name at pair time; the old
+  // field relayed the business name under a misleading name. Use
+  // business_name, and take push names from PushNameUpdate events.
+  reserved 2;
+  reserved "push_name";
+  string business_name = 3;         // empty for personal (non-business) accounts
+  Jid lid = 4;                      // the account's LID (hidden-PN) identity
+  string platform = 5;              // e.g. "android", "smba", "iphone"
 }
 
 message PairingError {

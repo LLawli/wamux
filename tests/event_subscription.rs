@@ -17,32 +17,13 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::event_service_server::EventService;
 use wamux::services::event_service::EventSvc;
 use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage;
 
 mod common;
-
-fn database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
-}
 
 fn subscribe_all() -> pb::SubscribeRequest {
     pb::SubscribeRequest {
         selector: Some(pb::subscribe_request::Selector::AllAccounts(pb::Empty {})),
         replay_from_ring: 0,
-    }
-}
-
-fn synthetic_event(account_uuid: &str, seq: i64) -> pb::EventEnvelope {
-    pb::EventEnvelope {
-        account_uuid: account_uuid.to_string(),
-        monotonic_seq: seq,
-        ts_unix_ms: 0,
-        event: Some(pb::event_envelope::Event::Raw(pb::RawEvent {
-            kind: "synthetic".to_string(),
-            payload: Vec::new(),
-            note: String::new(),
-        })),
     }
 }
 
@@ -79,13 +60,7 @@ async fn expect_event_from(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn all_accounts_subscription_includes_later_created_accounts() {
-    let pool = storage::postgres::connect(&database_url(), 4)
-        .await
-        .expect("connect pg");
-    storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
-
+    let pool = common::connect_and_migrate(4).await;
     let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(8)));
     let swept = common::sweep_orphans(registry.pool(), "evsub-").await;
     if swept > 0 {
@@ -109,7 +84,9 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
     // Snapshot path intact: the pre-existing account still delivers.
     await_forwarder_attached(&before.events_tx, "before").await;
     let before_uuid = before.uuid.to_string();
-    let _ = before.events_tx.send(synthetic_event(&before_uuid, 1));
+    let _ = before
+        .events_tx
+        .send(common::synthetic_envelope(&before_uuid, 1, 0));
     expect_event_from(&mut stream, &before_uuid, 1).await;
 
     // Dynamic path: an account created AFTER the subscribe delivers too —
@@ -121,7 +98,9 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
         .expect("create after-account");
     await_forwarder_attached(&after.events_tx, "after").await;
     let after_uuid = after.uuid.to_string();
-    let _ = after.events_tx.send(synthetic_event(&after_uuid, 2));
+    let _ = after
+        .events_tx
+        .send(common::synthetic_envelope(&after_uuid, 2, 0));
     expect_event_from(&mut stream, &after_uuid, 2).await;
 
     // Tidy: proper deletes through the registry, then the sweep as a backstop
@@ -129,4 +108,51 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
     registry.delete(&before).await.expect("delete before");
     registry.delete(&after).await.expect("delete after");
     let _ = common::sweep_orphans(registry.pool(), "evsub-").await;
+}
+
+// Regression (code-review 2026-06-11): an event dispatched between
+// CreateAccount and the dynamic forwarder's subscribe used to vanish from
+// replay_from_ring=0 all-accounts streams (broadcast to zero receivers). The
+// dispatch path pushes to the ring BEFORE broadcasting and the
+// created-follower replays a created account's FULL ring, so the event is
+// recovered — and forward()'s seq filter keeps it exactly-once when the live
+// copy also lands. Distinct prefix: the other test's setup-sweep runs in
+// parallel and must not reap this test's rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn created_account_event_before_attach_is_recovered_from_ring() {
+    let pool = common::connect_and_migrate(4).await;
+    let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(8)));
+    let _ = common::sweep_orphans(registry.pool(), "evsubring-").await;
+
+    let svc = EventSvc::new(registry.clone());
+    let mut stream = svc
+        .subscribe_events(Request::new(subscribe_all()))
+        .await
+        .expect("subscribe all-accounts")
+        .into_inner();
+
+    let tag = uuid::Uuid::new_v4();
+    let account = registry
+        .create_account(Some(&format!("evsubring-{tag}")))
+        .await
+        .expect("create account");
+    let uuid = account.uuid.to_string();
+    // Mimic event_bridge::dispatch firing before the forwarder attached:
+    // ring first, then a broadcast that may find zero receivers (= dropped).
+    account
+        .ring
+        .push(common::synthetic_envelope(&uuid, 1, 0))
+        .await;
+    let _ = account
+        .events_tx
+        .send(common::synthetic_envelope(&uuid, 1, 0));
+
+    expect_event_from(&mut stream, &uuid, 1).await;
+
+    // Exactly-once: the replayed and live copies must not both surface.
+    let extra = tokio::time::timeout(Duration::from_millis(300), stream.next()).await;
+    assert!(extra.is_err(), "event delivered twice: {extra:?}");
+
+    registry.delete(&account).await.expect("delete account");
+    let _ = common::sweep_orphans(registry.pool(), "evsubring-").await;
 }

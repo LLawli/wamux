@@ -122,7 +122,7 @@ impl From<WamuxError> for tonic::Status {
             }
             WamuxError::WaServer { code, text } => {
                 tracing::warn!(code, text = %text, "whatsapp server rejected the request");
-                wa_server_status(*code, err.to_string())
+                wa_server_status(*code, text, err.to_string())
             }
         }
     }
@@ -131,16 +131,32 @@ impl From<WamuxError> for tonic::Status {
 /// Honest relay of an upstream IQ rejection: the request DID reach WhatsApp
 /// and was refused, so auth-shaped codes must not read as "core down" (the
 /// edge turned them into 503). Unmapped codes keep the legacy Unavailable.
-fn wa_server_status(code: u16, message: String) -> tonic::Status {
-    use tonic::Status;
-    match code {
-        400 => Status::invalid_argument(message),
-        401 => Status::unauthenticated(message),
-        403 => Status::permission_denied(message),
-        404 => Status::not_found(message),
-        429 => Status::resource_exhausted(message),
-        _ => Status::unavailable(message),
+///
+/// The raw upstream code/text also ride as `wa-code`/`wa-text` trailers
+/// (code-review 2026-06-11): the edge composes policy on the structured
+/// primitive; the prose message is for humans and free to change.
+fn wa_server_status(code: u16, text: &str, message: String) -> tonic::Status {
+    use tonic::metadata::MetadataValue;
+    use tonic::{Code, Status};
+    let grpc_code = match code {
+        400 => Code::InvalidArgument,
+        401 => Code::Unauthenticated,
+        403 => Code::PermissionDenied,
+        404 => Code::NotFound,
+        429 => Code::ResourceExhausted,
+        _ => Code::Unavailable,
+    };
+    let mut status = Status::new(grpc_code, message);
+    // u16 digits are always valid ASCII metadata, so this never skips.
+    if let Ok(value) = MetadataValue::try_from(code.to_string()) {
+        status.metadata_mut().insert("wa-code", value);
     }
+    // IQ text is normally an ASCII token ("not-authorized"); anything tonic
+    // can't carry as ASCII is silently omitted — the prose still has it.
+    if let Ok(value) = MetadataValue::try_from(text) {
+        status.metadata_mut().insert("wa-text", value);
+    }
+    status
 }
 
 #[cfg(test)]
@@ -190,6 +206,29 @@ mod tests {
             status_for(iq(500, "internal-server-error")).code(),
             tonic::Code::Unavailable
         );
+    }
+
+    // The structured contract: the edge reads wa-code/wa-text trailers, never
+    // regexes the prose message (whose wording is free to change).
+    #[test]
+    fn iq_rejection_carries_wa_code_and_wa_text_metadata() {
+        let status = status_for(iq(403, "forbidden"));
+        assert_eq!(status.metadata().get("wa-code").unwrap(), "403");
+        assert_eq!(status.metadata().get("wa-text").unwrap(), "forbidden");
+    }
+
+    // Even codes that collapse to Unavailable stay distinguishable by trailer.
+    #[test]
+    fn unmapped_iq_code_still_carries_wa_code_metadata() {
+        let status = status_for(iq(409, "conflict"));
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert_eq!(status.metadata().get("wa-code").unwrap(), "409");
+    }
+
+    #[test]
+    fn non_iq_client_error_has_no_wa_metadata() {
+        let status = status_for(anyhow::anyhow!("websocket torn down"));
+        assert!(status.metadata().get("wa-code").is_none());
     }
 
     #[test]

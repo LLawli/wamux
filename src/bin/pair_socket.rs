@@ -67,7 +67,10 @@ async fn main() -> anyhow::Result<()> {
             Some(pb::pairing_update::Event::PairCode(code)) => println!("pair code: {code}"),
             Some(pb::pairing_update::Event::Paired(info)) => {
                 let jid = info.jid.map(|j| j.value).unwrap_or_default();
-                println!("\n✅ PAIRED as {jid} (push_name={})", info.push_name);
+                println!(
+                    "\n✅ PAIRED as {jid} (business_name={})",
+                    info.business_name
+                );
                 send_self(&mut messaging, account_ref.clone(), jid).await;
                 break;
             }
@@ -93,10 +96,7 @@ async fn send_self(
         account: Some(account),
         to: Some(pb::Jid { value: jid }),
         text: "wamux: pareamento via socket + envio OK ✅".to_string(),
-        mentions: Vec::new(),
-        quote: None,
-        link_preview: None,
-        ephemeral_seconds: 0,
+        ..Default::default()
     };
     match messaging.send_text(request).await {
         Ok(resp) => {
