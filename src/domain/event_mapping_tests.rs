@@ -220,6 +220,44 @@ fn maps_inbound_edit_to_is_edit_with_new_text_and_target() {
     assert_eq!(target.id, "EDITED-MSG-1");
 }
 
+// E2E triage re-run 2026-06-16: the REAL inbound edit shape the lib's
+// Client::edit_message builds wraps the protocol_message one level deeper, in
+// edited_message(FutureProofMessage).message.protocol_message. The unwrapped
+// test above missed this exact shape (revoke worked, edit silently didn't); the
+// mapper must unwrap edited_message before projecting.
+#[test]
+fn maps_wrapped_inbound_edit_to_is_edit_with_new_text_and_target() {
+    let out = mapped_inbound(wa::Message {
+        edited_message: Some(Box::new(wa::message::FutureProofMessage {
+            message: Some(Box::new(wa::Message {
+                protocol_message: Some(Box::new(wa::message::ProtocolMessage {
+                    r#type: Some(wa::message::protocol_message::Type::MessageEdit as i32),
+                    key: Some(wa::MessageKey {
+                        remote_jid: Some(CHAT_JID.to_string()),
+                        id: Some("WRAPPED-EDIT-1".to_string()),
+                        from_me: Some(false),
+                        participant: Some(SENDER_JID.to_string()),
+                    }),
+                    edited_message: Some(Box::new(wa::Message {
+                        conversation: Some("wrapped new text".to_string()),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })),
+        })),
+        ..Default::default()
+    });
+    assert!(out.is_edit);
+    assert!(!out.is_delete);
+    assert_eq!(out.text, "wrapped new text");
+    let target = out
+        .protocol_target
+        .expect("wrapped edit must carry the target key");
+    assert_eq!(target.id, "WRAPPED-EDIT-1");
+}
+
 // The five media-descriptor tests live in event_mapping_media_tests.rs.
 
 #[test]
