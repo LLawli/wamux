@@ -68,7 +68,9 @@ mod tests {
     fn contact_relays_display_name_and_vcard_verbatim() {
         let vcard = "BEGIN:VCARD\nVERSION:3.0\nFN:Ana\nEND:VCARD";
         let message = build_contact_message(&contact_req("Ana", vcard));
-        let contact = message.contact_message.expect("contact_message must be set");
+        let contact = message
+            .contact_message
+            .expect("contact_message must be set");
         assert_eq!(contact.display_name.as_deref(), Some("Ana"));
         assert_eq!(contact.vcard.as_deref(), Some(vcard));
         // No quote: the shared context builder yields None, never an empty one.
@@ -80,7 +82,9 @@ mod tests {
     #[test]
     fn contact_empty_fields_map_to_none() {
         let message = build_contact_message(&contact_req("", ""));
-        let contact = message.contact_message.expect("contact_message must be set");
+        let contact = message
+            .contact_message
+            .expect("contact_message must be set");
         assert_eq!(contact.display_name, None);
         assert_eq!(contact.vcard, None);
     }

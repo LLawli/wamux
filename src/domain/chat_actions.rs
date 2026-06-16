@@ -88,11 +88,7 @@ pub async fn mark_unread(client: &Client, chat: &Jid) -> Result<(), WamuxError> 
 /// Delete a whole chat locally. Distinct from `messaging::delete_message`
 /// (revoke one message for everyone). `delete_media` relays verbatim; the
 /// message-range arg is `None` (edge bookkeeping).
-pub async fn delete_chat(
-    client: &Client,
-    chat: Jid,
-    delete_media: bool,
-) -> Result<(), WamuxError> {
+pub async fn delete_chat(client: &Client, chat: Jid, delete_media: bool) -> Result<(), WamuxError> {
     client
         .chat_actions()
         .delete_chat(&chat, delete_media, None)
