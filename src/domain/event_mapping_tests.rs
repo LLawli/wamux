@@ -161,6 +161,65 @@ fn maps_reaction_message_with_target_key() {
     assert_eq!(target.participant, SENDER_JID);
 }
 
+// E2E triage 2026-06-16: an inbound revoke arrives as an ordinary message
+// carrying protocol_message{type:Revoke, key}. The mapper must flag is_delete
+// and carry the revoked message's key in protocol_target (the event's own key
+// is the revoke stanza id, not the target).
+#[test]
+fn maps_inbound_revoke_to_is_delete_with_target() {
+    let out = mapped_inbound(wa::Message {
+        protocol_message: Some(Box::new(wa::message::ProtocolMessage {
+            r#type: Some(wa::message::protocol_message::Type::Revoke as i32),
+            key: Some(wa::MessageKey {
+                remote_jid: Some(CHAT_JID.to_string()),
+                id: Some("REVOKED-MSG-1".to_string()),
+                from_me: Some(true),
+                participant: Some(SENDER_JID.to_string()),
+            }),
+            ..Default::default()
+        })),
+        ..Default::default()
+    });
+    assert!(out.is_delete);
+    assert!(!out.is_edit);
+    let target = out
+        .protocol_target
+        .expect("revoke must carry the target key");
+    assert_eq!(target.id, "REVOKED-MSG-1");
+    assert_eq!(target.remote_jid, CHAT_JID);
+    assert!(target.from_me);
+    assert_eq!(target.participant, SENDER_JID);
+}
+
+// E2E triage 2026-06-16: a legacy inbound edit carries the new text in
+// protocol_message.edited_message; the mapper must flag is_edit, surface that
+// new text, and carry the edited message's key in protocol_target.
+#[test]
+fn maps_inbound_edit_to_is_edit_with_new_text_and_target() {
+    let out = mapped_inbound(wa::Message {
+        protocol_message: Some(Box::new(wa::message::ProtocolMessage {
+            r#type: Some(wa::message::protocol_message::Type::MessageEdit as i32),
+            key: Some(wa::MessageKey {
+                remote_jid: Some(CHAT_JID.to_string()),
+                id: Some("EDITED-MSG-1".to_string()),
+                from_me: Some(false),
+                participant: Some(SENDER_JID.to_string()),
+            }),
+            edited_message: Some(Box::new(wa::Message {
+                conversation: Some("edited text".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })),
+        ..Default::default()
+    });
+    assert!(out.is_edit);
+    assert!(!out.is_delete);
+    assert_eq!(out.text, "edited text");
+    let target = out.protocol_target.expect("edit must carry the target key");
+    assert_eq!(target.id, "EDITED-MSG-1");
+}
+
 // The five media-descriptor tests live in event_mapping_media_tests.rs.
 
 #[test]

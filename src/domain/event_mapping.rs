@@ -269,14 +269,19 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
 
     if let Some(reaction) = &msg.reaction_message {
         out.reaction = reaction.text.clone().unwrap_or_default();
-        if let Some(k) = &reaction.key {
-            out.reaction_target = Some(pb::MessageKey {
-                remote_jid: k.remote_jid.clone().unwrap_or_default(),
-                id: k.id.clone().unwrap_or_default(),
-                from_me: k.from_me.unwrap_or(false),
-                participant: k.participant.clone().unwrap_or_default(),
-            });
-        }
+        out.reaction_target = reaction.key.as_ref().map(wa_key_to_proto);
+    }
+
+    // An inbound edit or revoke arrives as an ordinary message carrying a
+    // protocol_message; surface the typed flags the proto reserves (the edge
+    // otherwise reads is_edit/is_delete hard-false and never the new text or
+    // target). Relay-pure: only reprojects what raw_message already carries
+    // (E2E triage 2026-06-16).
+    if let Some(pm) = &msg.protocol_message {
+        project_protocol_message(&mut out, pm);
+    }
+    if is_secret_message_edit(msg) {
+        out.is_edit = true;
     }
 
     if let Some((descriptor, caption)) = extract_media(msg) {
@@ -285,6 +290,64 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
     }
 
     out
+}
+
+/// Project a wa `MessageKey` into the proto one (proto3 empty == lib `None`).
+fn wa_key_to_proto(k: &wa::MessageKey) -> pb::MessageKey {
+    pb::MessageKey {
+        remote_jid: k.remote_jid.clone().unwrap_or_default(),
+        id: k.id.clone().unwrap_or_default(),
+        from_me: k.from_me.unwrap_or(false),
+        participant: k.participant.clone().unwrap_or_default(),
+    }
+}
+
+/// The text of a message, whether plain `conversation` or `extended_text_message`.
+fn message_text(m: &wa::Message) -> Option<String> {
+    if let Some(t) = &m.conversation {
+        return Some(t.clone());
+    }
+    m.extended_text_message
+        .as_ref()
+        .and_then(|e| e.text.clone())
+}
+
+/// Surface an inbound edit/revoke onto the typed flags + target key. The lib
+/// delivers edits and revokes as ordinary `Event::Message`s carrying a
+/// `protocol_message`; the target lives in `protocol_message.key` (NOT the
+/// event's own key, which is the edit/revoke stanza id), and a legacy edit's
+/// new text lives in the nested `edited_message`. Only Revoke/MessageEdit are
+/// projected; any other protocol type is left untouched (it already rides in
+/// raw_message). Reading `r#type` as an explicit `Some` avoids treating an
+/// absent type as Revoke (whose wire value is the 0-default).
+fn project_protocol_message(out: &mut pb::InboundMessage, pm: &wa::message::ProtocolMessage) {
+    use wa::message::protocol_message::Type;
+    match pm.r#type.and_then(|t| Type::try_from(t).ok()) {
+        Some(Type::Revoke) => {
+            out.is_delete = true;
+            out.protocol_target = pm.key.as_ref().map(wa_key_to_proto);
+        }
+        Some(Type::MessageEdit) => {
+            out.is_edit = true;
+            out.protocol_target = pm.key.as_ref().map(wa_key_to_proto);
+            if let Some(edited) = &pm.edited_message {
+                out.text = message_text(edited).unwrap_or_default();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// New-style E2E edits arrive un-decrypted (`secret_encrypted_message` typed
+/// MessageEdit): the new text needs the parent message's secret, which is edge
+/// state. The core flags is_edit honestly and leaves the text empty.
+fn is_secret_message_edit(msg: &wa::Message) -> bool {
+    use wa::message::secret_encrypted_message::SecretEncType;
+    msg.secret_encrypted_message
+        .as_ref()
+        .and_then(|s| s.secret_enc_type)
+        .and_then(|t| SecretEncType::try_from(t).ok())
+        == Some(SecretEncType::MessageEdit)
 }
 
 /// The five wa media sub-messages share identical descriptor field names but

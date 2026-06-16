@@ -39,6 +39,12 @@ message InboundMessage {
   MessageKey reaction_target = 12;
   bool is_edit = 13;
   bool is_delete = 14;
+  // Set on an inbound edit (is_edit) or revoke (is_delete): the key of the
+  // message the protocol action targets (the edited/revoked message). It lives
+  // in the lib's protocol_message.key, distinct from this event's own key
+  // (which is the edit/revoke stanza id). For an edit, `text` carries the new
+  // text; a new-style E2E edit arrives un-decrypted (is_edit set, text empty).
+  MessageKey protocol_target = 15;
   bytes raw_message = 20;           // serialized wa.Message for advanced consumers
 }
 

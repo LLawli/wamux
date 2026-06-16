@@ -76,11 +76,28 @@ pub async fn get_push_name(client: &Client) -> Result<pb::PushNameResponse, Wamu
 }
 
 pub async fn set_push_name(client: &Client, name: &str) -> Result<(), WamuxError> {
+    validate_push_name(name)?;
     client
         .profile()
         .set_push_name(name)
         .await
         .map_err(client_err)
+}
+
+/// An empty push name is structurally invalid: the lib rejects it locally,
+/// before any network I/O, with a bare `anyhow` (no IQ code). `client_err`
+/// would then launder that into `Client` -> `Unavailable`/503, so a plain
+/// caller mistake reads as "upstream down" at the edge. Reject it up front as
+/// InvalidArgument, mirroring the empty-input guards in jid_parse / chat_actions
+/// (E2E triage 2026-06-16). We match the lib's own rule exactly (empty only):
+/// trimming/blank policy is the edge's call, not the core's.
+fn validate_push_name(name: &str) -> Result<(), WamuxError> {
+    if name.is_empty() {
+        return Err(WamuxError::InvalidArgument(
+            "push name cannot be empty".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub async fn get_about(client: Arc<Client>, jid: &str) -> Result<pb::AboutResponse, WamuxError> {
@@ -114,4 +131,26 @@ pub async fn get_business_profile(
 pub async fn subscribe_presence(client: &Client, jid: &str) -> Result<(), WamuxError> {
     let jid = parse_jid(jid)?;
     client.presence().subscribe(&jid).await.map_err(client_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // E2E triage 2026-06-16: an empty push name must fail fast as
+    // InvalidArgument (the lib rejects it pre-network with a bare anyhow that
+    // client_err would otherwise mislabel as Unavailable/503 at the edge).
+    #[test]
+    fn empty_push_name_is_invalid_argument() {
+        let err = validate_push_name("").expect_err("empty name must be rejected");
+        assert!(matches!(err, WamuxError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn non_empty_push_name_is_accepted() {
+        assert!(validate_push_name("Ana").is_ok());
+        // A single space is non-empty: the core mirrors the lib's empty-only
+        // rule and leaves any trim/blank policy to the edge.
+        assert!(validate_push_name(" ").is_ok());
+    }
 }
