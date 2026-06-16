@@ -5,6 +5,8 @@
 use std::sync::Arc;
 
 use prost014::Message as _;
+use serde::Serialize;
+use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::Event;
 use wacore::types::message::MessageInfo;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -104,6 +106,27 @@ pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
             raw: h.raw_bytes().to_vec(),
         })),
 
+        // App-state (companion-sync) chat mutations. Each lib variant is its own
+        // struct sharing a `jid`/`chat_jid` + serde shape; we relay the typed
+        // chat + a kind token, with the action detail in `raw`. StarUpdate names
+        // its chat `chat_jid` (it points at a message, not the chat itself), so
+        // it can't share the `jid`-projecting helper.
+        Event::ArchiveUpdate(s) => Some(Pb::AppState(app_state(s.jid.to_string(), "archive", s))),
+        Event::PinUpdate(s) => Some(Pb::AppState(app_state(s.jid.to_string(), "pin", s))),
+        Event::MuteUpdate(s) => Some(Pb::AppState(app_state(s.jid.to_string(), "mute", s))),
+        Event::StarUpdate(s) => Some(Pb::AppState(app_state(s.chat_jid.to_string(), "star", s))),
+        Event::MarkChatAsReadUpdate(s) => {
+            Some(Pb::AppState(app_state(s.jid.to_string(), "mark_read", s)))
+        }
+        Event::DeleteChatUpdate(s) => {
+            Some(Pb::AppState(app_state(s.jid.to_string(), "delete_chat", s)))
+        }
+
+        // Inbound call signaling. The core relays the primitive; ring/answer
+        // policy is the edge's. `call_id` is the CallAction id (the stanza id
+        // lives in `raw`).
+        Event::IncomingCall(c) => Some(Pb::Call(map_call(c))),
+
         // Intentionally dropped (internal/noisy).
         Event::Notification(_) | Event::RawNode(_) => None,
 
@@ -146,6 +169,43 @@ fn chat_state_label(state: ChatPresence, media: ChatPresenceMedia) -> &'static s
         (ChatPresence::Composing, ChatPresenceMedia::Audio) => "recording",
         (ChatPresence::Composing, ChatPresenceMedia::Text) => "composing",
         (ChatPresence::Paused, _) => "paused",
+    }
+}
+
+/// Build an `AppStateUpdate` from any app-state lib struct. Generic over the
+/// concrete update type so all six variants share the `serde_json` projection;
+/// the caller passes the already-extracted chat jid (named `jid` on five of
+/// them, `chat_jid` on StarUpdate).
+fn app_state<T: Serialize>(chat: String, kind: &str, update: &T) -> pb::AppStateUpdate {
+    pb::AppStateUpdate {
+        chat,
+        kind: kind.to_string(),
+        raw: serde_json::to_vec(update).unwrap_or_default(),
+    }
+}
+
+/// Map an inbound call to the typed `CallEvent`. `action` is a lowercase token
+/// per the proto contract; `call_id` is the CallAction id (lib note: distinct
+/// from the stanza id, which the edge reads from `raw`).
+fn map_call(call: &IncomingCall) -> pb::CallEvent {
+    pb::CallEvent {
+        from: call.from.to_string(),
+        call_id: call.action.call_id().to_string(),
+        action: call_action_label(&call.action).to_string(),
+        raw: serde_json::to_vec(call).unwrap_or_default(),
+    }
+}
+
+/// Lowercase wire tokens for `CallEvent.action`, never Debug casing (mirrors the
+/// receipt/chat-state token convention so the edge codes against the proto).
+fn call_action_label(action: &CallAction) -> &'static str {
+    match action {
+        CallAction::Offer { .. } => "offer",
+        CallAction::OfferNotice { .. } => "offer_notice",
+        CallAction::PreAccept { .. } => "pre_accept",
+        CallAction::Accept { .. } => "accept",
+        CallAction::Reject { .. } => "reject",
+        CallAction::Terminate { .. } => "terminate",
     }
 }
 
