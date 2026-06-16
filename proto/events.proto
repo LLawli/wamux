@@ -101,6 +101,26 @@ message HistorySyncEvent {
   bytes raw = 20;                 // decompressed `wa.HistorySync` protobuf
 }
 
+// App-state (companion-sync) chat mutation: archive/pin/mute/star/mark-read/
+// delete. The lib emits one struct per kind (ArchiveUpdate, PinUpdate, ...);
+// `kind` distinguishes them and `raw` carries the full serde_json of the lib
+// struct so the edge decodes action details (e.g. the new mute timestamp).
+message AppStateUpdate {
+  string chat = 1;
+  string kind = 2;   // archive|pin|mute|star|mark_read|delete_chat
+  bytes raw = 3;
+}
+
+// Inbound `<call>` signaling stanza (lib `IncomingCall`). The core relays the
+// primitive; the edge composes any ring/answer policy. `call_id` is the
+// CallAction's id (distinct from the stanza id, which lives in `raw`).
+message CallEvent {
+  string from = 1;
+  string call_id = 2;
+  string action = 3;  // offer|offer_notice|pre_accept|accept|reject|terminate
+  bytes raw = 4;
+}
+
 // Catch-all so the edge never silently loses an event type or a broadcast gap.
 // Reserved kinds (both carry monotonic_seq -1 and an empty payload):
 //   "gap"              one account's subscriber lagged its broadcast buffer;
@@ -129,6 +149,8 @@ message EventEnvelope {
     PushNameUpdate push_name = 17;
     ContactUpdate contact = 18;
     HistorySyncEvent history_sync = 19;
+    AppStateUpdate app_state = 20;
+    CallEvent call = 21;
     RawEvent raw = 99;
   }
 }

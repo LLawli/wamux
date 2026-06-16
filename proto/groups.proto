@@ -56,6 +56,39 @@ message ListGroupsResponse {
   repeated GroupSummary groups = 1;
 }
 
+// Toggle a boolean group permission (announce / locked). Mirrors GroupTextRequest.
+message GroupToggleRequest {
+  AccountRef account = 1;
+  string group_jid = 2;
+  bool enabled = 3;
+}
+
+// Group-level disappearing-messages timer. Distinct from the per-message
+// ephemeral flag carried on SendText/SendMedia; 0 disables.
+message GroupEphemeralRequest {
+  AccountRef account = 1;
+  string group_jid = 2;
+  uint32 expiration_seconds = 3;
+}
+
+// Preview an invite's group metadata without joining.
+message PreviewInviteRequest {
+  AccountRef account = 1;
+  string code = 2;
+}
+
+// Set or remove a group's photo. An empty `image` means "remove the photo".
+message SetGroupPhotoRequest {
+  AccountRef account = 1;
+  string group_jid = 2;
+  bytes image = 3;
+}
+
+// Projected pending membership-approval requests (JSON array of {jid, request_time}).
+message MembershipRequestsResponse {
+  bytes requests = 1;
+}
+
 service GroupService {
   rpc CreateGroup(CreateGroupRequest) returns (GroupJidResponse);
   rpc AddParticipants(ParticipantsRequest) returns (Empty);
@@ -70,4 +103,12 @@ service GroupService {
   rpc JoinWithInvite(JoinWithInviteRequest) returns (GroupJidResponse);
   rpc ListParticipating(AccountRef) returns (ListGroupsResponse);
   rpc LeaveGroup(GroupRef) returns (Empty);
+  rpc SetGroupAnnounce(GroupToggleRequest) returns (Empty);
+  rpc SetGroupLocked(GroupToggleRequest) returns (Empty);
+  rpc SetGroupEphemeral(GroupEphemeralRequest) returns (Empty);
+  rpc PreviewInvite(PreviewInviteRequest) returns (GroupMetadataResponse);
+  rpc SetGroupPhoto(SetGroupPhotoRequest) returns (Empty);
+  rpc GetMembershipRequests(GroupRef) returns (MembershipRequestsResponse);
+  rpc ApproveMembershipRequests(ParticipantsRequest) returns (Empty);
+  rpc RejectMembershipRequests(ParticipantsRequest) returns (Empty);
 }

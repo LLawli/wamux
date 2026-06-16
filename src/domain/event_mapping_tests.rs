@@ -2,10 +2,12 @@ use super::*;
 use std::time::Duration;
 
 use bytes::Bytes;
+use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::{
-    ChatPresenceUpdate, ConnectFailureReason, Connected, DecryptFailMode, Disconnected,
-    LazyHistorySync, LoggedOut, OfflineSyncCompleted, PairError, PairSuccess, PresenceUpdate,
-    PushNameUpdate, Receipt, TempBanReason, TemporaryBan, UnavailableType, UndecryptableMessage,
+    ArchiveUpdate, ChatPresenceUpdate, ConnectFailureReason, Connected, DecryptFailMode,
+    DeleteChatUpdate, Disconnected, LazyHistorySync, LoggedOut, MarkChatAsReadUpdate, MuteUpdate,
+    OfflineSyncCompleted, PairError, PairSuccess, PinUpdate, PresenceUpdate, PushNameUpdate,
+    Receipt, StarUpdate, TempBanReason, TemporaryBan, UnavailableType, UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -426,6 +428,161 @@ fn maps_pairing_qr_code() {
             );
         }
         other => panic!("expected pairing qr, got {other:?}"),
+    }
+}
+
+fn mapped_app_state(event: &Event) -> pb::AppStateUpdate {
+    match map_event(event) {
+        Some(PbEvent::AppState(s)) => s,
+        other => panic!("expected app-state update, got {other:?}"),
+    }
+}
+
+#[test]
+fn maps_archive_update_to_typed_app_state() {
+    let s = mapped_app_state(&Event::ArchiveUpdate(ArchiveUpdate {
+        jid: jid_of(CHAT_JID),
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        action: Box::default(),
+        from_full_sync: false,
+    }));
+    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.kind, "archive");
+    // raw is the verbatim serde_json of the lib struct: the edge decodes it.
+    // Jid serializes structurally (user/server/...), so we assert the user part
+    // rather than a flat jid string.
+    assert!(!s.raw.is_empty());
+    let json: serde_json::Value = serde_json::from_slice(&s.raw).unwrap();
+    assert_eq!(json["jid"]["user"], "120363041234567890");
+    assert_eq!(json["jid"]["server"], "g.us");
+}
+
+#[test]
+fn maps_pin_update_to_typed_app_state() {
+    let s = mapped_app_state(&Event::PinUpdate(PinUpdate {
+        jid: jid_of(CHAT_JID),
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        action: Box::default(),
+        from_full_sync: false,
+    }));
+    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.kind, "pin");
+}
+
+#[test]
+fn maps_mute_update_to_typed_app_state() {
+    let s = mapped_app_state(&Event::MuteUpdate(MuteUpdate {
+        jid: jid_of(CHAT_JID),
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        action: Box::default(),
+        from_full_sync: false,
+    }));
+    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.kind, "mute");
+}
+
+// StarUpdate names its chat `chat_jid` (it points at a message); the mapping
+// must read that field, not the missing `jid`.
+#[test]
+fn maps_star_update_reads_chat_jid() {
+    let s = mapped_app_state(&Event::StarUpdate(StarUpdate {
+        chat_jid: jid_of(CHAT_JID),
+        participant_jid: None,
+        message_id: "WAMID-STAR".to_string(),
+        from_me: false,
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        action: Box::default(),
+        from_full_sync: false,
+    }));
+    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.kind, "star");
+}
+
+#[test]
+fn maps_mark_chat_as_read_update_to_typed_app_state() {
+    let s = mapped_app_state(&Event::MarkChatAsReadUpdate(MarkChatAsReadUpdate {
+        jid: jid_of(CHAT_JID),
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        action: Box::default(),
+        from_full_sync: false,
+    }));
+    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.kind, "mark_read");
+}
+
+#[test]
+fn maps_delete_chat_update_to_typed_app_state() {
+    let s = mapped_app_state(&Event::DeleteChatUpdate(DeleteChatUpdate {
+        jid: jid_of(CHAT_JID),
+        delete_media: false,
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        action: Box::default(),
+        from_full_sync: false,
+    }));
+    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.kind, "delete_chat");
+}
+
+#[test]
+fn maps_incoming_call_offer_to_typed_call_event() {
+    let event = Event::IncomingCall(IncomingCall {
+        from: jid_of(SENDER_JID),
+        stanza_id: "STANZA-CALL-1".to_string(),
+        notify: None,
+        platform: None,
+        version: None,
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        offline: false,
+        action: CallAction::Offer {
+            call_id: "CALL-ID-1".to_string(),
+            call_creator: jid_of(SENDER_JID),
+            caller_pn: None,
+            caller_country_code: None,
+            device_class: None,
+            joinable: true,
+            is_video: false,
+            audio: vec![],
+            group_jid: None,
+        },
+    });
+    match map_event(&event) {
+        Some(PbEvent::Call(c)) => {
+            assert_eq!(c.from, SENDER_JID);
+            // call_id is the CallAction id, NOT the stanza id.
+            assert_eq!(c.call_id, "CALL-ID-1");
+            assert_eq!(c.action, "offer");
+            assert!(!c.raw.is_empty());
+            let json: serde_json::Value = serde_json::from_slice(&c.raw).unwrap();
+            assert_eq!(json["stanza_id"], "STANZA-CALL-1");
+        }
+        other => panic!("expected call event, got {other:?}"),
+    }
+}
+
+#[test]
+fn maps_incoming_call_terminate_action_token() {
+    let event = Event::IncomingCall(IncomingCall {
+        from: jid_of(SENDER_JID),
+        stanza_id: "STANZA-CALL-2".to_string(),
+        notify: None,
+        platform: None,
+        version: None,
+        timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
+        offline: false,
+        action: CallAction::Terminate {
+            call_id: "CALL-ID-2".to_string(),
+            call_creator: jid_of(SENDER_JID),
+            duration: Some(42),
+            audio_duration: None,
+        },
+    });
+    match map_event(&event) {
+        Some(PbEvent::Call(c)) => {
+            assert_eq!(c.call_id, "CALL-ID-2");
+            // Lowercase wire token, never Debug casing.
+            assert_eq!(c.action, "terminate");
+        }
+        other => panic!("expected call event, got {other:?}"),
     }
 }
 

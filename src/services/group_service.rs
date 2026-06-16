@@ -156,4 +156,86 @@ impl GroupService for GroupSvc {
         groups::leave(&client, &req.group_jid).await?;
         Ok(Response::new(pb::Empty {}))
     }
+
+    async fn set_group_announce(
+        &self,
+        request: Request<pb::GroupToggleRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        groups::set_announce(&client, &req.group_jid, req.enabled).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn set_group_locked(
+        &self,
+        request: Request<pb::GroupToggleRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        groups::set_locked(&client, &req.group_jid, req.enabled).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn set_group_ephemeral(
+        &self,
+        request: Request<pb::GroupEphemeralRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        groups::set_ephemeral(&client, &req.group_jid, req.expiration_seconds).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn preview_invite(
+        &self,
+        request: Request<pb::PreviewInviteRequest>,
+    ) -> Result<Response<pb::GroupMetadataResponse>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        Ok(Response::new(
+            groups::preview_invite(&client, &req.code).await?,
+        ))
+    }
+
+    async fn set_group_photo(
+        &self,
+        request: Request<pb::SetGroupPhotoRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        groups::set_photo(&client, &req.group_jid, req.image).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn get_membership_requests(
+        &self,
+        request: Request<pb::GroupRef>,
+    ) -> Result<Response<pb::MembershipRequestsResponse>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        Ok(Response::new(
+            groups::membership_requests(&client, &req.group_jid).await?,
+        ))
+    }
+
+    async fn approve_membership_requests(
+        &self,
+        request: Request<pb::ParticipantsRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        groups::approve_membership(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn reject_membership_requests(
+        &self,
+        request: Request<pb::ParticipantsRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        groups::reject_membership(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
 }

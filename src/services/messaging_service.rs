@@ -1,4 +1,5 @@
-//! MessagingService: text/reaction/edit/delete/presence/mark-read + media send.
+//! MessagingService: text/reaction/edit/delete/presence/mark-read + media send,
+//! chat actions, contact/poll/PTV sends, and status posting.
 
 use std::sync::Arc;
 
@@ -6,8 +7,8 @@ use tonic::{Request, Response, Status, Streaming};
 
 use super::{client_of, require_field, require_jid};
 use crate::domain::jid_parse::parse_jid;
-use crate::domain::media_transfer;
 use crate::domain::messaging::{self, send_result_to_proto};
+use crate::domain::{chat_actions, media_transfer, send_rich, status};
 use crate::proto::v1 as pb;
 use crate::proto::v1::messaging_service_server::MessagingService;
 use crate::state::AccountRegistry;
@@ -152,6 +153,129 @@ impl MessagingService for MessagingSvc {
         messaging::mark_read(&client, &chat).await?;
         Ok(Response::new(pb::Empty {}))
     }
+
+    async fn mark_unread(
+        &self,
+        request: Request<pb::MarkReadRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let chat = parse_jid(&require_jid(req.chat)?)?;
+        chat_actions::mark_unread(&client, &chat).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn star_message(
+        &self,
+        request: Request<pb::StarMessageRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let target = require_field(req.target, "target")?;
+        chat_actions::star_message(&client, &target, req.starred).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn archive_chat(
+        &self,
+        request: Request<pb::ArchiveChatRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let chat = parse_jid(&require_jid(req.chat)?)?;
+        chat_actions::archive_chat(&client, chat, req.archived).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn pin_chat(
+        &self,
+        request: Request<pb::PinChatRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let chat = parse_jid(&require_jid(req.chat)?)?;
+        chat_actions::pin_chat(&client, chat, req.pinned).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn mute_chat(
+        &self,
+        request: Request<pb::MuteChatRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let chat = parse_jid(&require_jid(req.chat)?)?;
+        chat_actions::mute_chat(&client, chat, req.muted, req.mute_until_ms).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn delete_chat(
+        &self,
+        request: Request<pb::DeleteChatRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let chat = parse_jid(&require_jid(req.chat)?)?;
+        chat_actions::delete_chat(&client, chat, req.delete_media).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn send_contact(
+        &self,
+        request: Request<pb::SendContactRequest>,
+    ) -> Result<Response<pb::SendResult>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let to = parse_jid(&require_jid(req.to.clone())?)?;
+        let result = send_rich::send_contact(&client, to, &req).await?;
+        Ok(Response::new(send_result_to_proto(result)))
+    }
+
+    async fn send_poll(
+        &self,
+        request: Request<pb::SendPollRequest>,
+    ) -> Result<Response<pb::SendPollResult>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let to = parse_jid(&require_jid(req.to.clone())?)?;
+        let (result, message_secret) = send_rich::send_poll(&client, to, &req).await?;
+        // The poll key reuses send_result_to_proto's shape; the message_secret
+        // rides alongside so the edge can decrypt incoming votes.
+        Ok(Response::new(pb::SendPollResult {
+            key: send_result_to_proto(result).key,
+            message_secret,
+        }))
+    }
+
+    async fn post_status_text(
+        &self,
+        request: Request<pb::PostStatusTextRequest>,
+    ) -> Result<Response<pb::SendResult>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let result = status::post_status_text(&client, &req).await?;
+        Ok(Response::new(send_result_to_proto(result)))
+    }
+
+    async fn post_status_media(
+        &self,
+        request: Request<Streaming<pb::PostStatusMediaChunk>>,
+    ) -> Result<Response<pb::SendResult>, Status> {
+        let mut stream = request.into_inner();
+        let first = stream
+            .message()
+            .await?
+            .ok_or_else(|| Status::invalid_argument("empty status media stream"))?;
+        let header = match first.part {
+            Some(pb::post_status_media_chunk::Part::Header(h)) => h,
+            _ => return Err(Status::invalid_argument("first chunk must be the header")),
+        };
+        let client = client_of(&self.registry, header.account.as_ref()).await?;
+        // Same inline-only contract as SendMedia: the core fetches no URLs.
+        let data = collect_status_media(&mut stream, self.media_max_bytes).await?;
+        let result = status::post_status_media(&client, &header, data).await?;
+        Ok(Response::new(send_result_to_proto(result)))
+    }
 }
 
 /// Gather inline media chunks (after the header) up to the byte limit.
@@ -169,6 +293,31 @@ async fn collect_inline(
                 }
             }
             Some(pb::send_media_chunk::Part::Header(_)) => {
+                return Err(Status::invalid_argument("unexpected second header"));
+            }
+            None => {}
+        }
+    }
+    Ok(data)
+}
+
+/// Gather inline status-media chunks (after the header) up to the byte limit.
+/// A parallel of `collect_inline` for the distinct PostStatusMediaChunk oneof
+/// (prost generates no shared trait over the two chunk types).
+async fn collect_status_media(
+    stream: &mut Streaming<pb::PostStatusMediaChunk>,
+    max_bytes: u64,
+) -> Result<Vec<u8>, Status> {
+    let mut data = Vec::new();
+    while let Some(chunk) = stream.message().await? {
+        match chunk.part {
+            Some(pb::post_status_media_chunk::Part::Chunk(bytes)) => {
+                data.extend_from_slice(&bytes);
+                if data.len() as u64 > max_bytes {
+                    return Err(Status::resource_exhausted("media exceeds size limit"));
+                }
+            }
+            Some(pb::post_status_media_chunk::Part::Header(_)) => {
                 return Err(Status::invalid_argument("unexpected second header"));
             }
             None => {}

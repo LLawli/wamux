@@ -61,6 +61,10 @@ message SendMediaHeader {
   // 0 = not ephemeral; otherwise relayed as ContextInfo.expiration (the edge
   // supplies the chat's setting, exactly as on SendTextRequest).
   uint32 ephemeral_seconds = 14;
+  // Video note (PTV, the round "instant video"): when media_type=="video" and
+  // ptv=true, the built VideoMessage ships as Message.ptv_message instead of
+  // video_message. The edge supplies a square clip; the core does not transcode.
+  bool ptv = 15;
 }
 
 message SendMediaChunk {
@@ -118,6 +122,96 @@ message MarkReadRequest {
   Jid sender = 4;
 }
 
+// --- Chat actions (mutations synced across the account's linked devices) ---
+
+// target.remote_jid = chat; target.participant = sender inside a group (empty
+// in a DM); target.id = message id; target.from_me = whether we sent it.
+message StarMessageRequest {
+  AccountRef account = 1;
+  MessageKey target = 2;
+  bool starred = 3; // true=star, false=unstar
+}
+
+message ArchiveChatRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  bool archived = 3; // true=archive, false=unarchive
+}
+
+message PinChatRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  bool pinned = 3; // true=pin, false=unpin
+}
+
+message MuteChatRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  bool muted = 3; // false=unmute (mute_until_ms ignored)
+  // 0 with muted=true means mute indefinitely; otherwise a future epoch-ms.
+  // The lib rejects a non-future timestamp; the core relays that error and the
+  // edge supplies a valid one (the core tracks no clock policy).
+  int64 mute_until_ms = 4;
+}
+
+message DeleteChatRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  bool delete_media = 3;
+}
+
+// --- Rich content sends ---
+
+message SendContactRequest {
+  AccountRef account = 1;
+  Jid to = 2;
+  string display_name = 3;
+  string vcard = 4;
+  QuoteContext quote = 5;
+}
+
+message SendPollRequest {
+  AccountRef account = 1;
+  Jid to = 2;
+  string name = 3;
+  repeated string options = 4;     // 2..=12 distinct names (lib validates)
+  uint32 selectable_count = 5;     // 1..=options.len() (lib validates)
+}
+
+// message_secret is the per-poll key the edge needs to decrypt incoming votes;
+// the core hands it back as a primitive and stores nothing (relay-pure).
+message SendPollResult {
+  MessageKey key = 1;
+  bytes message_secret = 2;
+}
+
+// --- Status / stories ---
+
+message PostStatusTextRequest {
+  AccountRef account = 1;
+  string text = 2;
+  uint32 background_argb = 3; // 0xAARRGGBB; 0 is a valid (transparent) value
+  int32 font = 4;             // font style index (0-4 on WhatsApp Web)
+  repeated string recipients = 5; // device set the status is encrypted to
+}
+
+message PostStatusMediaHeader {
+  AccountRef account = 1;
+  string media_type = 2; // image|video only (status supports no other kinds)
+  string mime_type = 3;
+  bytes thumbnail = 4;   // JPEG preview; the edge generates it (no transcode)
+  string caption = 5;
+  uint32 seconds = 6;    // video duration; ignored for image
+  repeated string recipients = 7;
+}
+
+message PostStatusMediaChunk {
+  oneof part {
+    PostStatusMediaHeader header = 1;
+    bytes chunk = 2;
+  }
+}
+
 service MessagingService {
   rpc SendText(SendTextRequest) returns (SendResult);
   rpc SendMedia(stream SendMediaChunk) returns (SendResult);
@@ -127,4 +221,25 @@ service MessagingService {
   rpc FetchMessageHistory(FetchMessageHistoryRequest) returns (FetchMessageHistoryResponse);
   rpc SendPresence(SendPresenceRequest) returns (Empty);
   rpc MarkRead(MarkReadRequest) returns (Empty);
+
+  // Mark a chat unread. Separate from MarkRead (which keeps its proto3 default
+  // read=true): flipping that bool would be a silent breaking change.
+  rpc MarkUnread(MarkReadRequest) returns (Empty);
+
+  // Chat actions (synced across the account's linked devices).
+  rpc StarMessage(StarMessageRequest) returns (Empty);
+  rpc ArchiveChat(ArchiveChatRequest) returns (Empty);
+  rpc PinChat(PinChatRequest) returns (Empty);
+  rpc MuteChat(MuteChatRequest) returns (Empty);
+  // Deletes the whole chat locally (distinct from DeleteMessage, which revokes
+  // a single message for everyone).
+  rpc DeleteChat(DeleteChatRequest) returns (Empty);
+
+  // Rich content sends.
+  rpc SendContact(SendContactRequest) returns (SendResult);
+  rpc SendPoll(SendPollRequest) returns (SendPollResult);
+
+  // Status / stories.
+  rpc PostStatusText(PostStatusTextRequest) returns (SendResult);
+  rpc PostStatusMedia(stream PostStatusMediaChunk) returns (SendResult);
 }

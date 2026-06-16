@@ -92,6 +92,13 @@ pub(crate) fn build_media_message(
             image_message: Some(Box::new(image_submessage(header, up, context))),
             ..Default::default()
         },
+        // PTV (video note, the round "instant video") is the SAME VideoMessage
+        // wire shape, just carried in a different Message slot. The edge sets
+        // header.ptv; the core only relays it into ptv_message vs video_message.
+        MediaKind::Video if header.ptv => wa::Message {
+            ptv_message: Some(Box::new(video_submessage(header, up, context))),
+            ..Default::default()
+        },
         MediaKind::Video => wa::Message {
             video_message: Some(Box::new(video_submessage(header, up, context))),
             ..Default::default()
@@ -393,6 +400,41 @@ mod tests {
         let audio = message.audio_message.expect("audio_message must be set");
         assert_eq!(audio.ptt, Some(true));
         assert_eq!(audio.waveform, None);
+    }
+
+    // PTV (video note): the built VideoMessage must land in ptv_message, not
+    // video_message — same submessage, different Message slot.
+    #[test]
+    fn ptv_video_routes_into_ptv_message() {
+        let message = build_media_message(
+            MediaKind::Video,
+            &pb::SendMediaHeader {
+                mime_type: "video/mp4".to_string(),
+                ptv: true,
+                ..header("video")
+            },
+            fake_upload(),
+        );
+        let ptv = message.ptv_message.expect("ptv_message must be set");
+        assert_eq!(ptv.url.as_deref(), Some(fake_upload().url.as_str()));
+        assert_eq!(ptv.mimetype.as_deref(), Some("video/mp4"));
+        // The regular video slot must stay empty: exactly one branch fires.
+        assert!(message.video_message.is_none());
+    }
+
+    // Without the ptv flag a video stays a normal video_message.
+    #[test]
+    fn non_ptv_video_stays_video_message() {
+        let message = build_media_message(
+            MediaKind::Video,
+            &pb::SendMediaHeader {
+                mime_type: "video/mp4".to_string(),
+                ..header("video")
+            },
+            fake_upload(),
+        );
+        assert!(message.video_message.is_some());
+        assert!(message.ptv_message.is_none());
     }
 
     #[test]
