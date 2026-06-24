@@ -1,11 +1,12 @@
 //! Sprint 3 M4: probe one REAL WhatsApp connection (the secondary account) for
 //! round-trip latency while N fake clients are held against the local mock WSS
-//! server. The probe sends a text to the user's PRIMARY number and times the
-//! delivery receipt; it runs once as a baseline (no load) and again with the N
-//! fakes connected, so you can read the latency cost of the load.
+//! server. The probe sends a text to a single operator-chosen destination and
+//! times the delivery receipt; it runs once as a baseline (no load) and again
+//! with the N fakes connected, so you can read the latency cost of the load.
 //!
-//! SAFETY: the only permitted destination is `5511999999999@c.us` (the user's
-//! own primary). The bin only ever sends there — see [[live-whatsapp-sends]].
+//! SAFETY: the destination is taken from `WAMUX_LIVE_DEST` (one JID, e.g.
+//! `5511999999999@c.us`); the bin only ever sends there and refuses to run if
+//! it is unset, so it can never fan out to arbitrary numbers.
 //!
 //! Registry-direct, two registries on one shared Postgres pool: `real_registry`
 //! talks to the real endpoint (no `ws_url_override`); `mock_registry` points the
@@ -34,10 +35,6 @@ use wamux::storage;
 use wamux::storage::postgres::PgBackend;
 use wamux::stress::MockWaServer;
 
-/// The ONLY number this bin may message. The connected account is the user's
-/// secondary; this is the user's primary (full E.164: 55 BR + 61 DF + number).
-/// Sending elsewhere is not authorized.
-const ALLOWED_DEST: &str = "5511999999999@c.us";
 const QR_PNG: &str = "/tmp/wamux-qr.png";
 
 #[tokio::main]
@@ -52,10 +49,17 @@ async fn main() -> anyhow::Result<()> {
     let n_fakes: usize = arg(2).and_then(|s| s.parse().ok()).unwrap_or(199);
     let probes: usize = arg(3).and_then(|s| s.parse().ok()).unwrap_or(5);
 
-    // Safety guard in code, not just convention: refuse any other destination.
-    let dest: Jid = ALLOWED_DEST.parse().expect("ALLOWED_DEST is a valid JID");
+    // Safety guard in code, not just convention: the one permitted destination
+    // is supplied by the operator at runtime (no hardcoded number); refuse to
+    // run without it, and send nowhere else.
+    let allowed_dest = std::env::var("WAMUX_LIVE_DEST").map_err(|_| {
+        anyhow::anyhow!("set WAMUX_LIVE_DEST to the destination JID (e.g. 5511999999999@c.us)")
+    })?;
+    let dest: Jid = allowed_dest
+        .parse()
+        .map_err(|_| anyhow::anyhow!("WAMUX_LIVE_DEST is not a valid JID: {allowed_dest}"))?;
     println!(
-        "stress_live: real account '{external_ref}', {n_fakes} fakes, {probes} probes/phase, dest {ALLOWED_DEST}"
+        "stress_live: real account '{external_ref}', {n_fakes} fakes, {probes} probes/phase, dest {allowed_dest}"
     );
 
     let database_url = std::env::var("DATABASE_URL")

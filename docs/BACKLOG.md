@@ -69,4 +69,4 @@ _(nenhum no momento)_
 - **Onde:** `src/bin/stress_live.rs` (`ALLOWED_DEST`) + regra ai-memory `_rules/live-whatsapp-sends.md`.
 - **Sintoma:** envio rejeitado — "479 SmaxInvalid (wrong JID format)" e "No pre-key bundle".
 - **Causa:** JID `11999999999@c.us` sem o `55` (Brasil) — número não-E.164 válido.
-- **Fix:** `5511999999999@c.us` (55 BR + 61 DF + número). Único destino permitido nos sends live.
+- **Fix:** `5511999999999@c.us` (55 BR + DDD + número). Único destino permitido nos sends live.

@@ -4,7 +4,7 @@
 //! OGG/Opus file (WhatsApp only renders voice notes for OGG/Opus).
 //!
 //! Usage: send_types [socket_path] [target_number] [all|video|audio|sticker|ptt]
-//!   defaults: /tmp/wamux.sock 5511999999999 all   ("all" excludes ptt: it needs a file)
+//!   defaults: /tmp/wamux.sock 5511999999999 all  ("all" excludes ptt: it needs a file)
 //! Env: WAMUX_REF       account external_ref (default "pair-socket")
 //!      WAMUX_PTT_FILE  OGG/Opus path for the ptt kind (default /tmp/wamux-ptt-test.ogg)
 //!      WAMUX_PTT_SECS  voice note duration shown in the bubble (default 3)

@@ -267,8 +267,8 @@ Gotchas conhecidos:
   primário **baseline (sem carga) vs sob a carga das 199 fakes**. **Resultado real**: baseline
   median **573 ms** (min 472 / max 1248, 0 timeouts) vs under-load median **574 ms** (min 552 /
   max 2138, 0 timeouts) — **as 199 conexões fake não pesam na mediana** (~+1 ms; o max é o primeiro
-  probe de cada fase, warmup de sessão/phash). **Envio só p/ `5511999999999@c.us`** (constante
-  `ALLOWED_DEST`, guard no código; regra ai-memory `_rules/live-whatsapp-sends.md`). Espera
+  probe de cada fase, warmup de sessão/phash). **Envio só p/ o destino em `WAMUX_LIVE_DEST`**
+  (guard no código; regra ai-memory `_rules/live-whatsapp-sends.md`). Espera
   `client.is_logged_in()` (não o `Connected` de socket). Rodar:
   `cargo run --features stress --bin stress_live -- m4-real 199 3` (reusa a conta pareada, sem QR).
 

@@ -22,9 +22,11 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "/tmp/wamux.sock".to_string());
     // Edge picks the namespace: send full JIDs to CheckOnWhatsApp (the core
     // no longer guesses/normalizes).
+    // Placeholder pair (13-digit with the extra mobile 9, 12-digit without);
+    // replace with the number you want to resolve before running.
     let candidates = [
-        "5562998877474@s.whatsapp.net".to_string(),
         "5511999999999@s.whatsapp.net".to_string(),
+        "551199999999@s.whatsapp.net".to_string(),
     ];
 
     let channel = connect_uds(socket_path).await?;
@@ -85,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 3) send to the @c.us legacy forms (as requested).
-    for form in ["5562998877474@c.us", "5511999999999@c.us"] {
+    for form in ["5511999999999@c.us", "551199999999@c.us"] {
         probe(&mut messaging, &account_ref, form, "wamux: via c.us ✅").await;
     }
 
