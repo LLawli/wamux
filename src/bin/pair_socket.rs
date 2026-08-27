@@ -3,7 +3,10 @@
 //! CreateAccount + PairWithQr, renders the QR to /tmp/wamux-qr.png and opens it
 //! with xdg-open. On pairing, sends a self-message via MessagingService.
 //!
-//! Usage: pair_socket [socket_path]   (default: /tmp/wamux.sock)
+//! Usage: pair_socket [socket_path] [external_ref]
+//!   socket_path  default: /tmp/wamux.sock
+//!   external_ref default: pair-socket — the account's stable name; pass one
+//!                per phone you pair, since the daemon multiplexes many.
 //! Requires the wamux daemon to be running on that socket.
 
 use hyper_util::rt::TokioIo;
@@ -14,14 +17,19 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 
-const EXTERNAL_REF: &str = "pair-socket";
-const QR_PNG: &str = "/tmp/wamux-qr.png";
+const DEFAULT_EXTERNAL_REF: &str = "pair-socket";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let socket_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "/tmp/wamux.sock".to_string());
+    let external_ref = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| DEFAULT_EXTERNAL_REF.to_string());
+    // One PNG per account: pairing two phones in parallel would otherwise have
+    // the second render overwrite the first's still-unscanned QR.
+    let qr_png = format!("/tmp/wamux-qr-{external_ref}.png");
     let channel = connect_uds(socket_path.clone()).await?;
     let mut account = AccountServiceClient::new(channel.clone());
     let mut messaging = MessagingServiceClient::new(channel);
@@ -29,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     // Create the account (ignore "already exists"): PairWithQr resolves by external_ref.
     match account
         .create_account(pb::CreateAccountRequest {
-            external_ref: Some(EXTERNAL_REF.to_string()),
+            external_ref: Some(external_ref.clone()),
         })
         .await
     {
@@ -38,10 +46,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let account_ref = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(EXTERNAL_REF.to_string())),
+        r#ref: Some(pb::account_ref::Ref::ExternalRef(external_ref.clone())),
     };
 
-    println!("calling PairWithQr over the socket ...");
+    println!("calling PairWithQr over the socket (account '{external_ref}') ...");
     let mut stream = account
         .pair_with_qr(pb::PairWithQrRequest {
             account: Some(account_ref.clone()),
@@ -53,12 +61,12 @@ async fn main() -> anyhow::Result<()> {
     while let Some(update) = stream.message().await? {
         match update.event {
             Some(pb::pairing_update::Event::QrCode(code)) => {
-                if let Err(e) = write_qr_png(&code, QR_PNG) {
+                if let Err(e) = write_qr_png(&code, &qr_png) {
                     eprintln!("[qr] render failed: {e}");
                 } else {
-                    println!("[qr] new QR -> {QR_PNG}");
+                    println!("[qr] new QR -> {qr_png}");
                     if !opened {
-                        let _ = std::process::Command::new("xdg-open").arg(QR_PNG).spawn();
+                        let _ = std::process::Command::new("xdg-open").arg(&qr_png).spawn();
                         opened = true;
                     }
                 }
