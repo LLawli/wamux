@@ -66,10 +66,12 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".to_string());
     let pool = storage::postgres::connect(&database_url, 16).await?;
     storage::postgres::run_migrations(&pool).await?;
+    // One engine over the shared pool; both registries mint backends from it.
+    let engine = Arc::new(storage::postgres::PgStorage::from_pool(pool.clone()));
 
     // --- real account (real WhatsApp endpoint: no ws_url_override) ---
     let real_registry = Arc::new(AccountRegistry::new(
-        pool.clone(),
+        engine.clone(),
         RegistryTuning::with_ring(512),
     ));
     real_registry.load_existing().await?;
@@ -93,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
     println!("\n=== bringing up {n_fakes} fake connections ===");
     let mock = MockWaServer::start().await?;
     let mock_registry = Arc::new(AccountRegistry::new(
-        pool.clone(),
+        engine.clone(),
         RegistryTuning {
             ws_url_override: Some(mock.ws_url()),
             graceful_stop_timeout: Duration::from_millis(500),

@@ -1,44 +1,40 @@
-//! M2 gate: the Postgres backend round-trips state and isolates accounts by
-//! `device_id`. Requires a running Postgres (docker container `wamux-pg`):
-//! `DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux` (default below).
+//! M2 gate, written against the `StorageEngine` trait rather than a concrete
+//! engine: any engine must round-trip state and isolate accounts by
+//! `device_id`. Requires the docker Postgres (`DATABASE_URL`).
+
+use std::sync::Arc;
 
 use bytes::Bytes;
-use wacore::store::traits::{Backend, DeviceStore, SignalStore};
-use wamux::storage::postgres::{self, Accounts, PgBackend};
+use wacore::store::traits::Backend;
+use wamux::storage::StorageEngine;
+use wamux::storage::postgres::PgBackend;
 
-fn database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
-}
+// Only a subset of the shared helpers is used per test binary.
+#[allow(dead_code)]
+mod common;
 
-/// Compile-time proof that the four trait impls satisfy the umbrella `Backend`.
+/// Compile-time proof that each engine's four trait impls satisfy the umbrella
+/// `Backend`. If an engine ever misses a method, this fails before any test runs.
 fn _assert_backend<T: Backend>() {}
 const _: () = {
     let _ = _assert_backend::<PgBackend>;
 };
 
-#[tokio::test]
-async fn device_id_isolation_and_roundtrip() {
-    let pool = postgres::connect(&database_url(), 5)
-        .await
-        .expect("connect postgres (is the wamux-pg container up?)");
-    postgres::run_migrations(&pool)
-        .await
-        .expect("run migrations");
-    let accounts = Accounts::new(pool.clone());
-
-    let a = accounts
-        .create(Some(&format!("test-a-{}", uuid::Uuid::new_v4())))
+/// The shared body: two accounts on one engine must never see each other's
+/// Signal state, and every value must come back exactly as written.
+async fn round_trips_and_isolates(storage: Arc<dyn StorageEngine>) {
+    let a = storage
+        .create_account(Some(&format!("test-a-{}", uuid::Uuid::new_v4())))
         .await
         .expect("create account a");
-    let b = accounts
-        .create(Some(&format!("test-b-{}", uuid::Uuid::new_v4())))
+    let b = storage
+        .create_account(Some(&format!("test-b-{}", uuid::Uuid::new_v4())))
         .await
         .expect("create account b");
     assert_ne!(a.device_id, b.device_id, "device_ids must differ");
 
-    let ba = PgBackend::new(pool.clone(), a.device_id);
-    let bb = PgBackend::new(pool.clone(), b.device_id);
+    let ba = storage.device_backend(a.device_id);
+    let bb = storage.device_backend(b.device_id);
 
     // Identities are scoped: A's identity is invisible to B.
     ba.put_identity("alice@s.whatsapp.net", [7u8; 32])
@@ -82,6 +78,12 @@ async fn device_id_isolation_and_roundtrip() {
     ba.save(&dev).await.unwrap(); // re-save the loaded device must not error
 
     // Cleanup: cascade removes all scoped rows.
-    assert!(accounts.delete(a.uuid).await.unwrap());
-    assert!(accounts.delete(b.uuid).await.unwrap());
+    assert!(storage.delete_account(a.uuid).await.unwrap());
+    assert!(storage.delete_account(b.uuid).await.unwrap());
+}
+
+#[tokio::test]
+async fn postgres_round_trips_and_isolates_by_device_id() {
+    let storage = common::pg_engine(5).await;
+    round_trips_and_isolates(storage).await;
 }

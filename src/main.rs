@@ -10,19 +10,19 @@ use tracing_subscriber::EnvFilter;
 
 use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::{server, storage, transport};
+use wamux::storage::postgres::PgStorage;
+use wamux::{server, transport};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::load().context("loading config")?;
     init_tracing(&config);
 
-    let pool = storage::postgres::connect(&config.database_url, config.db_max_connections)
-        .await
-        .context("connecting to postgres")?;
-    storage::postgres::run_migrations(&pool)
-        .await
-        .context("running migrations")?;
+    let engine = Arc::new(
+        PgStorage::open(&config.database_url, config.db_max_connections)
+            .await
+            .context("opening storage")?,
+    );
 
     let tuning = RegistryTuning {
         ring_capacity: config.event_ring_capacity,
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
         graceful_stop_timeout: Duration::from_millis(config.graceful_stop_timeout_ms),
         ws_url_override: None,
     };
-    let registry = Arc::new(AccountRegistry::new(pool, tuning));
+    let registry = Arc::new(AccountRegistry::new(engine, tuning));
     registry
         .load_existing()
         .await

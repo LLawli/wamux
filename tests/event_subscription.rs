@@ -18,6 +18,8 @@ use wamux::proto::v1::event_service_server::EventService;
 use wamux::services::event_service::EventSvc;
 use wamux::state::{AccountRegistry, RegistryTuning};
 
+// Only a subset of the shared helpers is used per test binary.
+#[allow(dead_code)]
 mod common;
 
 fn subscribe_all() -> pb::SubscribeRequest {
@@ -60,9 +62,9 @@ async fn expect_event_from(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn all_accounts_subscription_includes_later_created_accounts() {
-    let pool = common::connect_and_migrate(4).await;
-    let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(8)));
-    let swept = common::sweep_orphans(registry.pool(), "evsub-").await;
+    let engine = common::pg_engine(4).await;
+    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(8)));
+    let swept = common::sweep_orphans(registry.storage(), "evsub-").await;
     if swept > 0 {
         eprintln!("(swept {swept} orphan evsub- account(s) from a prior run)");
     }
@@ -107,7 +109,7 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
     // (an aborted run is caught by the next run's setup-sweep).
     registry.delete(&before).await.expect("delete before");
     registry.delete(&after).await.expect("delete after");
-    let _ = common::sweep_orphans(registry.pool(), "evsub-").await;
+    let _ = common::sweep_orphans(registry.storage(), "evsub-").await;
 }
 
 // Regression (code-review 2026-06-11): an event dispatched between
@@ -120,9 +122,9 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
 // parallel and must not reap this test's rows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn created_account_event_before_attach_is_recovered_from_ring() {
-    let pool = common::connect_and_migrate(4).await;
-    let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(8)));
-    let _ = common::sweep_orphans(registry.pool(), "evsubring-").await;
+    let engine = common::pg_engine(4).await;
+    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(8)));
+    let _ = common::sweep_orphans(registry.storage(), "evsubring-").await;
 
     let svc = EventSvc::new(registry.clone());
     let mut stream = svc
@@ -154,5 +156,5 @@ async fn created_account_event_before_attach_is_recovered_from_ring() {
     assert!(extra.is_err(), "event delivered twice: {extra:?}");
 
     registry.delete(&account).await.expect("delete account");
-    let _ = common::sweep_orphans(registry.pool(), "evsubring-").await;
+    let _ = common::sweep_orphans(registry.storage(), "evsubring-").await;
 }

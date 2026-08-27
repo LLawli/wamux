@@ -1,12 +1,13 @@
 //! The single shared `Arc<AccountRegistry>` injected into every service: owns
-//! the Postgres pool, the `accounts` table, and all per-account handles.
+//! the storage engine (whichever backend the DSN selected) and all per-account
+//! handles. Nothing here is engine-aware: account persistence and the
+//! per-account `Backend` both come from `StorageEngine`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use sqlx::PgPool;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use whatsapp_rust::pair_code::PairCodeOptions;
@@ -17,7 +18,7 @@ use crate::proto::v1 as pb;
 use crate::state::account_handle::RunningBot;
 use crate::state::event_bridge::EventCtx;
 use crate::state::{AccountHandle, EventRing};
-use crate::storage::postgres::{AccountRow, Accounts};
+use crate::storage::{AccountRow, StorageEngine};
 
 /// Deployment-tunable runtime knobs, injected once from `Config`. Bins/tests use
 /// `Default` and override only what they care about.
@@ -63,8 +64,7 @@ fn within_connection_budget(current: usize, cap: usize) -> bool {
 }
 
 pub struct AccountRegistry {
-    pool: PgPool,
-    accounts: Accounts,
+    storage: Arc<dyn StorageEngine>,
     tuning: RegistryTuning,
     /// Count of accounts with a live supervisor (incremented on a successful
     /// connect, decremented once when the run loop exits). Single-owner so it
@@ -79,12 +79,10 @@ pub struct AccountRegistry {
 }
 
 impl AccountRegistry {
-    pub fn new(pool: PgPool, tuning: RegistryTuning) -> Self {
-        let accounts = Accounts::new(pool.clone());
+    pub fn new(storage: Arc<dyn StorageEngine>, tuning: RegistryTuning) -> Self {
         let (created_tx, _) = broadcast::channel(64);
         Self {
-            pool,
-            accounts,
+            storage,
             tuning,
             connected: Arc::new(AtomicUsize::new(0)),
             handles: DashMap::new(),
@@ -93,8 +91,10 @@ impl AccountRegistry {
         }
     }
 
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
+    /// The storage engine backing this registry (account CRUD + `Backend`
+    /// factory). Services use it instead of reaching for a driver-specific pool.
+    pub fn storage(&self) -> &Arc<dyn StorageEngine> {
+        &self.storage
     }
 
     fn insert_handle(&self, row: &AccountRow) -> Arc<AccountHandle> {
@@ -118,7 +118,7 @@ impl AccountRegistry {
     /// entirely edge-driven (the edge calls `Connect` for the accounts it wants
     /// live, including after a daemon restart). No always-on policy in the core.
     pub async fn load_existing(self: &Arc<Self>) -> Result<(), WamuxError> {
-        for row in self.accounts.list().await? {
+        for row in self.storage.list_accounts().await? {
             self.insert_handle(&row);
         }
         Ok(())
@@ -128,7 +128,7 @@ impl AccountRegistry {
         &self,
         external_ref: Option<&str>,
     ) -> Result<Arc<AccountHandle>, WamuxError> {
-        let row = self.accounts.create(external_ref).await?;
+        let row = self.storage.create_account(external_ref).await?;
         Ok(self.insert_handle(&row))
     }
 
@@ -209,8 +209,7 @@ impl AccountRegistry {
             replay_max_event_bytes: self.tuning.replay_max_event_bytes,
         };
         let mut bot = build_bot(
-            self.pool.clone(),
-            handle.device_id,
+            self.storage.device_backend(handle.device_id),
             ctx,
             pair_code,
             skip_history,
@@ -260,17 +259,12 @@ impl AccountRegistry {
     /// Stop the bot and delete the account (cascade removes all scoped rows).
     pub async fn delete(&self, handle: &Arc<AccountHandle>) -> Result<(), WamuxError> {
         handle.stop().await;
-        self.accounts.delete(handle.uuid).await?;
+        self.storage.delete_account(handle.uuid).await?;
         if let Some(external) = &handle.external_ref {
             self.by_external.remove(external);
         }
         self.handles.remove(&handle.uuid);
         Ok(())
-    }
-
-    /// Access the persisted `accounts` table (e.g. services updating push_name).
-    pub fn accounts(&self) -> &Accounts {
-        &self.accounts
     }
 
     pub fn ring_capacity(&self) -> usize {

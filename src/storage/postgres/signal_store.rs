@@ -7,7 +7,7 @@ use wacore::store::error::{Result, StoreError};
 use wacore::store::traits::SignalStore;
 
 use super::PgBackend;
-use super::error_map::db;
+use crate::storage::sqlx_error::db;
 
 #[async_trait]
 impl SignalStore for PgBackend {

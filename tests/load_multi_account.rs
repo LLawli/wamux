@@ -21,6 +21,8 @@ use wamux::proto::v1::event_service_server::EventService;
 use wamux::services::event_service::EventSvc;
 use wamux::state::{AccountRegistry, RegistryTuning};
 
+// Only a subset of the shared helpers is used per test binary.
+#[allow(dead_code)]
 mod common;
 
 const ACCOUNTS: usize = 200;
@@ -42,7 +44,7 @@ fn live_event(seq: i64) -> pb::EventEnvelope {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "scale/stress test; run explicitly with --ignored"]
 async fn no_head_of_line_blocking_and_gap_under_load() {
-    let pool = common::connect_and_migrate(8).await;
+    let engine = common::pg_engine(8).await;
 
     // Realistic broadcast: the modest probe burst fits cleanly, while the slow
     // account's heavy flood still overruns it and forces a lag → gap.
@@ -51,11 +53,11 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
         broadcast_capacity: 1024,
         ..RegistryTuning::default()
     };
-    let registry = Arc::new(AccountRegistry::new(pool, tuning));
+    let registry = Arc::new(AccountRegistry::new(engine, tuning));
 
     // Self-heal before provisioning: clear any `load-%` rows an aborted prior run
     // left behind (the registry is fresh, so this doesn't touch live handles).
-    let swept = common::sweep_orphans(registry.pool(), "load-").await;
+    let swept = common::sweep_orphans(registry.storage(), "load-").await;
     if swept > 0 {
         eprintln!("(swept {swept} orphan load- account(s) from a prior run)");
     }
@@ -157,5 +159,5 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
     // Tidy on success with a single sweep (not 200 sequential deletes that an
     // earlier panic could leave half-run). An aborted run is caught by the next
     // run's setup-sweep, so orphans never accumulate past one run (B5).
-    let _ = common::sweep_orphans(registry.pool(), "load-").await;
+    let _ = common::sweep_orphans(registry.storage(), "load-").await;
 }

@@ -35,9 +35,8 @@ async fn main() -> anyhow::Result<()> {
 
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".to_string());
-    let pool = storage::postgres::connect(&database_url, 8).await?;
-    storage::postgres::run_migrations(&pool).await?;
-    let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(256)));
+    let engine = Arc::new(storage::postgres::PgStorage::open(&database_url, 8).await?);
+    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(256)));
     registry.load_existing().await?;
 
     let account_ref = pb::AccountRef {

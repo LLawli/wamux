@@ -7,8 +7,8 @@ use wacore::store::traits::{
     DeviceInfo, DeviceListRecord, LidPnMappingEntry, ProtocolStore, TcTokenEntry,
 };
 
-use super::error_map::db;
 use super::{PgBackend, now_secs};
+use crate::storage::sqlx_error::db;
 
 #[async_trait]
 impl ProtocolStore for PgBackend {

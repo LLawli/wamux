@@ -11,17 +11,19 @@
 mod accounts;
 mod app_sync_store;
 mod device_store;
-mod error_map;
 mod protocol_store;
 mod signal_store;
 
-pub use accounts::{AccountRow, Accounts};
+pub use accounts::Accounts;
 
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use wacore::store::error::StoreError;
+use wacore::store::traits::Backend;
+
+use crate::storage::blob_codec::{bincode_decode, bincode_encode, now_secs};
+
+use crate::storage::engine::{AccountRow, StorageEngine};
 
 /// Embedded migrations (compiled in; no DB needed at build time).
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -60,157 +62,62 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
     MIGRATOR.run(pool).await
 }
 
-/// bincode-standard encode, matching the reference's structured-blob columns
-/// (`app_state_keys.key_data`, `app_state_versions.state_data`, `device.data`).
-pub(crate) fn bincode_encode<T: Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
-    bincode::serde::encode_to_vec(value, bincode::config::standard())
-        .map_err(|e| StoreError::Serialization(Box::new(e)))
+/// The Postgres engine: one shared pool, the `accounts` table, and a
+/// `PgBackend` minted per account. This is the `StorageEngine` half; `PgBackend`
+/// stays the per-account wacore `Backend`.
+#[derive(Clone)]
+pub struct PgStorage {
+    pool: PgPool,
+    accounts: Accounts,
 }
 
-/// bincode-standard decode counterpart.
-pub(crate) fn bincode_decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StoreError> {
-    bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-        .map(|(value, _)| value)
-        .map_err(|e| StoreError::Serialization(Box::new(e)))
+impl PgStorage {
+    /// Connect to Postgres and apply pending migrations.
+    pub async fn open(database_url: &str, max_connections: u32) -> Result<Self, StoreError> {
+        let pool = connect(database_url, max_connections)
+            .await
+            .map_err(|e| StoreError::Connection(Box::new(e)))?;
+        run_migrations(&pool)
+            .await
+            .map_err(|e| StoreError::Migration(Box::new(e)))?;
+        Ok(Self::from_pool(pool))
+    }
+
+    /// Wrap an already-connected, already-migrated pool (bins and test harnesses
+    /// that build the pool themselves).
+    pub fn from_pool(pool: PgPool) -> Self {
+        let accounts = Accounts::new(pool.clone());
+        Self { pool, accounts }
+    }
+
+    /// Raw pool access, for the stress bins that issue their own SQL. Not part
+    /// of `StorageEngine`: no engine-agnostic caller may assume a Postgres pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
 }
 
-/// Unix seconds, matching the reference's `wacore::time::now_secs()` semantics.
-pub(crate) fn now_secs() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod blob_format_tests {
-    //! Pure round-trip tests (no database) for the structured-blob byte
-    //! formats. These blobs must stay drop-in compatible with the
-    //! whatsapp-rust sqlite reference backend: a shape or bincode-config
-    //! regression here silently corrupts every stored account.
-
-    use std::collections::HashMap;
-
-    use wacore::appstate::hash::HashState;
-    use wacore::store::Device;
-    use wacore::store::error::StoreError;
-    use wacore::store::traits::{AppStateSyncKey, DeviceInfo};
-    use whatsapp_rust::Jid;
-
-    use super::{bincode_decode, bincode_encode};
-
-    /// A `Device` with the pairing-time fields populated, like a real account
-    /// after QR pairing (a fresh `Device::new()` has them empty).
-    fn paired_device_fixture() -> Device {
-        let mut device = Device::new();
-        // unwrap: parsing a literal, well-formed JID.
-        device.pn = Some("559980000001@s.whatsapp.net".parse::<Jid>().unwrap());
-        device.push_name = "wamux blob test".to_string();
-        device
+#[async_trait::async_trait]
+impl StorageEngine for PgStorage {
+    async fn create_account(&self, external_ref: Option<&str>) -> Result<AccountRow, StoreError> {
+        self.accounts.create(external_ref).await
     }
 
-    #[test]
-    fn device_blob_round_trip_preserves_pairing_and_key_material() {
-        let device = paired_device_fixture();
-        let blob = bincode_encode(&device).unwrap();
-        let restored: Device = bincode_decode(&blob).unwrap();
-
-        assert_eq!(restored.pn, device.pn);
-        assert_eq!(restored.push_name, device.push_name);
-        assert_eq!(restored.registration_id, device.registration_id);
-        // Keypairs cross serde via key_pair_serde (priv||pub, 64 bytes); the
-        // public halves must survive byte-for-byte or Signal sessions break
-        // on the next load. device_props is #[serde(skip)] by design: it
-        // decodes to Default and device_store::load() restores DEVICE_PROPS,
-        // so it is intentionally not asserted here.
-        assert_eq!(
-            restored.noise_key.public_key.public_key_bytes(),
-            device.noise_key.public_key.public_key_bytes()
-        );
-        assert_eq!(
-            restored.identity_key.public_key.public_key_bytes(),
-            device.identity_key.public_key.public_key_bytes()
-        );
+    async fn list_accounts(&self) -> Result<Vec<AccountRow>, StoreError> {
+        self.accounts.list().await
     }
 
-    #[test]
-    fn app_state_sync_key_blob_round_trip_preserves_fields() {
-        let key = AppStateSyncKey {
-            key_data: vec![0x11; 32],
-            fingerprint: vec![0x22, 0x33, 0x44],
-            timestamp: 1_749_400_000,
-        };
-        let blob = bincode_encode(&key).unwrap();
-        let restored: AppStateSyncKey = bincode_decode(&blob).unwrap();
-
-        assert_eq!(restored.key_data, key.key_data);
-        assert_eq!(restored.fingerprint, key.fingerprint);
-        assert_eq!(restored.timestamp, key.timestamp);
+    async fn delete_account(&self, uuid: uuid::Uuid) -> Result<bool, StoreError> {
+        self.accounts.delete(uuid).await
     }
 
-    #[test]
-    fn hash_state_blob_round_trip_preserves_version_hash_and_map() {
-        let state = HashState {
-            version: 42,
-            // hash is serialized via serde_big_array; a plain [u8; 128] would
-            // not derive Serialize, so this exercises that wrapper too.
-            hash: [0xAB; 128],
-            index_value_map: HashMap::from([("index-mac".to_string(), vec![1u8, 2, 3])]),
-        };
-        let blob = bincode_encode(&state).unwrap();
-        let restored: HashState = bincode_decode(&blob).unwrap();
-
-        assert_eq!(restored.version, state.version);
-        assert_eq!(restored.hash, state.hash);
-        assert_eq!(restored.index_value_map, state.index_value_map);
+    fn device_backend(&self, device_id: i32) -> std::sync::Arc<dyn Backend> {
+        std::sync::Arc::new(PgBackend::new(self.pool.clone(), device_id))
     }
 
-    #[test]
-    fn device_registry_json_round_trip_mirrors_protocol_store() {
-        // Exactly the encode/decode pair protocol_store.rs uses for
-        // device_registry.devices_json: to_string on write, from_str on read.
-        let devices = vec![
-            DeviceInfo {
-                device_id: 0,
-                key_index: None,
-            },
-            DeviceInfo {
-                device_id: 7,
-                key_index: Some(3),
-            },
-        ];
-        let json = serde_json::to_string(&devices).unwrap();
-        let restored: Vec<DeviceInfo> = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(restored.len(), 2);
-        assert_eq!(restored[0].device_id, 0);
-        assert_eq!(restored[0].key_index, None);
-        assert_eq!(restored[1].device_id, 7);
-        assert_eq!(restored[1].key_index, Some(3));
-    }
-
-    #[test]
-    fn device_blob_encoding_is_deterministic() {
-        // Two encodes of one Device must be byte-identical. An accidental
-        // switch to a non-deterministic bincode config (or a format with
-        // unordered maps) would diverge from the sqlite reference blobs.
-        let device = paired_device_fixture();
-        let first = bincode_encode(&device).unwrap();
-        let second = bincode_encode(&device).unwrap();
-        assert_eq!(first, second);
-    }
-
-    #[test]
-    fn bincode_decode_of_garbage_bytes_returns_serialization_error() {
-        // 0xFF is an invalid Option tag in bincode-standard, so this can
-        // never accidentally parse; the point is Err, not a panic.
-        // (match instead of unwrap_err: Device has no Debug impl.)
-        let garbage: [u8; 7] = [0xFF, 0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0x01];
-        match bincode_decode::<Device>(&garbage) {
-            Err(StoreError::Serialization(_)) => {}
-            Err(other) => panic!("expected StoreError::Serialization, got: {other}"),
-            Ok(_) => panic!("garbage bytes must not decode into a Device"),
-        }
+    async fn ping_storage(&self) -> bool {
+        // A trivial round-trip: proves the pool can hand out a live connection,
+        // which is exactly what readiness means here.
+        sqlx::query("SELECT 1").execute(&self.pool).await.is_ok()
     }
 }

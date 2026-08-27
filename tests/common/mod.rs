@@ -1,7 +1,11 @@
 //! Shared helpers for the integration-test binaries (each test file compiles
 //! as its own crate and pulls this in via `mod common;`).
 
+use std::sync::Arc;
+
 use wamux::proto::v1 as pb;
+use wamux::storage::StorageEngine;
+use wamux::storage::postgres::PgStorage;
 
 /// The dockerized test database (CLAUDE.md's wamux-pg on :5433) unless the
 /// environment points elsewhere — the single home of the default DSN.
@@ -10,15 +14,14 @@ pub fn database_url() -> String {
         .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
 }
 
-/// Connect + migrate in one call; `max_conns` is the only knob the suites vary.
-pub async fn connect_and_migrate(max_conns: u32) -> sqlx::PgPool {
-    let pool = wamux::storage::postgres::connect(&database_url(), max_conns)
-        .await
-        .expect("connect pg");
-    wamux::storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
-    pool
+/// Connect + migrate the Postgres engine in one call; `max_conns` is the only
+/// knob the suites vary.
+pub async fn pg_engine(max_conns: u32) -> Arc<PgStorage> {
+    Arc::new(
+        PgStorage::open(&database_url(), max_conns)
+            .await
+            .expect("open pg storage"),
+    )
 }
 
 /// Synthetic raw envelope for driving the event fan-out without a real
@@ -40,17 +43,25 @@ pub fn synthetic_envelope(account_uuid: &str, seq: i64, payload_len: usize) -> p
 /// `prefix`. Tests call this at setup (self-heal from an aborted prior run,
 /// whose best-effort teardown never ran) and at the end, bounding accumulation
 /// to at most one aborted run's rows (the B5 pattern, docs/BACKLOG.md).
-pub async fn sweep_orphans(pool: &sqlx::PgPool, prefix: &str) -> u64 {
-    // LIKE-escape `\`, `%`, `_` so a prefix like "evsub_" matches literally
-    // instead of as a single-char wildcard (Postgres default escape is `\`).
-    let escaped = prefix
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    sqlx::query("DELETE FROM accounts WHERE external_ref LIKE $1")
-        .bind(format!("{escaped}%"))
-        .execute(pool)
-        .await
-        .map(|r| r.rows_affected())
-        .unwrap_or(0)
+///
+/// Prefix matching happens in Rust, over `list_accounts`, rather than in SQL:
+/// that keeps the helper engine-agnostic and sidesteps per-dialect LIKE escaping
+/// (the old Postgres version had to escape `\`, `%` and `_` by hand). Test-only,
+/// so the full-table scan is irrelevant.
+pub async fn sweep_orphans(storage: &Arc<dyn StorageEngine>, prefix: &str) -> u64 {
+    let rows = match storage.list_accounts().await {
+        Ok(rows) => rows,
+        Err(_) => return 0,
+    };
+    let mut deleted = 0;
+    for row in rows {
+        let matches = row
+            .external_ref
+            .as_deref()
+            .is_some_and(|external| external.starts_with(prefix));
+        if matches && storage.delete_account(row.uuid).await.unwrap_or(false) {
+            deleted += 1;
+        }
+    }
+    deleted
 }

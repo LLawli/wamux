@@ -8,18 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use wacore::store::Device;
-use wacore::store::traits::DeviceStore;
 use wamux::proto::v1::event_envelope::Event as WireEvent;
 use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage;
-use wamux::storage::postgres::PgBackend;
 use wamux::stress::MockWaServer;
 use wamux::stress::mock_wa_server::{PUSHED_RECEIPT_FROM, PUSHED_RECEIPT_ID};
 
-fn database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
-}
+// Only a subset of the shared helpers is used per test binary.
+#[allow(dead_code)]
+mod common;
 
 /// Honor `RUST_LOG` if set (so a diagnostic run can crank up whatsapp-rust /
 /// keepalive logging), else a quiet default. Idempotent across tests.
@@ -38,18 +34,13 @@ async fn registered_account(
     mock: &MockWaServer,
     tag_prefix: &str,
 ) -> (Arc<AccountRegistry>, Arc<wamux::state::AccountHandle>) {
-    let pool = storage::postgres::connect(&database_url(), 4)
-        .await
-        .expect("connect pg");
-    storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
+    let engine = common::pg_engine(4).await;
 
     let tuning = RegistryTuning {
         ws_url_override: Some(mock.ws_url()),
         ..RegistryTuning::default()
     };
-    let registry = Arc::new(AccountRegistry::new(pool.clone(), tuning));
+    let registry = Arc::new(AccountRegistry::new(engine.clone(), tuning));
 
     let tag = uuid::Uuid::new_v4();
     let handle = registry
@@ -64,7 +55,9 @@ async fn registered_account(
             .expect("parse pn jid"),
     );
     device.push_name = "Stress".to_string();
-    PgBackend::new(pool, handle.device_id)
+    registry
+        .storage()
+        .device_backend(handle.device_id)
         .save(&device)
         .await
         .expect("save registered device");
@@ -79,18 +72,13 @@ async fn real_client_completes_handshake_against_mock() {
     let mock = MockWaServer::start().await.expect("start mock");
     let ws_url = mock.ws_url();
 
-    let pool = storage::postgres::connect(&database_url(), 4)
-        .await
-        .expect("connect pg");
-    storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
+    let engine = common::pg_engine(4).await;
 
     let tuning = RegistryTuning {
         ws_url_override: Some(ws_url),
         ..RegistryTuning::default()
     };
-    let registry = Arc::new(AccountRegistry::new(pool, tuning));
+    let registry = Arc::new(AccountRegistry::new(engine, tuning));
 
     let tag = uuid::Uuid::new_v4();
     let handle = registry
@@ -271,12 +259,7 @@ async fn connect_many_clients_against_mock() {
 
     let mock = MockWaServer::start().await.expect("start mock");
 
-    let pool = storage::postgres::connect(&database_url(), 16)
-        .await
-        .expect("connect pg");
-    storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
+    let engine = common::pg_engine(16).await;
 
     // Bounded graceful stop keeps the N-account teardown from dragging.
     let tuning = RegistryTuning {
@@ -284,7 +267,7 @@ async fn connect_many_clients_against_mock() {
         graceful_stop_timeout: Duration::from_millis(500),
         ..RegistryTuning::default()
     };
-    let registry = Arc::new(AccountRegistry::new(pool.clone(), tuning));
+    let registry = Arc::new(AccountRegistry::new(engine.clone(), tuning));
 
     // Provision N registered devices (pn set + persisted) so each connects via a
     // LOGIN payload and treats the mock's `<success>` as auth success.
@@ -302,7 +285,9 @@ async fn connect_many_clients_against_mock() {
                 .expect("parse pn jid"),
         );
         device.push_name = "Stress".to_string();
-        PgBackend::new(pool.clone(), handle.device_id)
+        registry
+            .storage()
+            .device_backend(handle.device_id)
             .save(&device)
             .await
             .expect("save registered device");

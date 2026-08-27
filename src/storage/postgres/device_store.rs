@@ -6,8 +6,8 @@ use wacore::store::Device;
 use wacore::store::error::Result;
 use wacore::store::traits::DeviceStore;
 
-use super::error_map::db;
 use super::{PgBackend, bincode_decode, bincode_encode};
+use crate::storage::sqlx_error::db;
 
 #[async_trait]
 impl DeviceStore for PgBackend {

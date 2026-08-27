@@ -3,7 +3,7 @@
 //! Domain/storage code returns `WamuxError`; the service edge converts it to a
 //! clean `Status` (the client never sees an internal error string). Storage
 //! trait impls must return `wacore::store::error::StoreError`, so that mapping
-//! lives in `storage::postgres::error_map`.
+//! lives in `storage::sqlx_error`.
 
 use thiserror::Error;
 

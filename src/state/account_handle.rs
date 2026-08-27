@@ -12,7 +12,7 @@ use whatsapp_rust::Client;
 
 use super::event_ring::EventRing;
 use crate::proto::v1::{ConnectionState, EventEnvelope};
-use crate::storage::postgres::AccountRow;
+use crate::storage::AccountRow;
 
 /// The supervisor task for a running bot: it owns the `Bot`, awaits the run
 /// loop's terminal exit (the library handles transient reconnects internally,

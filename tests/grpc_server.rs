@@ -13,12 +13,11 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::admin_service_client::AdminServiceClient;
 use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::{server, storage, transport};
+use wamux::{server, transport};
 
-fn database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".into())
-}
+// Only a subset of the shared helpers is used per test binary.
+#[allow(dead_code)]
+mod common;
 
 fn account_ref(uuid: &str) -> pb::AccountRef {
     pb::AccountRef {
@@ -33,13 +32,8 @@ async fn account_lifecycle_over_socket() {
     let socket = dir.path().join("wamux.sock");
     let socket_str = socket.to_str().unwrap().to_string();
 
-    let pool = storage::postgres::connect(&database_url(), 5)
-        .await
-        .expect("connect pg");
-    storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
-    let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(64)));
+    let engine = common::pg_engine(5).await;
+    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(64)));
     let config = Config {
         socket_path: socket_str.clone(),
         enable_reflection: false,
@@ -151,13 +145,8 @@ async fn spawn_server() -> tonic::transport::Channel {
     let socket = dir.path().join("wamux.sock");
     let socket_str = socket.to_str().unwrap().to_string();
 
-    let pool = storage::postgres::connect(&database_url(), 5)
-        .await
-        .expect("connect pg");
-    storage::postgres::run_migrations(&pool)
-        .await
-        .expect("migrate");
-    let registry = Arc::new(AccountRegistry::new(pool, RegistryTuning::with_ring(64)));
+    let engine = common::pg_engine(5).await;
+    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(64)));
     let config = Config {
         socket_path: socket_str.clone(),
         enable_reflection: false,

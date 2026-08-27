@@ -1,20 +1,32 @@
 //! The wamux-specific `accounts` table: maps the canonical UUID and optional
 //! `external_ref` to the integer `device_id` that scopes every store table.
 //! This is NOT a wacore trait — it is wamux's own account registry persistence.
+//!
+//! `AccountRow` itself is engine-neutral (`storage::engine`); only the row
+//! decoding is Postgres-shaped, hence the hand-written `FromRow` below.
 
 use sqlx::PgPool;
+use sqlx::Row;
+use sqlx::postgres::PgRow;
 use uuid::Uuid;
 
-use super::error_map::db;
+use crate::storage::engine::AccountRow;
+use crate::storage::sqlx_error::db;
 use wacore::store::error::Result;
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct AccountRow {
-    pub uuid: Uuid,
-    pub external_ref: Option<String>,
-    pub device_id: i32,
-    pub push_name: Option<String>,
-    pub created_at: i64,
+/// Decode a Postgres row into the neutral `AccountRow`. Hand-written instead of
+/// derived because the row type is per-driver: the sqlite engine decodes `uuid`
+/// from TEXT and `created_at` from INTEGER, this one from UUID and BIGINT.
+impl sqlx::FromRow<'_, PgRow> for AccountRow {
+    fn from_row(row: &PgRow) -> sqlx::Result<Self> {
+        Ok(Self {
+            uuid: row.try_get("uuid")?,
+            external_ref: row.try_get("external_ref")?,
+            device_id: row.try_get("device_id")?,
+            push_name: row.try_get("push_name")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
 }
 
 /// CRUD over the `accounts` table.

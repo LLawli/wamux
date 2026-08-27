@@ -55,12 +55,9 @@ impl AdminService for AdminSvc {
         &self,
         _request: Request<pb::Empty>,
     ) -> Result<Response<pb::HealthResponse>, Status> {
-        // Readiness probes the pool with a trivial round-trip; failure is not an
+        // Readiness probes storage with a trivial round-trip; failure is not an
         // RPC error (the caller wants `ready=false`, not a Status).
-        let ready = sqlx::query("SELECT 1")
-            .execute(self.registry.pool())
-            .await
-            .is_ok();
+        let ready = self.registry.storage().ping_storage().await;
         Ok(Response::new(pb::HealthResponse {
             serving: true,
             ready,

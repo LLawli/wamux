@@ -4,14 +4,12 @@ use std::sync::Arc;
 
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use wacore::store::traits::DeviceStore;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use super::account_to_proto;
 use crate::proto::v1 as pb;
 use crate::proto::v1::account_service_server::AccountService;
 use crate::state::{AccountHandle, AccountRegistry};
-use crate::storage::postgres::PgBackend;
 
 pub struct AccountSvc {
     registry: Arc<AccountRegistry>,
@@ -24,7 +22,9 @@ impl AccountSvc {
 }
 
 async fn load_jid(registry: &AccountRegistry, handle: &AccountHandle) -> Option<pb::Jid> {
-    let backend = PgBackend::new(registry.pool().clone(), handle.device_id);
+    // `DeviceStore` is a supertrait of `Backend`, so `load()` is reachable
+    // straight off the engine-minted `dyn Backend` — no concrete engine type.
+    let backend = registry.storage().device_backend(handle.device_id);
     let device = backend.load().await.ok().flatten()?;
     let jid = device.pn.or(device.lid)?;
     Some(pb::Jid {

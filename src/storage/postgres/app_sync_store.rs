@@ -7,8 +7,8 @@ use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::error::Result;
 use wacore::store::traits::{AppStateSyncKey, AppSyncStore};
 
-use super::error_map::db;
 use super::{PgBackend, bincode_decode, bincode_encode};
+use crate::storage::sqlx_error::db;
 
 #[async_trait]
 impl AppSyncStore for PgBackend {
