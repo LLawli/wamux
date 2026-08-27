@@ -10,19 +10,17 @@ use tracing_subscriber::EnvFilter;
 
 use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage::postgres::PgStorage;
-use wamux::{server, transport};
+use wamux::{server, storage, transport};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::load().context("loading config")?;
     init_tracing(&config);
 
-    let engine = Arc::new(
-        PgStorage::open(&config.database_url, config.db_max_connections)
-            .await
-            .context("opening storage")?,
-    );
+    // The DSN scheme picks the engine (postgres:// or sqlite://).
+    let engine = storage::open_engine(&config.database_url, config.db_max_connections)
+        .await
+        .context("opening storage")?;
 
     let tuning = RegistryTuning {
         ring_capacity: config.event_ring_capacity,

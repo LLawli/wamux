@@ -1,5 +1,6 @@
 //! M3 gate: exercise the account-lifecycle RPCs over a real Unix-socket gRPC
-//! connection (the same path production uses). Requires the docker Postgres.
+//! connection (the same path production uses). Runs against whichever engine
+//! WAMUX_TEST_ENGINE names (default Postgres, which needs the docker container).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +33,7 @@ async fn account_lifecycle_over_socket() {
     let socket = dir.path().join("wamux.sock");
     let socket_str = socket.to_str().unwrap().to_string();
 
-    let engine = common::pg_engine(5).await;
+    let engine = common::test_engine().await;
     let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(64)));
     let config = Config {
         socket_path: socket_str.clone(),
@@ -145,7 +146,7 @@ async fn spawn_server() -> tonic::transport::Channel {
     let socket = dir.path().join("wamux.sock");
     let socket_str = socket.to_str().unwrap().to_string();
 
-    let engine = common::pg_engine(5).await;
+    let engine = common::test_engine().await;
     let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(64)));
     let config = Config {
         socket_path: socket_str.clone(),

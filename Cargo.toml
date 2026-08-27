@@ -49,9 +49,12 @@ tower = "0.5"
 futures = "0.3"
 async-trait = "0.1"
 
-# storage (Postgres)
+# storage: both engines, always compiled. No feature gate — the DSN scheme picks
+# one at startup, and gating would sprinkle #[cfg] across the storage module for
+# the sole benefit of a slightly smaller binary.
 sqlx = { version = "0.8", default-features = false, features = [
     "postgres",
+    "sqlite",
     "runtime-tokio",
     "tls-rustls",
     "macros",
@@ -120,6 +123,12 @@ protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# The cascade + byte-parity tests inspect the raw pools below the trait.
+sqlx = { version = "0.8", default-features = false, features = [
+    "sqlite",
+    "postgres",
+    "runtime-tokio",
+] }
 wacore = "0.6.0"
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"

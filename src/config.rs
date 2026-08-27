@@ -11,9 +11,12 @@ pub struct Config {
     pub socket_mode: u32,
     /// Optional owning group name to chown the socket to.
     pub socket_group: Option<String>,
-    /// Postgres connection string.
+    /// Database DSN. The scheme picks the storage engine:
+    /// `postgres://` / `postgresql://` or `sqlite://` (file path; created if
+    /// absent). Anything else fails at startup.
     pub database_url: String,
-    /// Postgres pool size.
+    /// Postgres pool size. Ignored by the SQLite engine, which pins its pool to
+    /// a single connection to serialize writes (see `storage::sqlite::connect`).
     pub db_max_connections: u32,
     /// Per-account in-memory replay ring capacity.
     pub event_ring_capacity: usize,

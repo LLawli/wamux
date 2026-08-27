@@ -6,6 +6,7 @@ use std::sync::Arc;
 use wamux::proto::v1 as pb;
 use wamux::storage::StorageEngine;
 use wamux::storage::postgres::PgStorage;
+use wamux::storage::sqlite::SqliteStorage;
 
 /// The dockerized test database (CLAUDE.md's wamux-pg on :5433) unless the
 /// environment points elsewhere — the single home of the default DSN.
@@ -22,6 +23,38 @@ pub async fn pg_engine(max_conns: u32) -> Arc<PgStorage> {
             .await
             .expect("open pg storage"),
     )
+}
+
+/// A fresh SQLite engine in a throwaway directory, plus the guard that keeps
+/// the directory alive. Every call gets its own empty database file.
+pub async fn sqlite_engine() -> (Arc<SqliteStorage>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("wamux-test.db");
+    let url = format!("sqlite://{}?mode=rwc", path.display());
+    let engine = SqliteStorage::open(&url)
+        .await
+        .expect("open sqlite storage");
+    (Arc::new(engine), dir)
+}
+
+/// The engine under test, selected by `WAMUX_TEST_ENGINE` (`postgres` — the
+/// default — or `sqlite`). This is what lets scripts/ci.sh run the whole suite
+/// twice, once per engine, and the SQLite pass needs no Postgres container.
+///
+/// The SQLite temp dir is leaked on purpose, matching how these tests already
+/// handle the socket dir: the database has to outlive the server task that
+/// keeps using it, and the process is about to exit anyway.
+pub async fn test_engine() -> Arc<dyn StorageEngine> {
+    let requested = std::env::var("WAMUX_TEST_ENGINE").unwrap_or_else(|_| "postgres".into());
+    match requested.as_str() {
+        "postgres" => pg_engine(5).await,
+        "sqlite" => {
+            let (engine, dir) = sqlite_engine().await;
+            Box::leak(Box::new(dir));
+            engine
+        }
+        other => panic!("unknown WAMUX_TEST_ENGINE '{other}' (expected postgres or sqlite)"),
+    }
 }
 
 /// Synthetic raw envelope for driving the event fan-out without a real

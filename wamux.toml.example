@@ -8,8 +8,13 @@ socket_mode = 432
 # Informational only: the socket inherits the daemon's process group.
 # socket_group = "wamux"
 
-# Postgres connection + pool size.
+# Database DSN. The scheme picks the storage engine:
+#   postgres:// (or postgresql://) — the multi-account default
+#   sqlite://   — single file, no server; created if absent
+# e.g. database_url = "sqlite:///var/lib/wamux/wamux.db"
 database_url = "postgres://wamux:wamux@localhost:5432/wamux"
+# Postgres pool size. Ignored under sqlite://, which pins the pool to one
+# connection so the process serializes its own writes.
 db_max_connections = 16
 
 # Per-account in-memory replay ring (events kept for quick reconnect).

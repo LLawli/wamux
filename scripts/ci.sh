@@ -42,8 +42,14 @@ cargo clippy --all-targets -- -D warnings
 stage "clippy (--features stress)"
 cargo clippy --features stress --all-targets -- -D warnings
 
-stage "tests (unit + integration)"
+stage "tests (unit + integration, postgres engine)"
 cargo test
+
+# Same suite, SQLite engine. The service-level suites honor WAMUX_TEST_ENGINE,
+# so this re-runs them against the other backend; storage_backend.rs exercises
+# both engines in either pass (parity is only testable with both present).
+stage "tests (sqlite engine)"
+WAMUX_TEST_ENGINE=sqlite cargo test
 
 stage "stress tests (fast: M1/M2a/M2b)"
 cargo test --features stress --test stress_handshake

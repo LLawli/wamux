@@ -48,7 +48,9 @@ Signal/session/device state (in Postgres), never business message history.
 - **Rust nightly** — pinned in `rust-toolchain.toml`. `whatsapp-rust` enables
   the `simd` feature (`core::simd` / `portable_simd`) and edition 2024, both
   nightly-only. `rustup` will pick up the pinned toolchain automatically.
-- **Postgres** for the Signal/device store.
+- **Postgres or SQLite** for the Signal/device store. The `database_url`
+  scheme picks the engine: `postgres://` for the multi-account deployment,
+  `sqlite://` for a single file with no server process.
 - `protoc` is **not** required on the host — it is vendored and run by
   `build.rs`, which regenerates the Rust gRPC code from `proto/` on every build.
 
@@ -64,6 +66,8 @@ docker run -d --name wamux-pg \
 cp wamux.toml.example wamux.toml
 #   edit database_url / socket_path as needed; every key can also be overridden
 #   by an env var (WAMUX_<UPPERCASE_KEY>), e.g. WAMUX_DATABASE_URL=…
+#   for a serverless setup, skip step 1 and use:
+#     WAMUX_DATABASE_URL=sqlite:///var/lib/wamux/wamux.db
 
 # 3. Build (also regenerates protobuf) and run
 cargo run
@@ -94,6 +98,7 @@ cargo build                                   # build + regenerate proto
 cargo fmt                                      # format (law)
 cargo clippy --all-targets -- -D warnings      # lint, zero tolerance
 DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux cargo test
+WAMUX_TEST_ENGINE=sqlite cargo test            # same suite, SQLite engine
 scripts/ci.sh                                  # every gate in one run (--full adds scale tests)
 ```
 
@@ -116,7 +121,7 @@ src/
   domain/       # business logic, transport-agnostic, unit-tested
   state/        # shared state, pools, registry, event bridge
   transport/    # UDS listener, socket lifecycle, peer-cred checks
-  storage/      # Postgres backend for the whatsapp-rust store
+  storage/      # StorageEngine trait + postgres/ and sqlite/ backends
   config.rs     # Config struct + load-at-startup
   error.rs      # typed errors + mapping to tonic::Status
 ```

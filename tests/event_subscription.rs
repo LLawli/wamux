@@ -4,7 +4,8 @@
 //! before the subscribe) keeps delivering. Drives `EventSvc` directly (no
 //! socket), mirroring tests/load_multi_account.rs.
 //!
-//! Requires the docker Postgres (DATABASE_URL).
+//! Runs against whichever engine WAMUX_TEST_ENGINE names (default Postgres,
+//! which needs DATABASE_URL and the docker container).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,7 +63,7 @@ async fn expect_event_from(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn all_accounts_subscription_includes_later_created_accounts() {
-    let engine = common::pg_engine(4).await;
+    let engine = common::test_engine().await;
     let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(8)));
     let swept = common::sweep_orphans(registry.storage(), "evsub-").await;
     if swept > 0 {
@@ -122,7 +123,7 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
 // parallel and must not reap this test's rows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn created_account_event_before_attach_is_recovered_from_ring() {
-    let engine = common::pg_engine(4).await;
+    let engine = common::test_engine().await;
     let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(8)));
     let _ = common::sweep_orphans(registry.storage(), "evsubring-").await;
 
