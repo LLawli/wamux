@@ -33,6 +33,12 @@ stress = [
     "wacore-noise/danger-skip-cert-chain-verify",
 ]
 
+# One-shot 0.6 -> 0.7 blob migration. Links `wacore` 0.6.0 ALONGSIDE 0.7.0 (they
+# are semver-incompatible, so cargo keeps both), which is the only way to read an
+# old blob and write a new one in the same process. Off by default; delete the
+# feature, the bin, and the `wacore06` dependency once every store has migrated.
+migrate-0-7 = ["dep:wacore06"]
+
 [[bin]]
 name = "wamux"
 path = "src/main.rs"
@@ -42,6 +48,12 @@ path = "src/main.rs"
 name = "stress_live"
 path = "src/bin/stress_live.rs"
 required-features = ["stress"]
+
+# One-shot store migration; see the `migrate-0-7` feature above.
+[[bin]]
+name = "migrate_0_7"
+path = "src/bin/migrate_0_7.rs"
+required-features = ["migrate-0-7"]
 
 [dependencies]
 # gRPC / protobuf
@@ -123,6 +135,11 @@ tokio-websockets = { version = "0.13", optional = true, default-features = false
     "ring",
     "rand",
 ] }
+# --- 0.6 -> 0.7 blob migration only (optional; enabled by `migrate-0-7`) ---
+# The OLD wacore, pinned exactly. Renamed so both versions can be named in one
+# file. default-features off: the migration only needs the store types, not simd.
+wacore06 = { package = "wacore", version = "=0.6.0", optional = true, default-features = false }
+
 # Noise XX primitives + the e2e cert-chain test fixture (server mirror).
 wacore-noise = { version = "0.7.0", optional = true, default-features = false }
 wacore-binary = { version = "0.7.0", optional = true, default-features = false }

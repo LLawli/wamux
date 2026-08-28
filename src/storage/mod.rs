@@ -6,6 +6,10 @@
 //! device-scoped backend type.
 
 pub mod blob_codec;
+/// 0.6 -> 0.7 bincode blob conversion. Compiled only under `migrate-0-7`, which
+/// is what links the second `wacore`; delete both once every store has run it.
+#[cfg(feature = "migrate-0-7")]
+pub mod blob_migration_0_7;
 pub mod engine;
 pub mod postgres;
 pub mod sqlite;
