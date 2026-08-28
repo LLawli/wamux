@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: tarball + GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+
+      # A tag points at a commit CI already tested, but a tag can also be moved
+      # or cut from an untested branch. This is cheap insurance against
+      # publishing an artifact that does not build clean.
+      - name: gates
+        run: scripts/ci.sh --no-postgres
+
+      # release-tarball.sh refuses to run when the tag disagrees with the
+      # version in Cargo.toml, so a mistyped tag fails here instead of
+      # shipping a binary whose --version lies.
+      - name: build tarball
+        run: scripts/release-tarball.sh "${GITHUB_REF_NAME#v}"
+
+      # Fails when the CHANGELOG has no section for this version, rather than
+      # publishing a release with empty notes.
+      - name: release notes from CHANGELOG
+        run: scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > dist/notes.md
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "wamux ${GITHUB_REF_NAME#v}" \
+            --notes-file dist/notes.md \
+            dist/*.tar.gz dist/*.sha256
