@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The pinned nightly (rust-toolchain.toml) is what every job resolves to;
+# rustup honors that file automatically, so no job names a toolchain by hand.
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Everything that needs no database. This is the gate that gives fast
+  # feedback on a PR, and it only became possible once the SQLite engine
+  # landed: before it, every test required a Postgres service container.
+  quick:
+    name: fmt + clippy + tests (sqlite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # Reads channel and components from rust-toolchain.toml, and caches
+          # the toolchain plus ~/.cargo and target/. Without the cache each run
+          # re-downloads a whole nightly.
+          cache: true
+
+      - run: cargo fmt --check
+
+      - run: cargo clippy --all-targets -- -D warnings
+
+      - run: cargo clippy --features stress --all-targets -- -D warnings
+
+      - name: tests (sqlite engine)
+        env:
+          WAMUX_TEST_ENGINE: sqlite
+        run: cargo test
+
+  # The real pipeline. scripts/ci.sh is the single definition of what "green"
+  # means for this project, so CI runs that script rather than restating its
+  # stages here - two copies of a pipeline drift, and the local one is what
+  # people actually run before pushing. It repeats fmt/clippy from `quick`,
+  # which costs nothing in wall clock because the jobs run in parallel.
+  full:
+    name: scripts/ci.sh (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wamux
+          POSTGRES_PASSWORD: wamux
+          POSTGRES_DB: wamux
+        # 5433 on the host matches the port the project uses everywhere
+        # (CLAUDE.md, the test default DSN), so no override is needed.
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U wamux"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+
+      - name: full pipeline
+        env:
+          DATABASE_URL: postgres://wamux:wamux@localhost:5433/wamux
+        run: scripts/ci.sh
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # audit-check reports findings through the checks API rather than by
+      # failing opaquely.
+      checks: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
