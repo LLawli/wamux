@@ -11,6 +11,37 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ## [Unreleased]
 
+### Added
+
+- **The LID↔phone mapping is reachable over the contract** (issue #1). A chat
+  whose only identity is a `@lid` was unnameable through the socket: the
+  library learns the phone side and kept it to itself. Three reads, all pure
+  relay of what the client already knows:
+  - `InboundMessage.sender_alt` / `recipient_alt` carry the other-namespace jids
+    the stanza itself supplied, which the core used to drop. No round trip.
+  - `ContactService.ResolveLidPn` resolves a batch of jids in either direction
+    against the live client (in-memory cache first, durable store on miss), so
+    it also answers for mappings learned during an offline history replay.
+  - `ContactService.ListLidMappings` dumps every pair persisted for the account,
+    for a consumer reconciling its own store in one pass. Storage-side, so it
+    answers for a disconnected account.
+
+  The core still never rewrites a JID onto the other namespace and never
+  invents a pair: an unknown jid answers `found=false`.
+
+### Changed
+
+- **Breaking: `ContactService.GetPushName` now takes an `AccountRef`, not a
+  `JidRequest`** (issue #1). It always answered the *account's own* push name —
+  the getter that pairs with `SetPushName` — while ignoring the `jid` field it
+  asked for, and the shape read as "what is this contact called". WhatsApp
+  gives a companion device no per-contact push-name store, so the field could
+  not be honoured; it is gone instead. Migration: send the same `AccountRef`
+  you were putting in `JidRequest.account` and drop the jid. A caller that was
+  using this to name contacts was stamping its own push name on them; the push
+  name of a *peer* arrives on the events that carry it
+  (`InboundMessage.push_name`, `PushNameUpdate`).
+
 ## [0.1.0] - 2026-08-28
 
 First tagged release. The daemon multiplexes many WhatsApp accounts in one

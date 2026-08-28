@@ -35,6 +35,13 @@ src/
   EditMessage, DeleteMessage, SendPresence, MarkRead.
 - **MediaService**: DownloadMedia (server stream: meta frame + byte chunks).
 - **GroupService**, **ContactService**, **AdminService** (GetMetrics).
+- **Identity (LID<->PN)**: `InboundMessage.sender_alt`/`recipient_alt` relay the
+  stanza's other-namespace jids verbatim; `ContactService.ResolveLidPn` (batch,
+  live client, cache-aside) and `ContactService.ListLidMappings` (storage-side,
+  works disconnected) read the mapping the library keeps. The core only reports
+  pairs the client already learned — no lookup policy, no guessing (issue #1).
+  `GetPushName` takes an `AccountRef`: it is the account's OWN name, the getter
+  that pairs with `SetPushName`.
 
 ## Multi-account runtime (`state/`)
 - `AccountRegistry` is the single `Arc<T>` injected into every service: owns the
