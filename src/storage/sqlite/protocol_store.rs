@@ -352,13 +352,23 @@ impl ProtocolStore for SqliteBackend {
         Ok(rows)
     }
 
-    async fn delete_expired_tc_tokens(&self, cutoff_timestamp: i64) -> Result<u32> {
-        let res = sqlx::query("DELETE FROM tc_tokens WHERE token_timestamp < ? AND device_id = ?")
-            .bind(cutoff_timestamp)
-            .bind(self.device_id)
-            .execute(&self.pool)
-            .await
-            .map_err(db)?;
+    /// Two independent windows, both of which must be stale before the row goes:
+    /// the received token (expired or byte-empty) AND the sender bucket (expired
+    /// or never set). Pruning on the token alone would drop recent sender state
+    /// that the retry path still needs. Mirrors the reference `SqliteStore`.
+    async fn delete_expired_tc_tokens(&self, token_cutoff: i64, sender_cutoff: i64) -> Result<u32> {
+        let res = sqlx::query(
+            "DELETE FROM tc_tokens
+             WHERE (length(token) = 0 OR token_timestamp < ?)
+               AND (sender_timestamp IS NULL OR sender_timestamp < ?)
+               AND device_id = ?",
+        )
+        .bind(token_cutoff)
+        .bind(sender_cutoff)
+        .bind(self.device_id)
+        .execute(&self.pool)
+        .await
+        .map_err(db)?;
         Ok(res.rows_affected() as u32)
     }
 

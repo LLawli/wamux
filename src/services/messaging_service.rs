@@ -39,7 +39,10 @@ impl MessagingService for MessagingSvc {
         // domain (same pattern as send_media's header).
         let to = parse_jid(&require_jid(req.to.clone())?)?;
         let result = messaging::send_text(&client, to, &req).await?;
-        Ok(Response::new(send_result_to_proto(result)))
+        Ok(Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+        )))
     }
 
     async fn send_media(
@@ -64,7 +67,10 @@ impl MessagingService for MessagingSvc {
         let data = collect_inline(&mut stream, self.media_max_bytes).await?;
 
         let result = media_transfer::send_media(&client, to, &header, data).await?;
-        Ok(Response::new(send_result_to_proto(result)))
+        Ok(Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+        )))
     }
 
     async fn send_reaction(
@@ -75,7 +81,10 @@ impl MessagingService for MessagingSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let target = require_field(req.target, "target")?;
         let result = messaging::send_reaction(&client, &target, &req.emoji).await?;
-        Ok(Response::new(send_result_to_proto(result)))
+        Ok(Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+        )))
     }
 
     async fn edit_message(
@@ -228,7 +237,10 @@ impl MessagingService for MessagingSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let to = parse_jid(&require_jid(req.to.clone())?)?;
         let result = send_rich::send_contact(&client, to, &req).await?;
-        Ok(Response::new(send_result_to_proto(result)))
+        Ok(Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+        )))
     }
 
     async fn send_poll(
@@ -242,7 +254,7 @@ impl MessagingService for MessagingSvc {
         // The poll key reuses send_result_to_proto's shape; the message_secret
         // rides alongside so the edge can decrypt incoming votes.
         Ok(Response::new(pb::SendPollResult {
-            key: send_result_to_proto(result).key,
+            key: send_result_to_proto(result.message_id, &result.to).key,
             message_secret,
         }))
     }
@@ -254,7 +266,10 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let result = status::post_status_text(&client, &req).await?;
-        Ok(Response::new(send_result_to_proto(result)))
+        Ok(Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+        )))
     }
 
     async fn post_status_media(
@@ -274,7 +289,10 @@ impl MessagingService for MessagingSvc {
         // Same inline-only contract as SendMedia: the core fetches no URLs.
         let data = collect_status_media(&mut stream, self.media_max_bytes).await?;
         let result = status::post_status_media(&client, &header, data).await?;
-        Ok(Response::new(send_result_to_proto(result)))
+        Ok(Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+        )))
     }
 }
 

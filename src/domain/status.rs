@@ -3,7 +3,9 @@
 //! uploads and posts, deciding no privacy policy of its own.
 
 use wacore::download::MediaType;
+use whatsapp_rust::buffa::Enumeration;
 use whatsapp_rust::upload::UploadOptions;
+use whatsapp_rust::waproto::whatsapp::message::extended_text_message::FontType;
 use whatsapp_rust::{Client, SendResult, StatusSendOptions};
 
 use crate::domain::jid_parse::parse_jids;
@@ -19,12 +21,21 @@ pub async fn post_status_text(
     req: &pb::PostStatusTextRequest,
 ) -> Result<SendResult, WamuxError> {
     let recipients = parse_jids(&req.recipients)?;
+    // 0.7 types the font as a closed enum instead of a bare i32. Reject an
+    // out-of-schema number rather than quietly falling back to SYSTEM: the edge
+    // asked for a specific font and deserves to hear that it does not exist.
+    let font = FontType::from_i32(req.font).ok_or_else(|| {
+        WamuxError::InvalidArgument(format!(
+            "unknown status font {}; expected a wa FontType value",
+            req.font
+        ))
+    })?;
     client
         .status()
         .send_text(
             &req.text,
             req.background_argb,
-            req.font,
+            font,
             &recipients,
             // Privacy is the only StatusSendOptions field and defaults to
             // "contacts"; per-status privacy lists are edge policy, not yet a

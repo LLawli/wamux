@@ -16,9 +16,9 @@
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
-use prost014::Message as _;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
+use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use wamux::proto::v1 as pb;
@@ -207,7 +207,7 @@ async fn next_until(
 }
 
 fn decode_counts(raw: &[u8]) -> (usize, usize) {
-    match wa::HistorySync::decode(raw) {
+    match wa::HistorySync::decode_from_slice(raw) {
         Ok(hs) => {
             let convs = hs.conversations.len();
             let msgs = hs.conversations.iter().map(|c| c.messages.len()).sum();

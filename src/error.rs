@@ -61,10 +61,14 @@ fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16
     if let Some(e) = cause.downcast_ref::<ServerErrorCode>() {
         return Some((e.code, e.text.clone()));
     }
-    if let Some(ClientIq::ServerError { code, text }) = cause.downcast_ref::<ClientIq>() {
+    // `..`: 0.7 added `error_type` (the XMPP error class) and `backoff` (a
+    // server-directed retry delay). Ignored on purpose. Retry timing is edge
+    // policy, so the core has no use for them, and surfacing them is a proto
+    // change to make deliberately, not one smuggled into the error mapper.
+    if let Some(ClientIq::ServerError { code, text, .. }) = cause.downcast_ref::<ClientIq>() {
         return Some((*code, text.clone()));
     }
-    if let Some(WacoreIq::ServerError { code, text }) = cause.downcast_ref::<WacoreIq>() {
+    if let Some(WacoreIq::ServerError { code, text, .. }) = cause.downcast_ref::<WacoreIq>() {
         return Some((*code, text.clone()));
     }
     None
@@ -172,6 +176,8 @@ mod tests {
         anyhow::Error::new(IqError::ServerError {
             code,
             text: text.into(),
+            error_type: None,
+            backoff: None,
         })
     }
 
@@ -196,6 +202,8 @@ mod tests {
         let err = anyhow::Error::new(wacore::request::ServerErrorCode {
             code: 404,
             text: "item-not-found".into(),
+            error_type: None,
+            backoff: None,
         });
         assert_eq!(status_for(err).code(), tonic::Code::NotFound);
     }

@@ -4,41 +4,43 @@
 
 use std::sync::Arc;
 
-use prost014::Message as _;
 use serde::Serialize;
 use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::Event;
 use wacore::types::message::MessageInfo;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
 use whatsapp_rust::Jid;
+use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::proto::v1 as pb;
 
-/// Map an event to a oneof payload, or `None` for events we intentionally drop
-/// (raw nodes, internal notifications).
-pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
+/// Map an event to zero or more oneof payloads.
+///
+/// Zero for events we intentionally drop (raw nodes, internal notifications).
+/// More than one only for `Event::Messages`, which whatsapp-rust 0.7 delivers
+/// as a batch: the wire contract stays one `InboundMessage` per envelope, so
+/// the batch is fanned out here rather than leaking its shape to the edge.
+pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
     use pb::event_envelope::Event as Pb;
     match event {
-        Event::Connected(_) => Some(connection(pb::ConnectionState::Connected, "")),
-        Event::Disconnected(_) => Some(connection(pb::ConnectionState::Disconnected, "")),
-        Event::LoggedOut(l) => Some(connection(
+        Event::Connected(_) => one(connection(pb::ConnectionState::Connected, "")),
+        Event::Disconnected(_) => one(connection(pb::ConnectionState::Disconnected, "")),
+        Event::LoggedOut(l) => one(connection(
             pb::ConnectionState::LoggedOut,
             &format!("{:?}", l.reason),
         )),
-        Event::TemporaryBan(b) => Some(connection(pb::ConnectionState::Banned, &format!("{b:?}"))),
+        Event::TemporaryBan(b) => one(connection(pb::ConnectionState::Banned, &format!("{b:?}"))),
 
-        Event::PairingQrCode { code, .. } => {
-            Some(pairing(pb::pairing_update::Event::QrCode(code.clone())))
-        }
-        Event::PairingCode { code, .. } => {
-            Some(pairing(pb::pairing_update::Event::PairCode(code.clone())))
-        }
+        // 0.7 sealed every payload into its own struct, so these are tuple
+        // variants now instead of struct variants with a `code` field.
+        Event::PairingQrCode(q) => one(pairing(pb::pairing_update::Event::QrCode(q.code.clone()))),
+        Event::PairingCode(c) => one(pairing(pb::pairing_update::Event::PairCode(c.code.clone()))),
         // PairSuccess has NO push name (push names arrive later via
         // PushNameUpdate); the proto field is named for what the lib actually
         // hands over (code-review 2026-06-11: it used to masquerade as
         // push_name, empty for every personal account).
-        Event::PairSuccess(p) => Some(pairing(pb::pairing_update::Event::Paired(pb::PairedInfo {
+        Event::PairSuccess(p) => one(pairing(pb::pairing_update::Event::Paired(pb::PairedInfo {
             jid: Some(pb::Jid {
                 value: p.id.to_string(),
             }),
@@ -48,49 +50,56 @@ pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
             }),
             platform: p.platform.clone(),
         }))),
-        Event::PairError(p) => Some(pairing(pb::pairing_update::Event::Error(
+        Event::PairError(p) => one(pairing(pb::pairing_update::Event::Error(
             pb::PairingError {
                 message: p.error.clone(),
             },
         ))),
 
-        Event::Message(msg, info) => Some(Pb::Message(map_message(msg, info))),
-        Event::Receipt(r) => Some(Pb::Receipt(pb::ReceiptEvent {
+        // Live traffic is a batch of one; an offline drain delivers one batch
+        // per durable commit. Either way the edge keeps seeing one message per
+        // envelope, each with its own monotonic_seq stamped by the bridge.
+        Event::Messages(batch) => batch
+            .messages
+            .iter()
+            .map(|m| Pb::Message(map_message(&m.message, &m.info)))
+            .collect(),
+        Event::Receipt(r) => one(Pb::Receipt(pb::ReceiptEvent {
             chat: r.source.chat.to_string(),
             sender: r.source.sender.to_string(),
             message_ids: r.message_ids.iter().map(|m| m.to_string()).collect(),
             r#type: receipt_type_label(&r.r#type),
             timestamp: r.timestamp.timestamp_millis(),
         })),
-        Event::UndecryptableMessage(u) => Some(Pb::Undecryptable(pb::UndecryptableEvent {
+        Event::UndecryptableMessage(u) => one(Pb::Undecryptable(pb::UndecryptableEvent {
             chat: u.info.source.chat.to_string(),
             sender: u.info.source.sender.to_string(),
             reason: format!("{:?}", u.unavailable_type),
         })),
 
-        Event::Presence(p) => Some(Pb::Presence(pb::PresenceUpdate {
+        Event::Presence(p) => one(Pb::Presence(pb::PresenceUpdate {
             jid: p.from.to_string(),
             online: !p.unavailable,
             last_seen: p.last_seen.map(|t| t.timestamp()).unwrap_or(0),
             chat_state: String::new(),
         })),
-        Event::ChatPresence(c) => Some(Pb::Presence(pb::PresenceUpdate {
+        Event::ChatPresence(c) => one(Pb::Presence(pb::PresenceUpdate {
             jid: c.source.sender.to_string(),
             online: true,
             last_seen: 0,
             chat_state: chat_state_label(c.state, c.media).to_string(),
         })),
 
-        Event::GroupUpdate(g) => Some(Pb::Group(pb::GroupUpdate {
+        Event::GroupUpdate(g) => one(Pb::Group(pb::GroupUpdate {
             group_jid: g.group_jid.to_string(),
             kind: "group_update".to_string(),
             raw: serde_json::to_vec(g).unwrap_or_default(),
         })),
-        Event::PushNameUpdate(p) => Some(Pb::PushName(pb::PushNameUpdate {
+        Event::PushNameUpdate(p) => one(Pb::PushName(pb::PushNameUpdate {
             jid: p.jid.to_string(),
             push_name: p.new_push_name.clone(),
         })),
-        Event::ContactUpdate(c) => Some(Pb::Contact(pb::ContactUpdate {
+        Event::ContactUpdate(c) => one(Pb::Contact(pb::ContactUpdate {
             jid: c.jid.to_string(),
             kind: "contact_update".to_string(),
             raw: serde_json::to_vec(c).unwrap_or_default(),
@@ -99,44 +108,69 @@ pub fn map_event(event: &Event) -> Option<pb::event_envelope::Event> {
         // Backfill: only ever dispatched when the account connected with history
         // enabled (or via FetchMessageHistory). Relayed verbatim — the edge
         // decodes `raw` (a `wa.HistorySync` protobuf) itself.
-        Event::HistorySync(h) => Some(Pb::HistorySync(pb::HistorySyncEvent {
-            sync_type: h.sync_type(),
-            chunk_order: h.chunk_order(),
-            progress: h.progress(),
-            session_id: h.peer_data_request_session_id().map(str::to_string),
-            raw: h.raw_bytes().to_vec(),
-        })),
+        Event::HistorySync(h) => one(history_sync(h)),
 
         // App-state (companion-sync) chat mutations. Each lib variant is its own
         // struct sharing a `jid`/`chat_jid` + serde shape; we relay the typed
         // chat + a kind token, with the action detail in `raw`. StarUpdate names
         // its chat `chat_jid` (it points at a message, not the chat itself), so
         // it can't share the `jid`-projecting helper.
-        Event::ArchiveUpdate(s) => Some(Pb::AppState(app_state(s.jid.to_string(), "archive", s))),
-        Event::PinUpdate(s) => Some(Pb::AppState(app_state(s.jid.to_string(), "pin", s))),
-        Event::MuteUpdate(s) => Some(Pb::AppState(app_state(s.jid.to_string(), "mute", s))),
-        Event::StarUpdate(s) => Some(Pb::AppState(app_state(s.chat_jid.to_string(), "star", s))),
+        Event::ArchiveUpdate(s) => one(Pb::AppState(app_state(s.jid.to_string(), "archive", s))),
+        Event::PinUpdate(s) => one(Pb::AppState(app_state(s.jid.to_string(), "pin", s))),
+        Event::MuteUpdate(s) => one(Pb::AppState(app_state(s.jid.to_string(), "mute", s))),
+        Event::StarUpdate(s) => one(Pb::AppState(app_state(s.chat_jid.to_string(), "star", s))),
         Event::MarkChatAsReadUpdate(s) => {
-            Some(Pb::AppState(app_state(s.jid.to_string(), "mark_read", s)))
+            one(Pb::AppState(app_state(s.jid.to_string(), "mark_read", s)))
         }
         Event::DeleteChatUpdate(s) => {
-            Some(Pb::AppState(app_state(s.jid.to_string(), "delete_chat", s)))
+            one(Pb::AppState(app_state(s.jid.to_string(), "delete_chat", s)))
         }
 
         // Inbound call signaling. The core relays the primitive; ring/answer
         // policy is the edge's. `call_id` is the CallAction id (the stanza id
         // lives in `raw`).
-        Event::IncomingCall(c) => Some(Pb::Call(map_call(c))),
+        Event::IncomingCall(c) => one(Pb::Call(map_call(c))),
 
         // Intentionally dropped (internal/noisy).
-        Event::Notification(_) | Event::RawNode(_) => None,
+        Event::Notification(_) | Event::RawNode(_) => Vec::new(),
 
-        // Forward-compat catch-all: never silently lose an event type.
-        other => Some(Pb::Raw(pb::RawEvent {
+        // Forward-compat catch-all: never silently lose an event type. 0.7 also
+        // made `Event` #[non_exhaustive], so this arm is now load-bearing for a
+        // variant the lib adds in a minor release, not only for the ones we
+        // chose not to type.
+        other => one(Pb::Raw(pb::RawEvent {
             kind: variant_name(other),
             payload: serde_json::to_vec(other).unwrap_or_default(),
             note: String::new(),
         })),
+    }
+}
+
+/// The single-payload case, which is every event but `Messages`.
+fn one(event: pb::event_envelope::Event) -> Vec<pb::event_envelope::Event> {
+    vec![event]
+}
+
+/// Backfill chunk. 0.7 keeps the payload zlib-compressed behind a lazy handle
+/// (`raw_bytes()` is gone), so inflating is now fallible. A failed inflate
+/// relays as the raw catch-all carrying the reason: emitting a
+/// `HistorySyncEvent` with empty `raw` would tell the edge "nothing in this
+/// chunk", which is a different and false statement.
+fn history_sync(h: &wacore::types::events::LazyHistorySync) -> pb::event_envelope::Event {
+    use pb::event_envelope::Event as Pb;
+    match h.decompress() {
+        Ok(raw) => Pb::HistorySync(pb::HistorySyncEvent {
+            sync_type: h.sync_type(),
+            chunk_order: h.chunk_order(),
+            progress: h.progress(),
+            session_id: h.peer_data_request_session_id().map(str::to_string),
+            raw: raw.to_vec(),
+        }),
+        Err(e) => Pb::Raw(pb::RawEvent {
+            kind: "HistorySync".to_string(),
+            payload: Vec::new(),
+            note: format!("history sync chunk failed to inflate: {e}"),
+        }),
     }
 }
 
@@ -159,6 +193,12 @@ fn receipt_type_label(receipt: &ReceiptType) -> String {
         ReceiptType::PeerMsg => "peer_msg".to_string(),
         ReceiptType::HistorySync => "hist_sync".to_string(),
         ReceiptType::Other(raw) => raw.clone(),
+        // 0.7 made this #[non_exhaustive]. A variant added upstream relays the
+        // lib's own canonical wire string rather than being dropped or coerced
+        // into a neighbouring token. The known arms stay hand-written because
+        // `as_wire_str` renders Delivered as "delivery", and the proto contract
+        // promises "delivered".
+        other => other.as_wire_str().to_string(),
     }
 }
 
@@ -192,21 +232,26 @@ fn map_call(call: &IncomingCall) -> pb::CallEvent {
     pb::CallEvent {
         from: call.from.to_string(),
         call_id: call.action.call_id().to_string(),
-        action: call_action_label(&call.action).to_string(),
+        action: call_action_label(&call.action),
         raw: serde_json::to_vec(call).unwrap_or_default(),
     }
 }
 
 /// Lowercase wire tokens for `CallEvent.action`, never Debug casing (mirrors the
 /// receipt/chat-state token convention so the edge codes against the proto).
-fn call_action_label(action: &CallAction) -> &'static str {
+fn call_action_label(action: &CallAction) -> String {
     match action {
-        CallAction::Offer { .. } => "offer",
-        CallAction::OfferNotice { .. } => "offer_notice",
-        CallAction::PreAccept { .. } => "pre_accept",
-        CallAction::Accept { .. } => "accept",
-        CallAction::Reject { .. } => "reject",
-        CallAction::Terminate { .. } => "terminate",
+        CallAction::Offer { .. } => "offer".to_string(),
+        CallAction::OfferNotice { .. } => "offer_notice".to_string(),
+        CallAction::PreAccept { .. } => "pre_accept".to_string(),
+        CallAction::Accept { .. } => "accept".to_string(),
+        CallAction::Reject { .. } => "reject".to_string(),
+        CallAction::Terminate { .. } => "terminate".to_string(),
+        // 0.7 made this #[non_exhaustive] and added eight call sub-types. They
+        // relay under the lib's own `wire_tag`; the six above stay hand-written
+        // because the proto contract promises "pre_accept" where the wire says
+        // "preaccept".
+        other => other.wire_tag().to_string(),
     }
 }
 
@@ -249,11 +294,11 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
 
     if let Some(text) = &msg.conversation {
         out.text = text.clone();
-    } else if let Some(ext) = &msg.extended_text_message {
+    } else if let Some(ext) = msg.extended_text_message.as_option() {
         if let Some(text) = &ext.text {
             out.text = text.clone();
         }
-        if let Some(ci) = &ext.context_info {
+        if let Some(ci) = ext.context_info.as_option() {
             out.mentions = ci
                 .mentioned_jid
                 .iter()
@@ -274,9 +319,9 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         }
     }
 
-    if let Some(reaction) = &msg.reaction_message {
+    if let Some(reaction) = msg.reaction_message.as_option() {
         out.reaction = reaction.text.clone().unwrap_or_default();
-        out.reaction_target = reaction.key.as_ref().map(wa_key_to_proto);
+        out.reaction_target = reaction.key.as_option().map(wa_key_to_proto);
     }
 
     // An inbound edit or revoke surfaces the typed flags the proto reserves
@@ -319,7 +364,7 @@ fn message_text(m: &wa::Message) -> Option<String> {
         return Some(t.clone());
     }
     m.extended_text_message
-        .as_ref()
+        .as_option()
         .and_then(|e| e.text.clone())
 }
 
@@ -331,15 +376,15 @@ fn message_text(m: &wa::Message) -> Option<String> {
 /// only the top level surfaced revokes but silently dropped every edit. The
 /// top-level form wins when both somehow exist.
 fn effective_protocol_message(msg: &wa::Message) -> Option<&wa::message::ProtocolMessage> {
-    if let Some(pm) = msg.protocol_message.as_deref() {
+    if let Some(pm) = msg.protocol_message.as_option() {
         return Some(pm);
     }
     msg.edited_message
-        .as_deref()?
+        .as_option()?
         .message
-        .as_deref()?
+        .as_option()?
         .protocol_message
-        .as_deref()
+        .as_option()
 }
 
 /// Surface an inbound edit/revoke onto the typed flags + target key. The target
@@ -348,18 +393,19 @@ fn effective_protocol_message(msg: &wa::Message) -> Option<&wa::message::Protoco
 /// `edited_message`. Only Revoke/MessageEdit are projected; any other protocol
 /// type is left untouched (it already rides in raw_message). Reading `r#type`
 /// as an explicit `Some` avoids treating an absent type as Revoke (whose wire
-/// value is the 0-default).
+/// value is the 0-default). waproto 0.7 already hands the field over typed, so
+/// there is no `try_from` left to do.
 fn project_protocol_message(out: &mut pb::InboundMessage, pm: &wa::message::ProtocolMessage) {
     use wa::message::protocol_message::Type;
-    match pm.r#type.and_then(|t| Type::try_from(t).ok()) {
-        Some(Type::Revoke) => {
+    match pm.r#type {
+        Some(Type::REVOKE) => {
             out.is_delete = true;
-            out.protocol_target = pm.key.as_ref().map(wa_key_to_proto);
+            out.protocol_target = pm.key.as_option().map(wa_key_to_proto);
         }
-        Some(Type::MessageEdit) => {
+        Some(Type::MESSAGE_EDIT) => {
             out.is_edit = true;
-            out.protocol_target = pm.key.as_ref().map(wa_key_to_proto);
-            if let Some(edited) = &pm.edited_message {
+            out.protocol_target = pm.key.as_option().map(wa_key_to_proto);
+            if let Some(edited) = pm.edited_message.as_option() {
                 out.text = message_text(edited).unwrap_or_default();
             }
         }
@@ -373,15 +419,14 @@ fn project_protocol_message(out: &mut pb::InboundMessage, pm: &wa::message::Prot
 fn is_secret_message_edit(msg: &wa::Message) -> bool {
     use wa::message::secret_encrypted_message::SecretEncType;
     msg.secret_encrypted_message
-        .as_ref()
+        .as_option()
         .and_then(|s| s.secret_enc_type)
-        .and_then(|t| SecretEncType::try_from(t).ok())
-        == Some(SecretEncType::MessageEdit)
+        == Some(SecretEncType::MESSAGE_EDIT)
 }
 
 /// The five wa media sub-messages share identical descriptor field names but
-/// no common trait (prost-generated structs), so a macro projects whichever
-/// one is present into a `MediaDescriptor` uniformly.
+/// no common trait (the protobuf generator emits none), so a macro projects
+/// whichever one is present into a `MediaDescriptor` uniformly.
 macro_rules! media_descriptor {
     ($m:expr, $kind:literal) => {
         pb::MediaDescriptor {
@@ -399,19 +444,19 @@ macro_rules! media_descriptor {
 /// Build a `MediaDescriptor` from whichever media sub-message is present.
 fn extract_media(msg: &wa::Message) -> Option<(pb::MediaDescriptor, String)> {
     let caption_of = |caption: &Option<String>| -> String { caption.clone().unwrap_or_default() };
-    if let Some(m) = &msg.image_message {
+    if let Some(m) = msg.image_message.as_option() {
         return Some((media_descriptor!(m, "image"), caption_of(&m.caption)));
     }
-    if let Some(m) = &msg.video_message {
+    if let Some(m) = msg.video_message.as_option() {
         return Some((media_descriptor!(m, "video"), caption_of(&m.caption)));
     }
-    if let Some(m) = &msg.audio_message {
+    if let Some(m) = msg.audio_message.as_option() {
         return Some((media_descriptor!(m, "audio"), String::new()));
     }
-    if let Some(m) = &msg.document_message {
+    if let Some(m) = msg.document_message.as_option() {
         return Some((media_descriptor!(m, "document"), caption_of(&m.caption)));
     }
-    if let Some(m) = &msg.sticker_message {
+    if let Some(m) = msg.sticker_message.as_option() {
         return Some((media_descriptor!(m, "sticker"), String::new()));
     }
     None

@@ -111,6 +111,27 @@ impl SignalStore for SqliteBackend {
         Ok(())
     }
 
+    /// UPDATE, never upsert. A prekey consumed (and deleted) between the upload
+    /// snapshot and this call has to stay deleted; an upsert would resurrect it
+    /// with an empty record and hand the server a key we can no longer answer.
+    /// One statement per id: sqlite has no array binding.
+    async fn mark_prekeys_uploaded(&self, ids: &[u32]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        for id in ids {
+            sqlx::query("UPDATE prekeys SET uploaded = TRUE WHERE id = ? AND device_id = ?")
+                .bind(*id as i32)
+                .bind(self.device_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
+
     async fn load_prekey(&self, id: u32) -> Result<Option<Bytes>> {
         let row: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT key FROM prekeys WHERE id = ? AND device_id = ?")

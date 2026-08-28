@@ -36,41 +36,42 @@ impl GroupService for GroupSvc {
     async fn add_participants(
         &self,
         request: Request<pb::ParticipantsRequest>,
-    ) -> Result<Response<pb::Empty>, Status> {
+    ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::add_participants(&client, &req.group_jid, &req.participants).await?;
-        Ok(Response::new(pb::Empty {}))
+        let results = groups::add_participants(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(results))
     }
 
     async fn remove_participants(
         &self,
         request: Request<pb::ParticipantsRequest>,
-    ) -> Result<Response<pb::Empty>, Status> {
+    ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::remove_participants(&client, &req.group_jid, &req.participants).await?;
-        Ok(Response::new(pb::Empty {}))
+        let results =
+            groups::remove_participants(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(results))
     }
 
     async fn promote_admins(
         &self,
         request: Request<pb::ParticipantsRequest>,
-    ) -> Result<Response<pb::Empty>, Status> {
+    ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::promote(&client, &req.group_jid, &req.participants).await?;
-        Ok(Response::new(pb::Empty {}))
+        let results = groups::promote(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(results))
     }
 
     async fn demote_admins(
         &self,
         request: Request<pb::ParticipantsRequest>,
-    ) -> Result<Response<pb::Empty>, Status> {
+    ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::demote(&client, &req.group_jid, &req.participants).await?;
-        Ok(Response::new(pb::Empty {}))
+        let results = groups::demote(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(results))
     }
 
     async fn set_group_subject(
@@ -222,20 +223,21 @@ impl GroupService for GroupSvc {
     async fn approve_membership_requests(
         &self,
         request: Request<pb::ParticipantsRequest>,
-    ) -> Result<Response<pb::Empty>, Status> {
+    ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::approve_membership(&client, &req.group_jid, &req.participants).await?;
-        Ok(Response::new(pb::Empty {}))
+        let results =
+            groups::approve_membership(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(results))
     }
 
     async fn reject_membership_requests(
         &self,
         request: Request<pb::ParticipantsRequest>,
-    ) -> Result<Response<pb::Empty>, Status> {
+    ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::reject_membership(&client, &req.group_jid, &req.participants).await?;
-        Ok(Response::new(pb::Empty {}))
+        let results = groups::reject_membership(&client, &req.group_jid, &req.participants).await?;
+        Ok(Response::new(results))
     }
 }

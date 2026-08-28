@@ -5,9 +5,10 @@ use std::sync::Arc;
 use wacore::iq::contacts::SetProfilePictureSpec;
 use wacore::iq::groups::{
     GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupSubject,
+    ParticipantChangeResponse,
 };
 use whatsapp_rust::Client;
-use whatsapp_rust::features::{GroupParticipant, MembershipRequest};
+use whatsapp_rust::features::{GroupParticipant, MembershipRequest, PreviousDescription};
 
 use crate::domain::jid_parse::{parse_jid, parse_jids};
 use crate::error::{WamuxError, client_err};
@@ -61,57 +62,94 @@ fn metadata_json(md: &whatsapp_rust::GroupMetadata) -> Vec<u8> {
 }
 
 /// One participant, whole: the jid the group addresses them by, the phone jid
-/// the server sent alongside it (absent in a PN-addressed group, where `jid`
-/// already is the phone), and the admin role.
+/// and the lid the server sent alongside it (either can be absent, depending on
+/// the group's addressing mode), the Meta username when the roster carries one,
+/// and the admin role.
+///
+/// `lid` and `username` only exist from whatsapp-rust 0.7 on. Both stay null
+/// rather than being guessed: the group roster is one of the few places the
+/// server volunteers a username at all (a received message never carries one),
+/// so relaying it here is the difference between the edge knowing an identity
+/// and having to go ask for it.
 fn participant_json(p: &GroupParticipant) -> serde_json::Value {
     serde_json::json!({
         "jid": p.jid.to_string(),
         "phone_number": p.phone_number.as_ref().map(|j| j.to_string()),
+        "lid": p.lid.as_ref().map(|j| j.to_string()),
+        "username": p.username.as_ref().map(|u| u.to_string()),
         "type": p.participant_type.as_str(),
     })
+}
+
+/// Relay one server verdict per participant, verbatim. The server answers each
+/// participant separately, so a change request can partially succeed; deciding
+/// which failure is retryable, invitable (the 403 `add_request` token), or
+/// fatal is edge policy, so the core hands the whole list back instead of
+/// collapsing it into one ok/failed.
+fn participant_changes(changes: Vec<ParticipantChangeResponse>) -> pb::ParticipantsResponse {
+    pb::ParticipantsResponse {
+        results: changes.into_iter().map(participant_change).collect(),
+    }
+}
+
+fn participant_change(c: ParticipantChangeResponse) -> pb::ParticipantChange {
+    pb::ParticipantChange {
+        jid: c.jid.to_string(),
+        // Absent server attrs relay as the proto3 default (empty string), the
+        // same rule the rest of the crate uses for "not set".
+        status: c.status.unwrap_or_default(),
+        error: c.error.unwrap_or_default(),
+        phone_number: c.phone_number.map(|j| j.to_string()).unwrap_or_default(),
+        username: c.username.unwrap_or_default(),
+        add_request: c.add_request.map(|a| pb::AddRequestInfo {
+            code: a.code,
+            expiration: a.expiration,
+        }),
+    }
 }
 
 pub async fn add_participants(
     client: &Client,
     group: &str,
     participants: &[String],
-) -> Result<(), WamuxError> {
+) -> Result<pb::ParticipantsResponse, WamuxError> {
     let jid = parse_jid(group)?;
     let parts = parse_jids(participants)?;
     client
         .groups()
         .add_participants(&jid, &parts)
         .await
-        .map_err(client_err)?;
-    Ok(())
+        .map(participant_changes)
+        .map_err(client_err)
 }
 
 pub async fn remove_participants(
     client: &Client,
     group: &str,
     participants: &[String],
-) -> Result<(), WamuxError> {
+) -> Result<pb::ParticipantsResponse, WamuxError> {
     let jid = parse_jid(group)?;
     let parts = parse_jids(participants)?;
     client
         .groups()
         .remove_participants(&jid, &parts)
         .await
-        .map_err(client_err)?;
-    Ok(())
+        .map(participant_changes)
+        .map_err(client_err)
 }
 
 pub async fn promote(
     client: &Client,
     group: &str,
     participants: &[String],
-) -> Result<(), WamuxError> {
+) -> Result<pb::ParticipantsResponse, WamuxError> {
     let jid = parse_jid(group)?;
     let parts = parse_jids(participants)?;
     client
         .groups()
         .promote_participants(&jid, &parts)
         .await
+        .map(participant_changes)
         .map_err(client_err)
 }
 
@@ -119,13 +157,14 @@ pub async fn demote(
     client: &Client,
     group: &str,
     participants: &[String],
-) -> Result<(), WamuxError> {
+) -> Result<pb::ParticipantsResponse, WamuxError> {
     let jid = parse_jid(group)?;
     let parts = parse_jids(participants)?;
     client
         .groups()
         .demote_participants(&jid, &parts)
         .await
+        .map(participant_changes)
         .map_err(client_err)
 }
 
@@ -148,7 +187,14 @@ pub async fn set_description(
     let description = GroupDescription::new(description).map_err(invalid)?;
     client
         .groups()
-        .set_description(&jid, Some(description), None)
+        // 0.7 types the third argument as `PreviousDescription`, the server's
+        // optimistic-concurrency token. `Resolve` (the lib default) reads the
+        // current description id first; it is the only variant that is correct
+        // when the caller holds no metadata, and the RPC gives the edge no way
+        // to pass one. `Absent` would 409 on any group that already has a
+        // description, so it is not the safe literal translation of the old
+        // `None` it looks like.
+        .set_description(&jid, Some(description), PreviousDescription::Resolve)
         .await
         .map_err(client_err)
 }
@@ -310,36 +356,34 @@ fn requests_json(requests: &[MembershipRequest]) -> Vec<u8> {
     serde_json::to_vec(requests).unwrap_or_default()
 }
 
-/// The per-participant change responses are advisory; the core drops them and
-/// returns Empty (the edge re-reads state via GetMembershipRequests if needed).
 pub async fn approve_membership(
     client: &Client,
     group: &str,
     participants: &[String],
-) -> Result<(), WamuxError> {
+) -> Result<pb::ParticipantsResponse, WamuxError> {
     let jid = parse_jid(group)?;
     let parts = parse_jids(participants)?;
     client
         .groups()
         .approve_membership_requests(&jid, &parts)
         .await
-        .map_err(client_err)?;
-    Ok(())
+        .map(participant_changes)
+        .map_err(client_err)
 }
 
 pub async fn reject_membership(
     client: &Client,
     group: &str,
     participants: &[String],
-) -> Result<(), WamuxError> {
+) -> Result<pb::ParticipantsResponse, WamuxError> {
     let jid = parse_jid(group)?;
     let parts = parse_jids(participants)?;
     client
         .groups()
         .reject_membership_requests(&jid, &parts)
         .await
-        .map_err(client_err)?;
-    Ok(())
+        .map(participant_changes)
+        .map_err(client_err)
 }
 
 #[cfg(test)]
@@ -362,7 +406,10 @@ mod tests {
             participants: vec![GroupParticipant {
                 jid: member.clone(),
                 phone_number: None,
+                lid: None,
+                username: None,
                 participant_type: ParticipantType::Member,
+                details: None,
             }],
             ..GroupMetadata::default()
         };
@@ -387,7 +434,10 @@ mod tests {
             participants: vec![GroupParticipant {
                 jid: lid.clone(),
                 phone_number: Some(pn.clone()),
+                lid: Some(lid.clone()),
+                username: Some("fulano".into()),
                 participant_type: ParticipantType::SuperAdmin,
+                details: None,
             }],
             ..GroupMetadata::default()
         };
@@ -396,6 +446,8 @@ mod tests {
         let participant = &value["participants"][0];
         assert_eq!(participant["jid"], lid.to_string());
         assert_eq!(participant["phone_number"], pn.to_string());
+        assert_eq!(participant["lid"], lid.to_string());
+        assert_eq!(participant["username"], "fulano");
         assert_eq!(participant["type"], "superadmin");
     }
 
@@ -409,12 +461,17 @@ mod tests {
             participants: vec![GroupParticipant {
                 jid: Jid::from_str("5511999000111@s.whatsapp.net").unwrap(),
                 phone_number: None,
+                lid: None,
+                username: None,
                 participant_type: ParticipantType::Member,
+                details: None,
             }],
             ..GroupMetadata::default()
         };
         let value: serde_json::Value = serde_json::from_slice(&metadata_json(&md)).unwrap();
         assert!(value["participants"][0]["phone_number"].is_null());
+        assert!(value["participants"][0]["lid"].is_null());
+        assert!(value["participants"][0]["username"].is_null());
         assert_eq!(value["participants"][0]["type"], "member");
         assert_eq!(value["addressing_mode"], "pn");
     }

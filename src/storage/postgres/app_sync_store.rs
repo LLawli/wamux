@@ -131,6 +131,19 @@ impl AppSyncStore for PgBackend {
         Ok(())
     }
 
+    /// Wipe a collection's MAC store. The lib calls this on snapshot re-sync:
+    /// the snapshot rebuilds the ltHash from scratch, so a MAC left over from
+    /// the pre-snapshot timeline would corrupt the next patch's ltHash.
+    async fn clear_mutation_macs(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM app_state_mutation_macs WHERE name = $1 AND device_id = $2")
+            .bind(name)
+            .bind(self.device_id)
+            .execute(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(())
+    }
+
     async fn get_latest_sync_key_id(&self) -> Result<Option<Vec<u8>>> {
         let row: Option<Vec<u8>> = sqlx::query_scalar(
             "SELECT key_id FROM app_state_keys WHERE device_id = $1 ORDER BY key_id DESC LIMIT 1",

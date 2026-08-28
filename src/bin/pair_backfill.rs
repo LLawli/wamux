@@ -11,8 +11,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use prost014::Message as _;
 use tracing_subscriber::EnvFilter;
+use whatsapp_rust::buffa::{Enumeration as _, Message as _};
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use wamux::proto::v1 as pb;
@@ -144,14 +144,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn sync_type_name(t: i32) -> String {
-    match wa::history_sync::HistorySyncType::try_from(t) {
-        Ok(v) => format!("{v:?}"),
-        Err(_) => t.to_string(),
+    // waproto 0.7 generates closed enums: `from_i32` replaces prost's TryFrom.
+    match wa::history_sync::HistorySyncType::from_i32(t) {
+        Some(v) => format!("{v:?}"),
+        None => t.to_string(),
     }
 }
 
 fn decode_counts(raw: &[u8]) -> (usize, usize) {
-    match wa::HistorySync::decode(raw) {
+    match wa::HistorySync::decode_from_slice(raw) {
         Ok(hs) => (
             hs.conversations.len(),
             hs.conversations.iter().map(|c| c.messages.len()).sum(),

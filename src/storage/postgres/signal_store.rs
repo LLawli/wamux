@@ -110,6 +110,23 @@ impl SignalStore for PgBackend {
         Ok(())
     }
 
+    /// UPDATE, never upsert. A prekey consumed (and deleted) between the upload
+    /// snapshot and this call has to stay deleted; an upsert would resurrect it
+    /// with an empty record and hand the server a key we can no longer answer.
+    async fn mark_prekeys_uploaded(&self, ids: &[u32]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<i32> = ids.iter().map(|id| *id as i32).collect();
+        sqlx::query("UPDATE prekeys SET uploaded = TRUE WHERE device_id = $1 AND id = ANY($2)")
+            .bind(self.device_id)
+            .bind(&ids)
+            .execute(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(())
+    }
+
     async fn load_prekey(&self, id: u32) -> Result<Option<Bytes>> {
         let row: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT key FROM prekeys WHERE id = $1 AND device_id = $2")
