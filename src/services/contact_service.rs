@@ -66,10 +66,10 @@ impl ContactService for ContactSvc {
 
     async fn get_push_name(
         &self,
-        request: Request<pb::JidRequest>,
+        request: Request<pb::AccountRef>,
     ) -> Result<Response<pb::PushNameResponse>, Status> {
-        let req = request.into_inner();
-        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let reference = request.into_inner();
+        let client = client_of(&self.registry, Some(&reference)).await?;
         Ok(Response::new(contacts::get_push_name(&client).await?))
     }
 

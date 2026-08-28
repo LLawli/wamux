@@ -248,7 +248,8 @@ async fn main() -> anyhow::Result<()> {
         account: Some(acct.clone()),
         jid: j.to_string(),
     };
-    match contacts.get_push_name(jid_req(&target)).await {
+    // GetPushName answers the ACCOUNT's own name, not the target's (issue #1).
+    match contacts.get_push_name(acct.clone()).await {
         Ok(r) => rec(
             &results,
             "Contact.GetPushName",
@@ -631,7 +632,7 @@ async fn run_destructive(
 
     // ---- Profile push name (set + restore) ----
     let orig_name = contacts
-        .get_push_name(jid_req(&own))
+        .get_push_name(acct.clone())
         .await
         .map(|r| r.into_inner().push_name)
         .unwrap_or_default();

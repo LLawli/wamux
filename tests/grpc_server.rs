@@ -287,6 +287,13 @@ async fn lid_mappings_are_readable_over_socket() {
         "ResolveLidPn reads the live client"
     );
 
+    // GetPushName takes an AccountRef now: it answers the account's own name.
+    let push_name = contacts.get_push_name(account_ref(&created.uuid)).await;
+    assert_eq!(
+        push_name.unwrap_err().code(),
+        tonic::Code::FailedPrecondition
+    );
+
     accounts
         .delete_account(account_ref(&created.uuid))
         .await

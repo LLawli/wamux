@@ -102,7 +102,11 @@ service ContactService {
   rpc GetProfilePicture(JidRequest) returns (ProfilePictureResponse);
   rpc SetProfilePicture(SetProfilePictureRequest) returns (Empty);
   rpc RemoveProfilePicture(AccountRef) returns (Empty);
-  rpc GetPushName(JidRequest) returns (PushNameResponse);
+  // The account's OWN push name (the getter that pairs with SetPushName).
+  // Takes an AccountRef, not a jid: WhatsApp gives a companion device no
+  // per-contact push-name store, and the previous JidRequest shape read as
+  // "what is this contact called" while ignoring the jid (issue #1).
+  rpc GetPushName(AccountRef) returns (PushNameResponse);
   rpc SetPushName(SetPushNameRequest) returns (Empty);
   rpc GetAbout(JidRequest) returns (AboutResponse);
   rpc GetBusinessProfile(JidRequest) returns (BusinessProfileResponse);
