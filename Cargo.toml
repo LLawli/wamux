@@ -15,11 +15,22 @@ path = "src/lib.rs"
 # Stress harness: a mock WhatsApp WSS server (server-side Noise XX) so many real
 # whatsapp-rust Clients can connect to a local endpoint. Off by default — never
 # part of the production daemon.
+#
+# DANGER: this feature also turns OFF Noise server-certificate-chain
+# verification for the whole build. The mock signs its chain with zeros
+# (`build_cert_chain_bytes`), and whatsapp-rust 0.7 started verifying the
+# intermediate's XEdDSA signature against WA's root key, which no mock can
+# satisfy. `wacore-noise` ships this escape hatch for exactly that.
+#
+# The safety net is in `domain::bot_factory`: a build with this feature refuses
+# to connect to anything but a loopback endpoint, so it cannot reach the real
+# WhatsApp with certificate checking disabled. Keep the two welded together.
 stress = [
     "dep:tokio-websockets",
     "dep:wacore-noise",
     "dep:wacore-binary",
     "wacore-noise/test-util",
+    "wacore-noise/danger-skip-cert-chain-verify",
 ]
 
 [[bin]]
@@ -38,9 +49,9 @@ tonic = "0.12"
 tonic-reflection = "0.12"
 prost = "0.13"
 prost-types = "0.13"
-# waproto (whatsapp-rust's protobufs) is built against prost 0.14; we need its
-# Message trait to encode wa::Message. tonic codegen stays on prost 0.13 above.
-prost014 = { package = "prost", version = "0.14" }
+# NOTE: waproto dropped prost for `buffa` in whatsapp-rust 0.7, so the second
+# prost (0.14) this crate used to carry only to reach waproto's Message trait is
+# gone. Encoding a wa::Message now goes through `whatsapp_rust::buffa::Message`.
 
 # async runtime + streams + middleware
 tokio = { version = "1", features = ["full"] }
@@ -93,9 +104,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http = "1"
 
 # whatsapp-rust stack (Postgres backend => drop the default `sqlite-storage`)
-wacore = "0.6.0"
-whatsapp-rust = { version = "0.6.0", default-features = false, features = [
-    "moka-cache",
+wacore = "0.7.0"
+whatsapp-rust = { version = "0.7.0", default-features = false, features = [
     "simd",
     "tokio-transport",
     "tokio-runtime",
@@ -103,8 +113,8 @@ whatsapp-rust = { version = "0.6.0", default-features = false, features = [
     "tokio-native",
     "signal",
 ] }
-whatsapp-rust-tokio-transport = "0.6.0"
-whatsapp-rust-ureq-http-client = "0.6.0"
+whatsapp-rust-tokio-transport = "0.7.0"
+whatsapp-rust-ureq-http-client = "0.7.0"
 
 # --- stress harness only (optional; enabled by the `stress` feature) ---
 # Server side of the WhatsApp WS endpoint for the mock.
@@ -114,8 +124,8 @@ tokio-websockets = { version = "0.13", optional = true, default-features = false
     "rand",
 ] }
 # Noise XX primitives + the e2e cert-chain test fixture (server mirror).
-wacore-noise = { version = "0.6.0", optional = true, default-features = false }
-wacore-binary = { version = "0.6.0", optional = true, default-features = false }
+wacore-noise = { version = "0.7.0", optional = true, default-features = false }
+wacore-binary = { version = "0.7.0", optional = true, default-features = false }
 
 [build-dependencies]
 tonic-build = "0.12"
@@ -123,13 +133,17 @@ protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# History-sync fixtures have to compress their payload: 0.7 keeps the chunk
+# zlib-compressed behind LazyHistorySync instead of handing over raw bytes.
+flate2 = "1"
+
 # The cascade + byte-parity tests inspect the raw pools below the trait.
 sqlx = { version = "0.8", default-features = false, features = [
     "sqlite",
     "postgres",
     "runtime-tokio",
 ] }
-wacore = "0.6.0"
+wacore = "0.7.0"
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 tower = "0.5"

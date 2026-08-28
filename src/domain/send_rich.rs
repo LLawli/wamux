@@ -2,6 +2,7 @@
 //! (vCard) and polls. Mirrors `messaging::send_reaction` — content fields relay
 //! verbatim; the edge supplies the vCard / poll text, the core encodes nothing.
 
+use whatsapp_rust::buffa;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::{Client, Jid, SendResult};
 
@@ -27,12 +28,12 @@ pub async fn send_contact(
 /// builder (no mentions on a contact card, so an empty slice is passed).
 pub(crate) fn build_contact_message(req: &pb::SendContactRequest) -> wa::Message {
     wa::Message {
-        contact_message: Some(Box::new(wa::message::ContactMessage {
+        contact_message: buffa::MessageField::some(wa::message::ContactMessage {
             display_name: nonempty_string(&req.display_name),
             vcard: nonempty_string(&req.vcard),
             context_info: outgoing_context(&[], req.quote.as_ref(), 0),
             ..Default::default()
-        })),
+        }),
         ..Default::default()
     }
 }
@@ -74,7 +75,7 @@ mod tests {
         assert_eq!(contact.display_name.as_deref(), Some("Ana"));
         assert_eq!(contact.vcard.as_deref(), Some(vcard));
         // No quote: the shared context builder yields None, never an empty one.
-        assert!(contact.context_info.is_none());
+        assert!(contact.context_info.is_unset());
     }
 
     // Proto3 defaults (empty display_name / vcard) relay as ABSENT waproto

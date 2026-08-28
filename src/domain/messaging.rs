@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
+use whatsapp_rust::buffa::{Enumeration, MessageField};
 use whatsapp_rust::waproto::whatsapp as wa;
+use whatsapp_rust::waproto::whatsapp::message::extended_text_message::PreviewType;
 use whatsapp_rust::{Client, Jid, RevokeType, SendResult};
 
 use crate::domain::jid_parse::parse_jid;
@@ -27,7 +29,7 @@ pub async fn send_text(
     to: Jid,
     req: &pb::SendTextRequest,
 ) -> Result<SendResult, WamuxError> {
-    let message = build_text_message(req);
+    let message = build_text_message(req)?;
     client.send_message(to, message).await.map_err(client_err)
 }
 
@@ -36,46 +38,63 @@ pub async fn send_text(
 /// upgrades it to an `ExtendedTextMessage`. Everything is relayed verbatim:
 /// the EDGE fetched the preview and chose the expiration (the core does no
 /// outbound HTTP and tracks no chat settings).
-pub(crate) fn build_text_message(req: &pb::SendTextRequest) -> wa::Message {
+pub(crate) fn build_text_message(req: &pb::SendTextRequest) -> Result<wa::Message, WamuxError> {
     let plain = req.mentions.is_empty()
         && req.quote.is_none()
         && req.link_preview.is_none()
         && req.ephemeral_seconds == 0;
     if plain {
-        return wa::Message {
+        return Ok(wa::Message {
             conversation: Some(req.text.clone()),
             ..Default::default()
-        };
+        });
     }
-    wa::Message {
-        extended_text_message: Some(Box::new(extended_text(req))),
+    Ok(wa::Message {
+        extended_text_message: MessageField::some(extended_text(req)?),
         ..Default::default()
-    }
+    })
 }
 
-fn extended_text(req: &pb::SendTextRequest) -> wa::message::ExtendedTextMessage {
+fn extended_text(
+    req: &pb::SendTextRequest,
+) -> Result<wa::message::ExtendedTextMessage, WamuxError> {
     let mut extended = wa::message::ExtendedTextMessage {
         text: Some(req.text.clone()),
-        // None for a preview-only message: shared builder, see outgoing_context.
+        // Unset for a preview-only message: shared builder, see outgoing_context.
         context_info: outgoing_context(&req.mentions, req.quote.as_ref(), req.ephemeral_seconds),
         ..Default::default()
     };
     if let Some(preview) = &req.link_preview {
-        copy_link_preview(&mut extended, preview);
+        copy_link_preview(&mut extended, preview)?;
     }
-    extended
+    Ok(extended)
 }
 
 /// Relay the edge-supplied preview verbatim onto the extended text. This
 /// waproto has no canonical_url: matched_text IS the URL. preview_type 0
 /// (NONE) is both the proto3 default and the wa default, so it relays as the
 /// absent field, the same lib-natural form a regular link preview uses.
-fn copy_link_preview(extended: &mut wa::message::ExtendedTextMessage, preview: &pb::LinkPreview) {
+fn copy_link_preview(
+    extended: &mut wa::message::ExtendedTextMessage,
+    preview: &pb::LinkPreview,
+) -> Result<(), WamuxError> {
     extended.matched_text = nonempty_string(&preview.matched_text);
     extended.title = nonempty_string(&preview.title);
     extended.description = nonempty_string(&preview.description);
     extended.jpeg_thumbnail = nonempty_bytes(&preview.jpeg_thumbnail);
-    extended.preview_type = nonzero_i32(preview.preview_type);
+    // waproto 0.7 types this as a closed enum, so an out-of-schema number can
+    // no longer ride the wire the way prost's `Option<i32>` let it. Reject it
+    // instead of silently dropping the field: dropping would change what the
+    // edge asked to relay without telling anyone.
+    extended.preview_type = match nonzero_i32(preview.preview_type) {
+        None => None,
+        Some(value) => Some(PreviewType::from_i32(value).ok_or_else(|| {
+            WamuxError::InvalidArgument(format!(
+                "unknown link_preview.preview_type {value}; expected a wa PreviewType value"
+            ))
+        })?),
+    };
+    Ok(())
 }
 
 pub async fn send_reaction(
@@ -86,8 +105,8 @@ pub async fn send_reaction(
     let to = parse_jid(&target.remote_jid)?;
     let key = proto_key_to_wa(target);
     let message = wa::Message {
-        reaction_message: Some(wa::message::ReactionMessage {
-            key: Some(key),
+        reaction_message: MessageField::some(wa::message::ReactionMessage {
+            key: MessageField::some(key),
             text: Some(emoji.to_string()),
             ..Default::default()
         }),
@@ -201,11 +220,14 @@ fn proto_key_to_wa(key: &pb::MessageKey) -> wa::MessageKey {
     }
 }
 
-pub fn send_result_to_proto(result: SendResult) -> pb::SendResult {
+/// Takes the two fields instead of the whole `SendResult`: 0.7 sealed that
+/// struct (`#[non_exhaustive]`, no public constructor), so a projection that
+/// consumed it could not be exercised from a test at all.
+pub fn send_result_to_proto(message_id: String, to: &Jid) -> pb::SendResult {
     pb::SendResult {
         key: Some(pb::MessageKey {
-            remote_jid: result.to.to_string(),
-            id: result.message_id,
+            remote_jid: to.to_string(),
+            id: message_id,
             from_me: true,
             participant: String::new(),
         }),
@@ -221,11 +243,10 @@ mod tests {
 
     #[test]
     fn send_result_maps_to_proto_key_with_from_me() {
-        let result = SendResult {
-            message_id: "3EB0ABCDEF".to_string(),
-            to: Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
-        };
-        let proto = send_result_to_proto(result);
+        let proto = send_result_to_proto(
+            "3EB0ABCDEF".to_string(),
+            &Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
+        );
         let key = proto.key.expect("key must be set");
         assert_eq!(key.remote_jid, "5511999999999@s.whatsapp.net");
         assert_eq!(key.id, "3EB0ABCDEF");
@@ -292,9 +313,9 @@ mod tests {
 
     #[test]
     fn plain_text_stays_conversation() {
-        let message = build_text_message(&text_req("oi"));
+        let message = build_text_message(&text_req("oi")).unwrap();
         assert_eq!(message.conversation.as_deref(), Some("oi"));
-        assert!(message.extended_text_message.is_none());
+        assert!(message.extended_text_message.is_unset());
     }
 
     #[test]
@@ -302,7 +323,8 @@ mod tests {
         let message = build_text_message(&pb::SendTextRequest {
             link_preview: Some(full_preview()),
             ..text_req("look https://example.com/post")
-        });
+        })
+        .unwrap();
         assert!(message.conversation.is_none());
         let ext = message.extended_text_message.expect("must be extended");
         assert_eq!(ext.text.as_deref(), Some("look https://example.com/post"));
@@ -313,7 +335,7 @@ mod tests {
         assert_eq!(ext.title.as_deref(), Some("A title"));
         assert_eq!(ext.description.as_deref(), Some("A description"));
         assert_eq!(ext.jpeg_thumbnail.as_deref(), Some(&[0xff, 0xd8, 0xff][..]));
-        assert_eq!(ext.preview_type, Some(1));
+        assert_eq!(ext.preview_type, Some(PreviewType::VIDEO));
     }
 
     // Proto3 defaults inside a present LinkPreview (empty string/bytes,
@@ -331,6 +353,7 @@ mod tests {
             link_preview: Some(preview),
             ..text_req("https://example.com")
         })
+        .unwrap()
         .extended_text_message
         .expect("preview presence alone must force extended");
         assert_eq!(ext.matched_text.as_deref(), Some("https://example.com"));
@@ -349,9 +372,10 @@ mod tests {
             link_preview: Some(full_preview()),
             ..text_req("https://example.com")
         })
+        .unwrap()
         .extended_text_message
         .expect("preview presence alone must force extended");
-        assert_eq!(ext.context_info, None);
+        assert!(ext.context_info.is_unset());
     }
 
     // Regression (code-review 2026-06-11): quoting in a DM leaves both
@@ -372,6 +396,7 @@ mod tests {
             quote: Some(quote),
             ..text_req("re: that")
         })
+        .unwrap()
         .extended_text_message
         .expect("quote forces extended");
         let context = ext.context_info.expect("quote must build a context");
@@ -384,7 +409,8 @@ mod tests {
         let message = build_text_message(&pb::SendTextRequest {
             ephemeral_seconds: 86_400,
             ..text_req("fugaz")
-        });
+        })
+        .unwrap();
         let ext = message.extended_text_message.expect("must be extended");
         let context = ext.context_info.expect("context_info must be set");
         assert_eq!(context.expiration, Some(86_400));
@@ -411,7 +437,8 @@ mod tests {
             link_preview: Some(full_preview()),
             ephemeral_seconds: 90,
             ..text_req("all of it")
-        });
+        })
+        .unwrap();
         let ext = message.extended_text_message.expect("must be extended");
         assert_eq!(
             ext.matched_text.as_deref(),
@@ -441,6 +468,7 @@ mod tests {
             }],
             ..text_req("@you")
         })
+        .unwrap()
         .extended_text_message
         .expect("mentions force extended");
         let context = ext.context_info.expect("context_info must be set");

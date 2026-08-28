@@ -3,26 +3,34 @@
 //! message kind, so both builders call this instead of growing private copies
 //! (code-review 2026-06-11: the media path silently dropped quote/mentions).
 
+use whatsapp_rust::buffa::MessageField;
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::domain::wire_defaults::{nonempty_string, nonzero_u32};
 use crate::proto::v1 as pb;
 
-/// Build the outgoing ContextInfo, or `None` when every input is the proto3
-/// default: a present-but-empty ContextInfo is a wire shape regular clients
-/// never produce, so "nothing to relay" must stay the absent field.
+/// Build the outgoing ContextInfo, or the unset field when every input is the
+/// proto3 default: a present-but-empty ContextInfo is a wire shape regular
+/// clients never produce, so "nothing to relay" must stay the absent field.
+///
+/// Returns buffa's `MessageField` (waproto's sub-message slot since 0.7) rather
+/// than `Option<Box<_>>`, so every caller can drop it straight into the message
+/// literal without a conversion at each site.
 pub(crate) fn outgoing_context(
     mentions: &[pb::Mention],
     quote: Option<&pb::QuoteContext>,
     ephemeral_seconds: u32,
-) -> Option<Box<wa::ContextInfo>> {
+) -> MessageField<wa::ContextInfo> {
     let mut context = wa::ContextInfo::default();
     if !mentions.is_empty() {
         context.mentioned_jid = mentions.iter().map(|m| m.jid.clone()).collect();
     }
     copy_quote(&mut context, quote);
     context.expiration = nonzero_u32(ephemeral_seconds);
-    (context != wa::ContextInfo::default()).then(|| Box::new(context))
+    if context == wa::ContextInfo::default() {
+        return MessageField::none();
+    }
+    MessageField::some(context)
 }
 
 /// Quote relay: stanza_id + participant from the quoted key, the explicit
@@ -52,7 +60,7 @@ mod tests {
 
     #[test]
     fn all_default_inputs_yield_no_context() {
-        assert_eq!(outgoing_context(&[], None, 0), None);
+        assert!(outgoing_context(&[], None, 0).is_unset());
     }
 
     // Quote with no quoted key carries nothing: still no context.
@@ -62,7 +70,7 @@ mod tests {
             quoted: None,
             participant: String::new(),
         };
-        assert_eq!(outgoing_context(&[], Some(&quote), 0), None);
+        assert!(outgoing_context(&[], Some(&quote), 0).is_unset());
     }
 
     // Regression (code-review 2026-06-11): a DM quote has empty participants

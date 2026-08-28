@@ -1,6 +1,8 @@
 //! Upload media for sending and download received media (lazy, from descriptor).
 
 use wacore::download::MediaType;
+use whatsapp_rust::buffa;
+use whatsapp_rust::download::DownloadParams;
 use whatsapp_rust::upload::{UploadOptions, UploadResponse};
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::{
@@ -66,8 +68,38 @@ pub async fn send_media(
         .upload(data, kind.upload_type(), UploadOptions::new())
         .await
         .map_err(client_err)?;
-    let message = build_media_message(kind, header, upload);
+    let message = build_media_message(kind, header, upload.into());
     client.send_message(to, message).await.map_err(client_err)
+}
+
+/// The upload fields the outgoing sub-messages need, owned by wamux.
+///
+/// `UploadResponse` became `#[non_exhaustive]` in whatsapp-rust 0.7 with no
+/// public constructor, so it can no longer be built outside the crate: the
+/// builders below would be untestable if they took it directly. Naming the six
+/// fields the core actually relays also keeps a new upstream field from
+/// silently widening what the core copies onto the wire.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MediaUpload {
+    pub url: String,
+    pub direct_path: String,
+    pub media_key: [u8; 32],
+    pub file_sha256: [u8; 32],
+    pub file_enc_sha256: [u8; 32],
+    pub file_length: u64,
+}
+
+impl From<UploadResponse> for MediaUpload {
+    fn from(up: UploadResponse) -> Self {
+        Self {
+            url: up.url,
+            direct_path: up.direct_path,
+            media_key: up.media_key,
+            file_sha256: up.file_sha256,
+            file_enc_sha256: up.file_enc_sha256,
+            file_length: up.file_length,
+        }
+    }
 }
 
 /// Pure construction of the outgoing media `wa::Message` from the wire header
@@ -77,7 +109,7 @@ pub async fn send_media(
 pub(crate) fn build_media_message(
     kind: MediaKind,
     header: &pb::SendMediaHeader,
-    up: UploadResponse,
+    up: MediaUpload,
 ) -> wa::Message {
     // Each wa media sub-message carries its own ContextInfo; the shared
     // builder relays mentions + quote + ephemeral (or omits the field when
@@ -89,39 +121,39 @@ pub(crate) fn build_media_message(
     );
     match kind {
         MediaKind::Image => wa::Message {
-            image_message: Some(Box::new(image_submessage(header, up, context))),
+            image_message: buffa::MessageField::some(image_submessage(header, up, context)),
             ..Default::default()
         },
         // PTV (video note, the round "instant video") is the SAME VideoMessage
         // wire shape, just carried in a different Message slot. The edge sets
         // header.ptv; the core only relays it into ptv_message vs video_message.
         MediaKind::Video if header.ptv => wa::Message {
-            ptv_message: Some(Box::new(video_submessage(header, up, context))),
+            ptv_message: buffa::MessageField::some(video_submessage(header, up, context)),
             ..Default::default()
         },
         MediaKind::Video => wa::Message {
-            video_message: Some(Box::new(video_submessage(header, up, context))),
+            video_message: buffa::MessageField::some(video_submessage(header, up, context)),
             ..Default::default()
         },
         MediaKind::Audio => wa::Message {
-            audio_message: Some(Box::new(audio_submessage(header, up, context))),
+            audio_message: buffa::MessageField::some(audio_submessage(header, up, context)),
             ..Default::default()
         },
         MediaKind::Document => wa::Message {
-            document_message: Some(Box::new(document_submessage(header, up, context))),
+            document_message: buffa::MessageField::some(document_submessage(header, up, context)),
             ..Default::default()
         },
         MediaKind::Sticker => wa::Message {
-            sticker_message: Some(Box::new(sticker_submessage(header, up, context))),
+            sticker_message: buffa::MessageField::some(sticker_submessage(header, up, context)),
             ..Default::default()
         },
     }
 }
 
 /// The five wa media sub-messages duplicate the exact same upload/mime/context
-/// field names, but prost generates no shared trait to abstract over them —
-/// this macro expands the struct literal so each builder states only its
-/// type-specific fields.
+/// field names, but the protobuf generator (buffa since 0.7) emits no shared
+/// trait to abstract over them, so this macro expands the struct literal and
+/// each builder states only its type-specific fields.
 macro_rules! submessage_with_upload {
     ($ty:ident { $($field:ident : $value:expr),* $(,)? }, $header:expr, $up:expr, $context:expr) => {
         $ty {
@@ -141,8 +173,8 @@ macro_rules! submessage_with_upload {
 
 fn video_submessage(
     header: &pb::SendMediaHeader,
-    up: UploadResponse,
-    context: Option<Box<wa::ContextInfo>>,
+    up: MediaUpload,
+    context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::VideoMessage {
     submessage_with_upload!(
         VideoMessage {
@@ -156,8 +188,8 @@ fn video_submessage(
 
 fn audio_submessage(
     header: &pb::SendMediaHeader,
-    up: UploadResponse,
-    context: Option<Box<wa::ContextInfo>>,
+    up: MediaUpload,
+    context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::AudioMessage {
     submessage_with_upload!(
         AudioMessage {
@@ -176,8 +208,8 @@ fn audio_submessage(
 
 fn document_submessage(
     header: &pb::SendMediaHeader,
-    up: UploadResponse,
-    context: Option<Box<wa::ContextInfo>>,
+    up: MediaUpload,
+    context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::DocumentMessage {
     submessage_with_upload!(
         DocumentMessage {
@@ -192,16 +224,16 @@ fn document_submessage(
 
 fn sticker_submessage(
     header: &pb::SendMediaHeader,
-    up: UploadResponse,
-    context: Option<Box<wa::ContextInfo>>,
+    up: MediaUpload,
+    context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::StickerMessage {
     submessage_with_upload!(StickerMessage {}, header, up, context)
 }
 
 fn image_submessage(
     header: &pb::SendMediaHeader,
-    up: UploadResponse,
-    context: Option<Box<wa::ContextInfo>>,
+    up: MediaUpload,
+    context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::ImageMessage {
     submessage_with_upload!(
         ImageMessage {
@@ -219,15 +251,18 @@ pub async fn download(
     descriptor: &pb::MediaDescriptor,
 ) -> Result<Vec<u8>, WamuxError> {
     let kind = MediaKind::parse(&descriptor.media_type)?;
+    // 0.7 collapsed the six positional params into one `DownloadParams`;
+    // `encrypted` takes the same values in the same order.
+    let params = DownloadParams::encrypted(
+        &descriptor.direct_path,
+        &descriptor.media_key,
+        &descriptor.file_sha256,
+        &descriptor.file_enc_sha256,
+        descriptor.file_length,
+        kind.upload_type(),
+    );
     client
-        .download_from_params(
-            &descriptor.direct_path,
-            &descriptor.media_key,
-            &descriptor.file_sha256,
-            &descriptor.file_enc_sha256,
-            descriptor.file_length,
-            kind.upload_type(),
-        )
+        .download_from_params(&params)
         .await
         .map_err(client_err)
 }
@@ -279,15 +314,14 @@ mod tests {
         ));
     }
 
-    fn fake_upload() -> UploadResponse {
-        UploadResponse {
+    fn fake_upload() -> MediaUpload {
+        MediaUpload {
             url: "https://mmg.whatsapp.net/v/t62.7118-24/enc".to_string(),
             direct_path: "/v/t62.7118-24/enc".to_string(),
             media_key: [1u8; 32],
             file_enc_sha256: [2u8; 32],
             file_sha256: [3u8; 32],
             file_length: 1234,
-            media_key_timestamp: 1_700_000_000,
         }
     }
 
@@ -319,7 +353,7 @@ mod tests {
         assert_eq!(img.mimetype.as_deref(), Some("image/jpeg"));
         assert_eq!(img.caption.as_deref(), Some("a caption"));
         // No ephemeral, no other context: the ContextInfo stays absent.
-        assert!(img.context_info.is_none());
+        assert!(img.context_info.is_unset());
     }
 
     #[test]
@@ -342,8 +376,8 @@ mod tests {
         assert_eq!(doc.caption.as_deref(), Some("the report"));
         assert_eq!(doc.file_length, Some(1234));
         // The other sub-messages must stay unset: exactly one media branch.
-        assert!(message.image_message.is_none());
-        assert!(message.video_message.is_none());
+        assert!(message.image_message.is_unset());
+        assert!(message.video_message.is_unset());
     }
 
     #[test]
@@ -382,7 +416,7 @@ mod tests {
         assert_eq!(audio.ptt, None);
         assert_eq!(audio.seconds, None);
         assert_eq!(audio.waveform, None);
-        assert!(audio.context_info.is_none());
+        assert!(audio.context_info.is_unset());
     }
 
     #[test]
@@ -419,7 +453,7 @@ mod tests {
         assert_eq!(ptv.url.as_deref(), Some(fake_upload().url.as_str()));
         assert_eq!(ptv.mimetype.as_deref(), Some("video/mp4"));
         // The regular video slot must stay empty: exactly one branch fires.
-        assert!(message.video_message.is_none());
+        assert!(message.video_message.is_unset());
     }
 
     // Without the ptv flag a video stays a normal video_message.
@@ -433,8 +467,8 @@ mod tests {
             },
             fake_upload(),
         );
-        assert!(message.video_message.is_some());
-        assert!(message.ptv_message.is_none());
+        assert!(message.video_message.is_set());
+        assert!(message.ptv_message.is_unset());
     }
 
     #[test]

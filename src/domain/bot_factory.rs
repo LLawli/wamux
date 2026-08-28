@@ -27,6 +27,8 @@ pub async fn build_bot(
     skip_history: bool,
     ws_url: Option<&str>,
 ) -> anyhow::Result<Bot> {
+    reject_non_loopback_under_stress(ws_url)?;
+
     // `ws_url` overrides the upstream endpoint (stress mock); plaintext ws://
     // needs the Plain connector since the default forces TLS.
     let transport = match ws_url {
@@ -37,7 +39,10 @@ pub async fn build_bot(
     };
 
     let mut builder = Bot::builder()
-        .with_backend(backend)
+        // 0.7 split the setter: `with_backend` takes an owned `impl Backend`
+        // and boxes it, so an already-shared `Arc<dyn Backend>` (what the
+        // engine hands us, one per account) goes through the `_arc` form.
+        .with_backend_arc(backend)
         .with_transport_factory(transport)
         .with_http_client(UreqHttpClient::new())
         .with_runtime(TokioRuntime)
@@ -56,4 +61,100 @@ pub async fn build_bot(
     }
 
     builder.build().await.map_err(|e| anyhow::anyhow!(e))
+}
+
+/// A build carrying the `stress` feature has the Noise server-certificate chain
+/// check DISABLED (`wacore-noise/danger-skip-cert-chain-verify`), because the
+/// mock signs its chain with zeros and whatsapp-rust 0.7 started verifying the
+/// intermediate's XEdDSA signature. Such a build cannot tell the real WhatsApp
+/// from anything else holding the socket, so it must never reach it.
+///
+/// This is the choke point: every connect goes through `build_bot`, so refusing
+/// a non-loopback endpoint here makes "stress build talks to production" a
+/// startup-shaped failure instead of a silently unauthenticated session.
+///
+/// The check is deliberately allowlist-shaped (loopback only), not a blocklist
+/// of WhatsApp hostnames: a blocklist would pass a proxy, a DNS override, or a
+/// hostname WhatsApp adds tomorrow.
+#[cfg(feature = "stress")]
+fn reject_non_loopback_under_stress(ws_url: Option<&str>) -> anyhow::Result<()> {
+    let url = ws_url.ok_or_else(|| {
+        anyhow::anyhow!(
+            "this binary was built with the `stress` feature, which disables Noise \
+             certificate-chain verification; it refuses to connect to the default \
+             (real) WhatsApp endpoint. Set the ws_url override to a loopback mock, \
+             or rebuild without `--features stress`."
+        )
+    })?;
+    if !is_loopback_ws_url(url) {
+        anyhow::bail!(
+            "this binary was built with the `stress` feature, which disables Noise \
+             certificate-chain verification; it only connects to a loopback mock, \
+             and '{url}' is not one. Rebuild without `--features stress` to reach a \
+             real WhatsApp endpoint."
+        );
+    }
+    Ok(())
+}
+
+/// No-op in a normal build: certificate-chain verification is on, so any
+/// endpoint is the operator's call.
+#[cfg(not(feature = "stress"))]
+fn reject_non_loopback_under_stress(_ws_url: Option<&str>) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// Whether a `ws://`/`wss://` URL points at this machine. `localhost` is
+/// accepted by name; everything else has to parse as a loopback IP, so a host
+/// that merely *resolves* to 127.0.0.1 today is still refused.
+#[cfg(feature = "stress")]
+fn is_loopback_ws_url(url: &str) -> bool {
+    let Ok(uri) = url.parse::<http::Uri>() else {
+        return false;
+    };
+    match uri.host() {
+        None => false,
+        Some("localhost") => true,
+        // http::Uri keeps the brackets on an IPv6 literal host.
+        Some(host) => host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback()),
+    }
+}
+
+#[cfg(all(test, feature = "stress"))]
+mod stress_endpoint_guard_tests {
+    use super::{is_loopback_ws_url, reject_non_loopback_under_stress};
+
+    #[test]
+    fn loopback_endpoints_are_accepted() {
+        assert!(is_loopback_ws_url("ws://127.0.0.1:42963"));
+        assert!(is_loopback_ws_url("ws://127.0.0.5:1/ws/chat"));
+        assert!(is_loopback_ws_url("ws://localhost:8080"));
+        assert!(is_loopback_ws_url("ws://[::1]:8080"));
+    }
+
+    #[test]
+    fn the_real_whatsapp_endpoint_is_refused() {
+        assert!(!is_loopback_ws_url("wss://web.whatsapp.com/ws/chat"));
+        assert!(reject_non_loopback_under_stress(Some("wss://web.whatsapp.com/ws/chat")).is_err());
+    }
+
+    // The default (None) means "the real endpoint", which is exactly what a
+    // cert-check-disabled build must not reach.
+    #[test]
+    fn the_default_endpoint_is_refused() {
+        assert!(reject_non_loopback_under_stress(None).is_err());
+    }
+
+    // A hostname that resolves to loopback is still refused: the guard must not
+    // depend on whatever DNS answers at connect time.
+    #[test]
+    fn a_non_loopback_host_is_refused_even_if_it_could_resolve_locally() {
+        assert!(!is_loopback_ws_url("ws://localtest.me:8080"));
+        assert!(!is_loopback_ws_url("ws://10.0.0.1:8080"));
+        assert!(!is_loopback_ws_url("not a url at all"));
+    }
 }

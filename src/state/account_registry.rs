@@ -208,7 +208,7 @@ impl AccountRegistry {
             seq: handle.seq.clone(),
             replay_max_event_bytes: self.tuning.replay_max_event_bytes,
         };
-        let mut bot = build_bot(
+        let bot = build_bot(
             self.storage.device_backend(handle.device_id),
             ctx,
             pair_code,
@@ -218,18 +218,24 @@ impl AccountRegistry {
         .await
         .map_err(client_err)?;
         handle.set_client(bot.client()).await;
-        let bot_handle = bot.run().await.map_err(client_err)?;
+        // 0.7: `Bot::run()` blocks the calling task and is infallible; `spawn()`
+        // is the background form and consumes the Bot, so there is no longer a
+        // Bot value for the supervisor to hold alive.
+        let bot_handle = bot.spawn();
 
         self.connected.fetch_add(1, Ordering::SeqCst);
-        // Supervisor: own the Bot for the connection's lifetime and await the run
-        // loop's terminal exit (the library reconnects transient drops itself, so
-        // this resolves only when it has given up). Then mark the account down and
-        // release the budget slot — exactly once per connect.
+        // Supervisor: own the BotHandle for the connection's lifetime and await
+        // the run loop's terminal exit (the library reconnects transient drops
+        // itself, so this resolves only when it has given up). Then mark the
+        // account down and release the budget slot — exactly once per connect.
+        //
+        // The handle must stay owned by THIS task: dropping a BotHandle aborts
+        // the bot. `AccountHandle::stop` still stops gracefully because it calls
+        // `client.disconnect()` first and only then awaits this task.
         let supervised = handle.clone();
         let connected = self.connected.clone();
         let supervisor = tokio::spawn(async move {
-            let _bot = bot;
-            let _ = bot_handle.await;
+            bot_handle.await;
             supervised.on_bot_exited().await;
             connected.fetch_sub(1, Ordering::SeqCst);
         });
@@ -251,7 +257,11 @@ impl AccountRegistry {
         if !client.is_connected() {
             return Err(WamuxError::NotConnected);
         }
-        client.logout().await.map_err(client_err)?;
+        // 0.7 made logout infallible: it fires the IQ best-effort and always
+        // tears the local session down, so there is no failure left to report.
+        // The `is_connected` guard above is what still gives the edge a
+        // `NotConnected` instead of a silent no-op.
+        client.logout().await;
         handle.stop().await;
         Ok(())
     }

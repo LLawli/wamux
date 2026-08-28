@@ -22,13 +22,13 @@ macro_rules! media_descriptor_test {
         #[test]
         fn $name() {
             let (media, caption) = mapped_media(wa::Message {
-                $field: Some(Box::new(wa::message::$ty {
+                $field: whatsapp_rust::buffa::MessageField::some(wa::message::$ty {
                     mimetype: Some($mime.to_string()),
                     file_length: Some(2048),
                     direct_path: Some(concat!("/v/t62.", $kind).to_string()),
                     $($extra: $value,)*
                     ..Default::default()
-                })),
+                }),
                 ..Default::default()
             });
             assert_eq!(media.media_type, $kind);
@@ -63,12 +63,12 @@ media_descriptor_test!(
 #[test]
 fn media_descriptor_relays_key_material() {
     let (media, _) = mapped_media(wa::Message {
-        image_message: Some(Box::new(wa::message::ImageMessage {
+        image_message: whatsapp_rust::buffa::MessageField::some(wa::message::ImageMessage {
             media_key: Some(vec![1, 2, 3]),
             file_enc_sha256: Some(vec![4, 5]),
             file_sha256: Some(vec![6, 7]),
             ..Default::default()
-        })),
+        }),
         ..Default::default()
     });
     assert_eq!(media.media_key, [1u8, 2, 3]);

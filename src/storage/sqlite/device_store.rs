@@ -41,7 +41,10 @@ impl DeviceStore for SqliteBackend {
                 // Runtime-only fields are #[serde(skip)] -> Default on decode.
                 // Restore device_props like the reference does; ClientProfile's
                 // Default already equals ::web().
-                device.device_props = wacore::store::device::DEVICE_PROPS.clone();
+                // 0.7 holds this behind an Arc (snapshot clones bump a refcount);
+                // DEVICE_PROPS itself is still a plain LazyLock<DeviceProps>.
+                device.device_props =
+                    std::sync::Arc::new(wacore::store::device::DEVICE_PROPS.clone());
                 Ok(Some(device))
             }
         }

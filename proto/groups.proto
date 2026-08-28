@@ -89,12 +89,39 @@ message MembershipRequestsResponse {
   bytes requests = 1;
 }
 
+// V4 invite token the server attaches to a participant that a privacy setting
+// blocked from a direct add (error "403"). The edge composes the fallback
+// (send a GroupInviteMessage); the core only relays the token.
+message AddRequestInfo {
+  string code = 1;
+  uint64 expiration = 2;
+}
+
+// One server verdict for one participant of a participant-change request. The
+// server answers per participant, so a request can partially succeed: `error`
+// empty means that participant went through.
+message ParticipantChange {
+  string jid = 1;
+  string status = 2;
+  string error = 3;
+  string phone_number = 4;
+  string username = 5;
+  AddRequestInfo add_request = 6;
+}
+
+// Relayed verbatim, one entry per participant the server answered for. The core
+// does not collapse this into a single ok/failed verdict: which partial failure
+// is retryable, invitable, or fatal is edge policy.
+message ParticipantsResponse {
+  repeated ParticipantChange results = 1;
+}
+
 service GroupService {
   rpc CreateGroup(CreateGroupRequest) returns (GroupJidResponse);
-  rpc AddParticipants(ParticipantsRequest) returns (Empty);
-  rpc RemoveParticipants(ParticipantsRequest) returns (Empty);
-  rpc PromoteAdmins(ParticipantsRequest) returns (Empty);
-  rpc DemoteAdmins(ParticipantsRequest) returns (Empty);
+  rpc AddParticipants(ParticipantsRequest) returns (ParticipantsResponse);
+  rpc RemoveParticipants(ParticipantsRequest) returns (ParticipantsResponse);
+  rpc PromoteAdmins(ParticipantsRequest) returns (ParticipantsResponse);
+  rpc DemoteAdmins(ParticipantsRequest) returns (ParticipantsResponse);
   rpc SetGroupSubject(GroupTextRequest) returns (Empty);
   rpc SetGroupDescription(GroupTextRequest) returns (Empty);
   rpc GetGroupMetadata(GroupRef) returns (GroupMetadataResponse);
@@ -109,6 +136,6 @@ service GroupService {
   rpc PreviewInvite(PreviewInviteRequest) returns (GroupMetadataResponse);
   rpc SetGroupPhoto(SetGroupPhotoRequest) returns (Empty);
   rpc GetMembershipRequests(GroupRef) returns (MembershipRequestsResponse);
-  rpc ApproveMembershipRequests(ParticipantsRequest) returns (Empty);
-  rpc RejectMembershipRequests(ParticipantsRequest) returns (Empty);
+  rpc ApproveMembershipRequests(ParticipantsRequest) returns (ParticipantsResponse);
+  rpc RejectMembershipRequests(ParticipantsRequest) returns (ParticipantsResponse);
 }

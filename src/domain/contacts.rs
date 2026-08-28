@@ -71,7 +71,9 @@ pub async fn remove_profile_picture(client: &Client) -> Result<(), WamuxError> {
 
 pub async fn get_push_name(client: &Client) -> Result<pb::PushNameResponse, WamuxError> {
     Ok(pb::PushNameResponse {
-        push_name: client.get_push_name().await,
+        // 0.7 dropped the `get_` prefix and made it sync: the device snapshot
+        // is an Arc read now, so there is nothing left to await.
+        push_name: client.push_name(),
     })
 }
 

@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use prost014::Message as _;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_websockets::{Message, ServerBuilder};
 use wacore::framing::{FrameDecoder, encode_frame};
@@ -24,6 +23,8 @@ use wacore_binary::encoder::EncodeNode;
 use wacore_binary::marshal::{marshal, unmarshal_ref};
 use wacore_noise::NoiseHandshake;
 use wacore_noise::test_util::build_cert_chain_bytes;
+use whatsapp_rust::buffa;
+use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp::{self as wa, HandshakeMessage};
 
 /// JID the mock pushes its post-login `<receipt>` from. Stable so tests can
@@ -168,9 +169,11 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
 
     // <- ClientHello (e)
     let hello_bytes = next_frame(&mut ws, &mut decoder, &mut first_frame).await?;
-    let hello = HandshakeMessage::decode(&hello_bytes[..]).context("decode ClientHello")?;
+    let hello =
+        HandshakeMessage::decode_from_slice(&hello_bytes[..]).context("decode ClientHello")?;
     let client_ephemeral = hello
         .client_hello
+        .into_option()
         .and_then(|h| h.ephemeral)
         .ok_or_else(|| anyhow!("ClientHello missing ephemeral"))?;
 
@@ -206,7 +209,7 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
     let enc_cert = noise.encrypt(&cert).map_err(|e| anyhow!("enc cert: {e}"))?;
 
     let server_hello = HandshakeMessage {
-        server_hello: Some(wa::handshake_message::ServerHello {
+        server_hello: buffa::MessageField::some(wa::handshake_message::ServerHello {
             ephemeral: Some(server_ephemeral_pub),
             r#static: Some(enc_static),
             payload: Some(enc_cert),
@@ -218,9 +221,11 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
 
     // <- s, se  (ClientFinish: enc(client static), enc(payload))
     let finish_bytes = next_frame(&mut ws, &mut decoder, &mut first_frame).await?;
-    let finish = HandshakeMessage::decode(&finish_bytes[..]).context("decode ClientFinish")?;
+    let finish =
+        HandshakeMessage::decode_from_slice(&finish_bytes[..]).context("decode ClientFinish")?;
     let client_finish = finish
         .client_finish
+        .into_option()
         .ok_or_else(|| anyhow!("missing ClientFinish"))?;
     let enc_client_static = client_finish
         .r#static

@@ -31,7 +31,11 @@ pub struct EventCtx {
 pub async fn dispatch(ctx: EventCtx, event: Arc<Event>, _client: Arc<Client>) {
     update_state(&ctx, &event);
 
-    if let Some(inner) = map_event(&event) {
+    // One lib event can fan out to several wire events: whatsapp-rust 0.7
+    // delivers inbound messages in batches, and the wire contract is still one
+    // message per envelope. Each gets its own monotonic_seq, so the edge keeps
+    // a total order and its replay cursor keeps meaning the same thing.
+    for inner in map_event(&event) {
         let envelope = EventEnvelope {
             account_uuid: ctx.uuid.clone(),
             monotonic_seq: ctx.seq.fetch_add(1, Ordering::Relaxed),

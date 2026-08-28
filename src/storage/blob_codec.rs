@@ -106,6 +106,9 @@ mod blob_format_tests {
             // not derive Serialize, so this exercises that wrapper too.
             hash: [0xAB; 128],
             index_value_map: HashMap::from([("index-mac".to_string(), vec![1u8, 2, 3])]),
+            // 0.7 appended this; it is the flag that says the collection's
+            // ltHash is beyond repair, so a fresh state starts clean.
+            mac_mismatch_fatal: false,
         };
         let blob = bincode_encode(&state).unwrap();
         let restored: HashState = bincode_decode(&blob).unwrap();
@@ -119,15 +122,11 @@ mod blob_format_tests {
     fn device_registry_json_round_trip_mirrors_protocol_store() {
         // Exactly the encode/decode pair protocol_store.rs uses for
         // device_registry.devices_json: to_string on write, from_str on read.
+        // 0.7 added `is_hosted` and the struct-literal form no longer compiles;
+        // the constructors are the supported way in and default it to false.
         let devices = vec![
-            DeviceInfo {
-                device_id: 0,
-                key_index: None,
-            },
-            DeviceInfo {
-                device_id: 7,
-                key_index: Some(3),
-            },
+            DeviceInfo::new(0, None),
+            DeviceInfo::new(7, Some(3)).with_hosting(true),
         ];
         let json = serde_json::to_string(&devices).unwrap();
         let restored: Vec<DeviceInfo> = serde_json::from_str(&json).unwrap();
@@ -135,8 +134,10 @@ mod blob_format_tests {
         assert_eq!(restored.len(), 2);
         assert_eq!(restored[0].device_id, 0);
         assert_eq!(restored[0].key_index, None);
+        assert!(!restored[0].is_hosted);
         assert_eq!(restored[1].device_id, 7);
         assert_eq!(restored[1].key_index, Some(3));
+        assert!(restored[1].is_hosted);
     }
 
     #[test]
