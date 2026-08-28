@@ -8,6 +8,7 @@ pub mod event_mapping;
 pub mod groups;
 pub mod isolate;
 pub mod jid_parse;
+pub mod lid_mapping;
 pub mod media_transfer;
 pub mod messaging;
 pub(crate) mod outgoing_context;

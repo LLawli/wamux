@@ -58,6 +58,45 @@ message SubscribePresenceRequest {
   string jid = 2;
 }
 
+// One LID <-> phone-number pair, exactly as the library learned it. Both sides
+// render as full JIDs ("<user>@lid" / "<user>@s.whatsapp.net"): the store keeps
+// only the user parts, and each side's namespace is fixed by definition. A side
+// the store has no user part for comes back empty, never a bare "@lid".
+message LidPnMapping {
+  string lid = 1;
+  string pn = 2;
+  int64 created_at = 3;        // unix seconds, when the mapping was first learned
+  // The library's own tag for how it learned the pair, verbatim:
+  // usync|pairing|peer_pn_message|peer_lid_message|recipient_latest_lid|
+  // migration_sync_latest|migration_sync_old|blocklist_active|
+  // blocklist_inactive|device_notification|other.
+  string learning_source = 4;
+}
+
+message ResolveLidPnRequest {
+  AccountRef account = 1;
+  // Full JIDs, either side of the mapping: a "<user>@lid" answers with its
+  // phone jid, a "<user>@s.whatsapp.net" with its LID. Any other namespace
+  // answers found=false. The core does not guess: it only reports what the
+  // client already knows.
+  repeated string jids = 2;
+}
+
+// One answer per requested jid, in request order.
+message LidPnResult {
+  string query = 1;
+  bool found = 2;
+  LidPnMapping mapping = 3;  // unset when found=false
+}
+
+message ResolveLidPnResponse {
+  repeated LidPnResult results = 1;
+}
+
+message ListLidMappingsResponse {
+  repeated LidPnMapping mappings = 1;
+}
+
 service ContactService {
   rpc CheckOnWhatsApp(CheckOnWhatsAppRequest) returns (CheckOnWhatsAppResponse);
   rpc GetProfilePicture(JidRequest) returns (ProfilePictureResponse);
@@ -68,4 +107,13 @@ service ContactService {
   rpc GetAbout(JidRequest) returns (AboutResponse);
   rpc GetBusinessProfile(JidRequest) returns (BusinessProfileResponse);
   rpc SubscribePresence(SubscribePresenceRequest) returns (Empty);
+  // Targeted LID<->PN lookup, batched. Reads the live client (in-memory cache
+  // first, durable store on miss), so it also sees mappings learned during an
+  // offline history replay, which are cached before they are persisted.
+  rpc ResolveLidPn(ResolveLidPnRequest) returns (ResolveLidPnResponse);
+  // Every LID<->PN pair persisted for the account, for a consumer reconciling
+  // its own store in one pass. Reads storage directly, so it answers for a
+  // disconnected account too -- and, being the durable side, it misses the
+  // in-memory-only mappings ResolveLidPn can still answer.
+  rpc ListLidMappings(AccountRef) returns (ListLidMappingsResponse);
 }

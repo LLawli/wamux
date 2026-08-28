@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use super::client_of;
-use crate::domain::contacts;
+use crate::domain::{contacts, lid_mapping};
 use crate::proto::v1 as pb;
 use crate::proto::v1::contact_service_server::ContactService;
 use crate::state::AccountRegistry;
@@ -111,5 +111,28 @@ impl ContactService for ContactSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         contacts::subscribe_presence(&client, &req.jid).await?;
         Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn resolve_lid_pn(
+        &self,
+        request: Request<pb::ResolveLidPnRequest>,
+    ) -> Result<Response<pb::ResolveLidPnResponse>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let results = lid_mapping::resolve_lid_pn(&client, &req.jids).await?;
+        Ok(Response::new(pb::ResolveLidPnResponse { results }))
+    }
+
+    /// Storage-side, so it needs a known account but not a connected one: an
+    /// edge reconciling its own store after a restart has nothing live yet.
+    async fn list_lid_mappings(
+        &self,
+        request: Request<pb::AccountRef>,
+    ) -> Result<Response<pb::ListLidMappingsResponse>, Status> {
+        let reference = request.into_inner();
+        let handle = self.registry.resolve(Some(&reference))?;
+        let backend = self.registry.storage().device_backend(handle.device_id);
+        let mappings = lid_mapping::list_lid_mappings(backend).await?;
+        Ok(Response::new(pb::ListLidMappingsResponse { mappings }))
     }
 }

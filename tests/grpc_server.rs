@@ -9,11 +9,14 @@ use hyper_util::rt::TokioIo;
 use tonic::transport::{Endpoint, Uri};
 use tower::service_fn;
 
+use wacore::store::traits::LidPnMappingEntry;
 use wamux::config::Config;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::admin_service_client::AdminServiceClient;
+use wamux::proto::v1::contact_service_client::ContactServiceClient;
 use wamux::state::{AccountRegistry, RegistryTuning};
+use wamux::storage::StorageEngine;
 use wamux::{server, transport};
 
 // Only a subset of the shared helpers is used per test binary.
@@ -140,14 +143,19 @@ async fn account_lifecycle_over_socket() {
     assert_eq!(after.unwrap_err().code(), tonic::Code::NotFound);
 }
 
-/// Spin the server on a throwaway socket and return a connected channel.
-async fn spawn_server() -> tonic::transport::Channel {
+/// Spin the server on a throwaway socket and return a connected channel plus
+/// the engine behind it (the LID-mapping suite writes through the same storage
+/// the RPC reads).
+async fn spawn_server() -> (tonic::transport::Channel, Arc<dyn StorageEngine>) {
     let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
     let socket = dir.path().join("wamux.sock");
     let socket_str = socket.to_str().unwrap().to_string();
 
     let engine = common::test_engine().await;
-    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(64)));
+    let registry = Arc::new(AccountRegistry::new(
+        engine.clone(),
+        RegistryTuning::with_ring(64),
+    ));
     let config = Config {
         socket_path: socket_str.clone(),
         enable_reflection: false,
@@ -172,7 +180,7 @@ async fn spawn_server() -> tonic::transport::Channel {
             }))
             .await;
         if let Ok(channel) = attempt {
-            return channel;
+            return (channel, engine);
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -181,7 +189,7 @@ async fn spawn_server() -> tonic::transport::Channel {
 
 #[tokio::test]
 async fn admin_health_and_metrics_over_socket() {
-    let channel = spawn_server().await;
+    let (channel, _engine) = spawn_server().await;
     let mut admin = AdminServiceClient::new(channel);
 
     // Health: serving always true while answering; ready true since PG is up.
@@ -209,4 +217,78 @@ async fn admin_health_and_metrics_over_socket() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     panic!("per-request metrics never appeared:\n{last}");
+}
+
+/// issue #1: the LID<->PN pairs the library persists have to be reachable over
+/// the contract, or a `@lid` chat is nameless. `ListLidMappings` is the
+/// storage-side read, so it answers for an account that was never connected;
+/// the client-side reads (`ResolveLidPn`, `GetPushName`) need a live client and
+/// say so instead of lying with an empty answer.
+#[tokio::test]
+async fn lid_mappings_are_readable_over_socket() {
+    let (channel, engine) = spawn_server().await;
+    let mut accounts = AccountServiceClient::new(channel.clone());
+    let mut contacts = ContactServiceClient::new(channel);
+
+    let external = format!("lid-map-test-{}", uuid::Uuid::new_v4());
+    let created = accounts
+        .create_account(pb::CreateAccountRequest {
+            external_ref: Some(external.clone()),
+        })
+        .await
+        .expect("create_account")
+        .into_inner();
+
+    // Seed one pair through the same store the library writes to.
+    let device_id = engine
+        .list_accounts()
+        .await
+        .expect("list accounts")
+        .into_iter()
+        .find(|row| row.uuid.to_string() == created.uuid)
+        .expect("created account row")
+        .device_id;
+    engine
+        .device_backend(device_id)
+        .put_lid_mapping(&LidPnMappingEntry {
+            lid: "169815004184633".to_string(),
+            phone_number: "5511999000111".to_string(),
+            created_at: 1_717_932_000,
+            updated_at: 1_717_932_000,
+            learning_source: "usync".to_string(),
+        })
+        .await
+        .expect("seed lid mapping");
+
+    let mappings = contacts
+        .list_lid_mappings(account_ref(&created.uuid))
+        .await
+        .expect("list_lid_mappings on a disconnected account")
+        .into_inner()
+        .mappings;
+    let seeded = mappings
+        .iter()
+        .find(|m| m.lid == "169815004184633@lid")
+        .expect("seeded pair must come back");
+    assert_eq!(seeded.pn, "5511999000111@s.whatsapp.net");
+    assert_eq!(seeded.learning_source, "usync");
+    assert_eq!(seeded.created_at, 1_717_932_000);
+
+    // The client-side reads need a connection.
+    let resolve = contacts
+        .resolve_lid_pn(pb::ResolveLidPnRequest {
+            account: Some(account_ref(&created.uuid)),
+            jids: vec!["169815004184633@lid".to_string()],
+        })
+        .await;
+    assert_eq!(
+        resolve.unwrap_err().code(),
+        tonic::Code::FailedPrecondition,
+        "ResolveLidPn reads the live client"
+    );
+
+    accounts
+        .delete_account(account_ref(&created.uuid))
+        .await
+        .expect("delete");
 }
