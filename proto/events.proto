@@ -149,6 +149,34 @@ message RawEvent {
   string note = 3;
 }
 
+// The server's own verdict on one outgoing stanza, relayed verbatim.
+//
+// Issue #4: SendResult means "the relay handed the message to the library",
+// which is NOT the same as "the server took it" — a send whose device fan-out
+// comes out empty answers with a real key and puts nothing on the wire. The
+// core cannot see inside that fan-out, so it relays the only authority that
+// can settle it: the `<ack>` itself.
+//
+// Correlate `id` with `SendResult.key.id`. No ServerAck for a message id means
+// the server never took it. How long to wait before calling that a failure is
+// edge policy — a timeout in the core would be exactly the "if X did not
+// happen in N seconds" rule the core does not own.
+//
+// `error` is the nack code (e.g. "479") when the server REJECTED the stanza;
+// empty on a plain ack. Until now a nack was only visible as a library log line.
+message ServerAckEvent {
+  string id = 1;
+  // Stanza class: "message", "receipt", "notification", "call", ... Empty when
+  // the server omits it.
+  string class = 2;
+  // Chat/entity the ack refers to; empty when absent or unparseable.
+  string from = 3;
+  // Server timestamp (ms). For a message ack this is the authoritative send
+  // time. 0 when the server omitted it.
+  int64 timestamp = 4;
+  string error = 5;
+}
+
 message EventEnvelope {
   string account_uuid = 1;
   int64 monotonic_seq = 2;
@@ -166,6 +194,7 @@ message EventEnvelope {
     HistorySyncEvent history_sync = 19;
     AppStateUpdate app_state = 20;
     CallEvent call = 21;
+    ServerAckEvent server_ack = 22;
     RawEvent raw = 99;
   }
 }

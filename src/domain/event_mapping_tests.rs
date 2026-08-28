@@ -7,8 +7,8 @@ use wacore::types::events::{
     ArchiveUpdate, BatchOrigin, ChatPresenceUpdate, ConnectFailureReason, Connected,
     DecryptFailMode, DeleteChatUpdate, Disconnected, InboundMessage, LazyHistorySync, LoggedOut,
     MarkChatAsReadUpdate, MessageBatch, MuteUpdate, OfflineSyncCompleted, PairError, PairSuccess,
-    PairingCode, PairingQrCode, PinUpdate, PresenceUpdate, PushNameUpdate, Receipt, StarUpdate,
-    TempBanReason, TemporaryBan, UnavailableType, UndecryptableMessage,
+    PairingCode, PairingQrCode, PinUpdate, PresenceUpdate, PushNameUpdate, Receipt, ServerAck,
+    StarUpdate, TempBanReason, TemporaryBan, UnavailableType, UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -653,6 +653,56 @@ fn maps_pairing_qr_code() {
             );
         }
         other => panic!("expected pairing qr, got {other:?}"),
+    }
+}
+
+// REGRESSION (issue #4): a send whose device fan-out comes out empty answers
+// with a real key and never reaches the server, which is indistinguishable from
+// success on the SendResult alone. The ack is the only authority that can settle
+// it, so it has to reach the edge as a typed event, not as the Raw catch-all.
+#[test]
+fn maps_server_ack_so_a_send_can_be_confirmed_against_the_server() {
+    let event = Event::ServerAck(
+        ServerAck::builder()
+            .id("3EB0ABCDEF".to_string())
+            .class("message".to_string())
+            .from(jid_of(SENDER_JID))
+            .timestamp(wacore::time::from_secs(1_717_932_222).unwrap())
+            .build(),
+    );
+    match map_one(&event) {
+        Some(PbEvent::ServerAck(a)) => {
+            // Correlates with SendResult.key.id; that pairing is the whole point.
+            assert_eq!(a.id, "3EB0ABCDEF");
+            assert_eq!(a.class, "message");
+            assert_eq!(a.from, SENDER_JID);
+            assert_eq!(a.timestamp, 1_717_932_222_000);
+            // A plain ack is not a nack: the error field stays empty.
+            assert!(a.error.is_empty());
+        }
+        other => panic!("expected server ack, got {other:?}"),
+    }
+}
+
+// A nack was only ever a library log line before. Relaying the code is what
+// lets the edge tell "the server refused this" from "no ack yet".
+#[test]
+fn server_nack_relays_its_error_code() {
+    let event = Event::ServerAck(
+        ServerAck::builder()
+            .id("3EB0FAILED".to_string())
+            .class("message".to_string())
+            .error("479".to_string())
+            .build(),
+    );
+    match map_one(&event) {
+        Some(PbEvent::ServerAck(a)) => {
+            assert_eq!(a.error, "479");
+            // Absent server attrs stay proto3 defaults, never a fake value.
+            assert!(a.from.is_empty());
+            assert_eq!(a.timestamp, 0);
+        }
+        other => panic!("expected server ack, got {other:?}"),
     }
 }
 

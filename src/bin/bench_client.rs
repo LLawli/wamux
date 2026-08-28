@@ -122,6 +122,7 @@ fn event_kind(envelope: &pb::EventEnvelope) -> &'static str {
         Some(Event::HistorySync(_)) => "history_sync",
         Some(Event::AppState(_)) => "app_state",
         Some(Event::Call(_)) => "call",
+        Some(Event::ServerAck(_)) => "server_ack",
         Some(Event::Raw(raw)) => raw_kind(raw),
         None => "empty",
     }
