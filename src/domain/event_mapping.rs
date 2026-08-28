@@ -131,6 +131,19 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // lives in `raw`).
         Event::IncomingCall(c) => one(Pb::Call(map_call(c))),
 
+        // Issue #4: the server's own verdict on an outgoing stanza, new in
+        // whatsapp-rust 0.7. `SendResult` only says the library accepted the
+        // message; this says whether the server did. Relayed verbatim so the
+        // edge can correlate it with the send it made, and decide for itself
+        // how long a missing ack is allowed to stay missing.
+        Event::ServerAck(a) => one(Pb::ServerAck(pb::ServerAckEvent {
+            id: a.id.clone(),
+            class: a.class.clone().unwrap_or_default(),
+            from: a.from.as_ref().map(|j| j.to_string()).unwrap_or_default(),
+            timestamp: a.timestamp.map(|t| t.timestamp_millis()).unwrap_or(0),
+            error: a.error.clone().unwrap_or_default(),
+        })),
+
         // Intentionally dropped (internal/noisy).
         Event::Notification(_) | Event::RawNode(_) => Vec::new(),
 
