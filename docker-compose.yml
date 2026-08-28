@@ -1,0 +1,48 @@
+# Local/single-host deployment. `docker compose up -d` gives a running daemon
+# with Postgres behind it and the socket exposed on the host at ./run.
+#
+# The socket is the entire API: there is no TCP port to publish. Whoever
+# consumes it must reach that file AND be allowed to open it (0660), which is
+# what the UID/GID build args below are for. docs/DEPLOYMENT.md covers the
+# cases in full, including a consumer that itself runs in a container.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wamux
+      POSTGRES_PASSWORD: wamux
+      POSTGRES_DB: wamux
+    volumes:
+      - wamux-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wamux"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  wamux:
+    build:
+      context: .
+      args:
+        # Default to the invoking user so the socket is usable from this host
+        # without further ceremony. Export WAMUX_UID/WAMUX_GID to override.
+        WAMUX_UID: ${WAMUX_UID:-1000}
+        WAMUX_GID: ${WAMUX_GID:-1000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      WAMUX_DATABASE_URL: postgres://wamux:wamux@postgres:5432/wamux
+      WAMUX_SOCKET_PATH: /run/wamux/wamux.sock
+      WAMUX_LOG_LEVEL: info,wamux=info
+    volumes:
+      # Bind mount, not a named volume: a named volume lives under
+      # /var/lib/docker and is root-only, which puts the socket out of reach of
+      # a consumer running as you on this host. See docs/DEPLOYMENT.md for the
+      # container-to-container variant, where a named volume IS the right call.
+      - ./run:/run/wamux
+    restart: unless-stopped
+
+volumes:
+  wamux-pgdata:

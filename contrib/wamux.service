@@ -1,0 +1,57 @@
+# systemd unit for running wamux natively (no container).
+#
+# Install:
+#   cp contrib/wamux.service ~/.config/systemd/user/     # per-user
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now wamux
+#
+# For a system-wide install put it in /etc/systemd/system/, add
+# User=/Group=wamux, and change %h below to an absolute path.
+#
+# The DSN scheme picks the storage engine. sqlite:// needs no database server
+# and is the right default for a single host; switch to postgres:// when
+# running many accounts. See docs/DEPLOYMENT.md.
+
+[Unit]
+Description=wamux: WhatsApp multiplexer daemon (gRPC over a Unix socket)
+Documentation=https://github.com/LLawli/wamux
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=WAMUX_DATABASE_URL=sqlite://%S/wamux/wamux.db
+Environment=WAMUX_SOCKET_PATH=%S/wamux/wamux.sock
+Environment=WAMUX_LOG_LEVEL=info,wamux=info
+ExecStart=%h/.local/bin/wamux
+Restart=on-failure
+RestartSec=10
+
+# Creates and owns %S/wamux (~/.local/state/wamux for a user unit), which is
+# where both the database and the socket live.
+StateDirectory=wamux
+
+# The daemon opens one socket and talks to WhatsApp; it needs nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=default.target

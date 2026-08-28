@@ -54,7 +54,36 @@ Signal/session/device state (in Postgres), never business message history.
 - `protoc` is **not** required on the host — it is vendored and run by
   `build.rs`, which regenerates the Rust gRPC code from `proto/` on every build.
 
-## Quick start
+## Install
+
+### Docker (fastest)
+
+```sh
+WAMUX_UID=$(id -u) WAMUX_GID=$(id -g) docker compose up -d --build
+# socket at ./run/wamux.sock
+```
+
+Brings up the daemon and Postgres. The `WAMUX_UID`/`WAMUX_GID` are not
+optional decoration: the socket is `0660`, so the container must run as the
+user that will open it or every connection fails with permission denied.
+
+### Native, no database server
+
+```sh
+cargo build --release --bin wamux
+cp target/release/wamux ~/.local/bin/
+cp contrib/wamux.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now wamux
+# socket at ~/.local/state/wamux/wamux.sock
+```
+
+The shipped unit uses the SQLite engine, so there is nothing else to install.
+Point `WAMUX_DATABASE_URL` at a `postgres://` DSN when you outgrow it.
+
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers reaching the socket from
+another container, the UID/GID rules, and the failure modes.
+
+## Quick start (from source)
 
 ```sh
 # 1. Postgres (Docker example; the test/dev default is port 5433)

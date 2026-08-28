@@ -4,3 +4,4 @@
 *.sock
 /wamux.toml
 /.claude/
+/run
