@@ -31,6 +31,16 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **`GetGroupMetadata` now hands back each participant whole** (issue #1). The
+  JSON flattened every participant to its jid string, which in a LID-addressed
+  group meant discarding `phone_number` — the only phone jid the roster carries,
+  i.e. the answer to "who is this `@lid`" for every member — along with who is
+  admin. `participants` entries are now objects (`jid`, `phone_number`, `type`)
+  and the payload gained `addressing_mode`, so the edge can tell whether the
+  roster's jids are LIDs before it tries to name anyone. Wire shape change for a
+  consumer that read `participants[i]` as a string; `subject`, `id` and
+  `description` are untouched.
+
 - **Breaking: `ContactService.GetPushName` now takes an `AccountRef`, not a
   `JidRequest`** (issue #1). It always answered the *account's own* push name —
   the getter that pairs with `SetPushName` — while ignoring the `jid` field it

@@ -7,7 +7,7 @@ use wacore::iq::groups::{
     GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupSubject,
 };
 use whatsapp_rust::Client;
-use whatsapp_rust::features::MembershipRequest;
+use whatsapp_rust::features::{GroupParticipant, MembershipRequest};
 
 use crate::domain::jid_parse::{parse_jid, parse_jids};
 use crate::error::{WamuxError, client_err};
@@ -39,16 +39,36 @@ pub async fn create_group(
     })
 }
 
-/// GroupMetadata isn't Serialize, so project the load-bearing fields into JSON.
+/// GroupMetadata isn't Serialize (unlike MembershipRequest, which we relay
+/// verbatim), so the JSON is hand-built -- and hand-picking is exactly what
+/// dropped each participant's identity here. A LID-addressed group hands back
+/// every member as a `@lid` with `phone_number` alongside, so flattening a
+/// participant to its jid string threw away the answer to "who is this @lid"
+/// for the whole roster, plus who is admin (issue #1).
 fn metadata_json(md: &whatsapp_rust::GroupMetadata) -> Vec<u8> {
-    let participants: Vec<String> = md.participants.iter().map(|p| p.jid.to_string()).collect();
+    let participants: Vec<serde_json::Value> =
+        md.participants.iter().map(participant_json).collect();
     serde_json::to_vec(&serde_json::json!({
         "id": md.id.to_string(),
         "subject": md.subject,
         "description": md.description,
+        // Which namespace the roster is addressed in, so the edge knows whether
+        // `jid` is a `@lid` before it tries to name anyone.
+        "addressing_mode": md.addressing_mode.as_str(),
         "participants": participants,
     }))
     .unwrap_or_default()
+}
+
+/// One participant, whole: the jid the group addresses them by, the phone jid
+/// the server sent alongside it (absent in a PN-addressed group, where `jid`
+/// already is the phone), and the admin role.
+fn participant_json(p: &GroupParticipant) -> serde_json::Value {
+    serde_json::json!({
+        "jid": p.jid.to_string(),
+        "phone_number": p.phone_number.as_ref().map(|j| j.to_string()),
+        "type": p.participant_type.as_str(),
+    })
 }
 
 pub async fn add_participants(
@@ -326,7 +346,8 @@ pub async fn reject_membership(
 mod tests {
     use std::str::FromStr;
 
-    use whatsapp_rust::features::{GroupParticipant, ParticipantType};
+    use wacore::types::message::AddressingMode;
+    use whatsapp_rust::features::ParticipantType;
     use whatsapp_rust::{GroupMetadata, Jid};
 
     use super::*;
@@ -350,7 +371,52 @@ mod tests {
         assert_eq!(value["id"], "120363001234567890@g.us");
         assert_eq!(value["subject"], "Test Group");
         assert_eq!(value["description"], "a description");
-        assert_eq!(value["participants"][0], member.to_string());
+        assert_eq!(value["participants"][0]["jid"], member.to_string());
+    }
+
+    // REGRESSION (issue #1): in a LID-addressed group every participant jid is
+    // a `@lid` and `phone_number` is the only PN the roster carries. Flattening
+    // a participant to its jid string dropped that, and the admin role with it.
+    #[test]
+    fn participant_keeps_its_phone_number_and_role() {
+        let lid = Jid::from_str("169815004184633@lid").unwrap();
+        let pn = Jid::from_str("5511999000111@s.whatsapp.net").unwrap();
+        let md = GroupMetadata {
+            id: Jid::from_str("120363001234567890@g.us").unwrap(),
+            addressing_mode: AddressingMode::Lid,
+            participants: vec![GroupParticipant {
+                jid: lid.clone(),
+                phone_number: Some(pn.clone()),
+                participant_type: ParticipantType::SuperAdmin,
+            }],
+            ..GroupMetadata::default()
+        };
+        let value: serde_json::Value = serde_json::from_slice(&metadata_json(&md)).unwrap();
+        assert_eq!(value["addressing_mode"], "lid");
+        let participant = &value["participants"][0];
+        assert_eq!(participant["jid"], lid.to_string());
+        assert_eq!(participant["phone_number"], pn.to_string());
+        assert_eq!(participant["type"], "superadmin");
+    }
+
+    // A PN-addressed group sends no `phone_number`: `jid` already is the phone,
+    // and the core must leave the absence visible rather than copying the jid
+    // into it (that would be the edge guessing, done in the core).
+    #[test]
+    fn absent_phone_number_stays_null() {
+        let md = GroupMetadata {
+            id: Jid::from_str("120363001234567890@g.us").unwrap(),
+            participants: vec![GroupParticipant {
+                jid: Jid::from_str("5511999000111@s.whatsapp.net").unwrap(),
+                phone_number: None,
+                participant_type: ParticipantType::Member,
+            }],
+            ..GroupMetadata::default()
+        };
+        let value: serde_json::Value = serde_json::from_slice(&metadata_json(&md)).unwrap();
+        assert!(value["participants"][0]["phone_number"].is_null());
+        assert_eq!(value["participants"][0]["type"], "member");
+        assert_eq!(value["addressing_mode"], "pn");
     }
 
     // None description must serialize as JSON null (not be omitted), so the
