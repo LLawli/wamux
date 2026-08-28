@@ -17,6 +17,7 @@ use crate::proto::v1::event_envelope::Event as PbEvent;
 
 const CHAT_JID: &str = "120363041234567890@g.us";
 const SENDER_JID: &str = "5511999000111@s.whatsapp.net";
+const LID_JID: &str = "169815004184633@lid";
 
 /// Minimal valid WABinary node `<iq/>`: LIST_8 list of size 1, then the tag
 /// as a BINARY_8 string. Hand-rolled because whatsapp-rust's marshal helpers
@@ -102,6 +103,51 @@ fn maps_conversation_text_message_with_key_and_metadata() {
     assert!(!out.raw_message.is_empty());
     let decoded = wa::Message::decode(out.raw_message.as_slice()).unwrap();
     assert_eq!(decoded.conversation.as_deref(), Some("hello world"));
+}
+
+// REGRESSION (issue #1): a `@lid` sender is unidentifiable on its own, and the
+// stanza already carries the phone side in `sender_alt`. The core dropped it,
+// forcing the edge to poll for an identity the event was holding.
+#[test]
+fn relays_the_stanza_alt_jids_of_a_lid_sender() {
+    let source = MessageSource {
+        chat: jid_of(LID_JID),
+        sender: jid_of(LID_JID),
+        sender_alt: Some(jid_of(SENDER_JID)),
+        recipient_alt: Some(jid_of("5511888000222@s.whatsapp.net")),
+        is_from_me: false,
+        ..Default::default()
+    };
+    let info = MessageInfo {
+        source,
+        ..sample_info()
+    };
+    let event = Event::Message(
+        Arc::new(wa::Message {
+            conversation: Some("oi".to_string()),
+            ..Default::default()
+        }),
+        Arc::new(info),
+    );
+    let out = match map_event(&event) {
+        Some(PbEvent::Message(m)) => m,
+        other => panic!("expected inbound message, got {other:?}"),
+    };
+    assert_eq!(out.sender, LID_JID);
+    assert_eq!(out.sender_alt, SENDER_JID);
+    assert_eq!(out.recipient_alt, "5511888000222@s.whatsapp.net");
+}
+
+// Absent on the stanza means absent on the wire: the core must not synthesize
+// the other namespace from the user part (that would be guessing identity).
+#[test]
+fn absent_alt_jids_stay_empty_never_synthesized() {
+    let out = mapped_inbound(wa::Message {
+        conversation: Some("hello".to_string()),
+        ..Default::default()
+    });
+    assert!(out.sender_alt.is_empty(), "got {:?}", out.sender_alt);
+    assert!(out.recipient_alt.is_empty(), "got {:?}", out.recipient_alt);
 }
 
 #[test]

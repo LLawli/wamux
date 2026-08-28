@@ -10,6 +10,7 @@ use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::Event;
 use wacore::types::message::MessageInfo;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
+use whatsapp_rust::Jid;
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::proto::v1 as pb;
@@ -236,6 +237,12 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         sender,
         timestamp: info.timestamp.timestamp_millis(),
         push_name: info.push_name.clone(),
+        // The parser already put the stanza's other-namespace jids here
+        // (sender_pn/participant_pn/participant_lid). Dropping them forced the
+        // edge to poll for an identity the event itself carried (issue #1);
+        // relaying them is verbatim, no lookup and no guess.
+        sender_alt: jid_or_empty(info.source.sender_alt.as_ref()),
+        recipient_alt: jid_or_empty(info.source.recipient_alt.as_ref()),
         raw_message: msg.encode_to_vec(),
         ..Default::default()
     };
@@ -289,6 +296,11 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
     }
 
     out
+}
+
+/// Render an optional jid for a proto3 string field (absent == empty).
+fn jid_or_empty(jid: Option<&Jid>) -> String {
+    jid.map(|j| j.to_string()).unwrap_or_default()
 }
 
 /// Project a wa `MessageKey` into the proto one (proto3 empty == lib `None`).

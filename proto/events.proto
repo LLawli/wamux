@@ -45,6 +45,15 @@ message InboundMessage {
   // (which is the edit/revoke stanza id). For an edit, `text` carries the new
   // text; a new-style E2E edit arrives un-decrypted (is_edit set, text empty).
   MessageKey protocol_target = 15;
+  // The other-namespace form of the two ends, verbatim from the stanza: when
+  // `sender` is a `@lid`, `sender_alt` is the phone jid the stanza carried (and
+  // the reverse for a phone sender); `recipient_alt` is the same for the other
+  // end of a DM. Empty when the stanza carried none -- the core relays these,
+  // it never looks them up (that is ContactService.ResolveLidPn) and never
+  // guesses. This is what makes a `@lid` chat identifiable with no round trip
+  // (issue #1).
+  string sender_alt = 16;
+  string recipient_alt = 17;
   bytes raw_message = 20;           // serialized wa.Message for advanced consumers
 }
 
