@@ -160,6 +160,11 @@ development/diagnostic tools, not part of the daemon.
 
 ## Documentation
 
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to get the gates green, and the one
+  rule that overrides the others (the core is a pure relay).
+- [CHANGELOG.md](CHANGELOG.md) — what changed per release.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — reaching the socket: native,
+  Docker, container-to-container, and the UID/permission rules.
 - `docs/PRD.md` — product requirements and the relay-pure rationale.
 - `docs/SPEC.md` — the technical spec.
 - `docs/crate-notes/` — a verbatim map of the `whatsapp-rust` API surface used.
@@ -173,6 +178,12 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
+
+`whatsapp-rust` and its companion crates are MIT, which imposes no constraint
+on this choice. [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) carries the
+notices of every crate linked into the binary, as their terms require; it is
+regenerated with `scripts/gen-third-party.py` and ships inside the Docker
+image.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
