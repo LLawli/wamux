@@ -27,16 +27,12 @@ jobs:
           # re-downloads a whole nightly.
           cache: true
 
-      - run: cargo fmt --check
-
-      - run: cargo clippy --all-targets -- -D warnings
-
-      - run: cargo clippy --features stress --all-targets -- -D warnings
-
-      - name: tests (sqlite engine)
-        env:
-          WAMUX_TEST_ENGINE: sqlite
-        run: cargo test
+      # Same script as the full job, minus the database-backed gates. The
+      # first version of this workflow ran a bare `cargo test` here and failed:
+      # the suite legitimately contains Postgres-backed cases (engine parity
+      # needs both engines), so "no database" is a property of the pipeline,
+      # not something a YAML step can assume.
+      - run: scripts/ci.sh --no-postgres
 
   # The real pipeline. scripts/ci.sh is the single definition of what "green"
   # means for this project, so CI runs that script rather than restating its

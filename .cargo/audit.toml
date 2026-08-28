@@ -1,0 +1,22 @@
+# cargo-audit policy. Every entry here is a decision with a reason and a
+# trigger to revisit, never a way to quiet the tool.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 — rsa: Marvin attack (timing sidechannel), no patch
+    # upstream. NOT REACHABLE HERE: rsa is pulled by sqlx-mysql, and this
+    # project builds sqlx with default-features = false plus only postgres and
+    # sqlite. `cargo tree -i rsa --target all` finds no path to it; it exists
+    # in Cargo.lock only because the lockfile records the whole feature
+    # universe. Revisit the moment a mysql feature is enabled.
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2025-0141 — bincode is unmaintained (the team stopped work).
+    # Not a vulnerability: an advisory about maintenance. bincode 2 with
+    # config::standard() IS the wire format whatsapp-rust uses for the Device,
+    # AppStateSyncKey and HashState blobs, and this project must stay
+    # byte-compatible with it (see storage/blob_codec.rs and its round-trip
+    # tests). Switching serializers would silently corrupt every existing
+    # store. Revisit if and when whatsapp-rust migrates.
+    "RUSTSEC-2025-0141",
+]
