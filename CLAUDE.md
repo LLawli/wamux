@@ -35,13 +35,43 @@ webhooks, and any "if X didn't happen in N seconds, do Y" logic. The core hands 
 primitives the edge needs (e.g. `SendResult.message_id`, `Receipt` events) and lets the
 edge compose the policy.
 
-**Worked example (Sprint 1, 2026-06-09): DM routing was removed entirely.** The library
-auto-upgrades phone-number (`@s.whatsapp.net`) recipients PN→LID, which is undeliverable
-on some companion accounts. The core does **not** rewrite the JID to dodge this. Instead
-the **edge** sends the recipient it wants — `<number>@c.us` (legacy) to bypass the upgrade,
-or `<number>@s.whatsapp.net` for the default path — and the core relays to it verbatim.
-(Safe: the lib's `resolve_encryption_jid` only upgrades `Server::Pn`/`Hosted`, so a
-`@c.us` JID passes through untouched.) There is no `dm_routing` knob anywhere.
+**Worked example (Sprint 1, 2026-06-09): DM routing was removed entirely.** The core does
+**not** rewrite a recipient JID, ever. The edge sends the recipient it wants and the core
+relays to it verbatim. There is no `dm_routing` knob anywhere, and that is still the rule.
+
+**What this example is NOT (updated 2026-08-31, issue #4).** It used to record a specific
+routing recipe — send `<number>@c.us` to dodge the library's PN→LID upgrade — and called
+it safe because `resolve_encryption_jid` leaves a legacy JID untouched. Both halves aged
+badly, and the second one was the trap:
+
+- The upgrade *was* undeliverable on companion accounts, on whatsapp-rust **0.6.0**. That
+  was upstream [#941](https://github.com/oxidezap/whatsapp-rust/issues/941), fixed
+  2026-07-02 and first released in **0.7.0**. The reason to dodge it stopped existing the
+  day we ported.
+- "Passes through untouched" was never a safety property. It is the defect. `@c.us` parses
+  as `Server::Legacy`, so `is_pn()` is false and the send path stops treating the recipient
+  as a phone user at all: it skips the self-chat check and the LID resolution, and it
+  matches the pre-key IQ response by whole-JID equality including the server field, so a
+  bundle the server *did* return reads as absent. No session is built, `send::encrypt`
+  skips the device, and the stanza ships carrying nothing for the recipient's handset.
+  Fixed upstream in [#1362](https://github.com/oxidezap/whatsapp-rust/pull/1362).
+
+Measured on 2026-08-31 against the two production accounts on 0.7.0: the modern spelling
+delivers (`delivered` receipts, no library warnings), and it is the legacy spelling that
+does not. **Do not reintroduce a `@c.us` recipe here or recommend one to the edge.**
+
+The durable lesson is the one the example was written for, and it survived: keeping
+recipient choice out of the core is what let the edge fix this on its own timetable
+without a core release. What did not survive is writing down a *specific* routing recipe,
+which is edge policy pinned to a library version, in the file that teaches the rule.
+Record the constraint, not the workaround.
+
+**Judge a send by `delivered`, never by the ack.** `SendResult` means the library accepted
+the message; `ServerAckEvent` means the server accepted the stanza. Neither means anyone
+received it — a stanza that encrypted for nobody who matters gets both. There is no
+`delivered` receipt for a note to self, which is why that case needs a human or, once
+[#1362](https://github.com/oxidezap/whatsapp-rust/pull/1362) is released,
+`SendResult.recipient_fanout` (`encrypted`, `skipped_primary`, `is_partial()`).
 
 **Worked example (Sprint 3, 2026-06-09): reconnection is not the core's job.** The
 `whatsapp-rust` run loop already reconnects transient drops with Fibonacci backoff;
