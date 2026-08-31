@@ -251,20 +251,36 @@ pub async fn download(
     descriptor: &pb::MediaDescriptor,
 ) -> Result<Vec<u8>, WamuxError> {
     let kind = MediaKind::parse(&descriptor.media_type)?;
-    // 0.7 collapsed the six positional params into one `DownloadParams`;
-    // `encrypted` takes the same values in the same order.
-    let params = DownloadParams::encrypted(
-        &descriptor.direct_path,
-        &descriptor.media_key,
-        &descriptor.file_sha256,
-        &descriptor.file_enc_sha256,
-        descriptor.file_length,
-        kind.upload_type(),
-    );
     client
-        .download_from_params(&params)
+        .download_from_params(&download_params(descriptor, kind))
         .await
         .map_err(client_err)
+}
+
+/// Build the download parameters, encrypted or not.
+///
+/// Issue #6: a channel's media carries NO key. Decoding a newsletter
+/// `ImageMessage` shows no `media_key` and no `file_enc_sha256` at all, because
+/// that media is served in the clear and authenticated by `file_sha256` alone.
+/// `DownloadParams::encrypted` cannot express that, so a relay that only ever
+/// called it answered for encrypted media and failed for the rest.
+///
+/// Absence is the proto3 default (empty bytes), the same rule the outbound side
+/// uses, and the library already has the branch: `media_key: None` takes
+/// `MediaDecryption::Plaintext`, which verifies `file_sha256` rather than
+/// skipping verification. So this widens what the core can relay without
+/// loosening what it checks.
+fn download_params(descriptor: &pb::MediaDescriptor, kind: MediaKind) -> DownloadParams {
+    let encrypted = !descriptor.media_key.is_empty();
+    DownloadParams {
+        direct_path: descriptor.direct_path.clone(),
+        media_key: encrypted.then(|| descriptor.media_key.clone()),
+        file_sha256: descriptor.file_sha256.clone(),
+        // Only meaningful alongside a key: it is the hash of the ENCRYPTED bytes.
+        file_enc_sha256: encrypted.then(|| descriptor.file_enc_sha256.clone()),
+        file_length: descriptor.file_length,
+        media_type: kind.upload_type(),
+    }
 }
 
 #[cfg(test)]
@@ -312,6 +328,49 @@ mod tests {
             MediaKind::parse("Image"),
             Err(WamuxError::InvalidArgument(_))
         ));
+    }
+
+    fn descriptor(media_key: Vec<u8>, file_enc_sha256: Vec<u8>) -> pb::MediaDescriptor {
+        pb::MediaDescriptor {
+            direct_path: "/v/t62.7118-24/enc".to_string(),
+            media_key,
+            file_enc_sha256,
+            file_sha256: vec![9u8; 32],
+            file_length: 2048,
+            mime_type: "image/jpeg".to_string(),
+            media_type: "image".to_string(),
+        }
+    }
+
+    // Ordinary encrypted media: the key rides through and decryption happens.
+    #[test]
+    fn a_descriptor_with_a_key_downloads_as_encrypted() {
+        let params = download_params(&descriptor(vec![1u8; 32], vec![2u8; 32]), MediaKind::Image);
+        assert_eq!(params.media_key.as_deref(), Some(&[1u8; 32][..]));
+        assert_eq!(params.file_enc_sha256.as_deref(), Some(&[2u8; 32][..]));
+        assert_eq!(params.file_sha256, vec![9u8; 32]);
+    }
+
+    // REGRESSION (issue #6): a channel's media carries no key at all. It must
+    // download as plaintext rather than fail, and `file_sha256` must survive —
+    // it is the only thing authenticating those bytes.
+    #[test]
+    fn a_keyless_descriptor_downloads_as_plaintext_and_keeps_its_hash() {
+        let params = download_params(&descriptor(Vec::new(), Vec::new()), MediaKind::Image);
+        assert!(params.media_key.is_none());
+        assert!(params.file_enc_sha256.is_none());
+        assert_eq!(params.file_sha256, vec![9u8; 32]);
+        assert_eq!(params.file_length, 2048);
+    }
+
+    // An enc hash without a key is not a half-encrypted download: without the
+    // key there is nothing to decrypt, so carrying it would only invite the
+    // library to validate a hash of bytes it never produces.
+    #[test]
+    fn an_enc_hash_without_a_key_is_dropped() {
+        let params = download_params(&descriptor(Vec::new(), vec![2u8; 32]), MediaKind::Image);
+        assert!(params.media_key.is_none());
+        assert!(params.file_enc_sha256.is_none());
     }
 
     fn fake_upload() -> MediaUpload {
