@@ -7,147 +7,219 @@
 //! these rows by jid. Nothing new is implemented against WhatsApp here; the
 //! library already asks, the core just never relayed the answer.
 
+use serde_json::json;
 use whatsapp_rust::Client;
-use whatsapp_rust::features::{
-    NewsletterMetadata, NewsletterRole, NewsletterState, NewsletterVerification,
-};
+use whatsapp_rust::features::MexRequest;
 
 use crate::domain::jid_parse::parse_jid;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
+// WORKAROUND (upstream oxidezap/whatsapp-rust#1372) — REMOVE WHEN FIXED.
+//
+// `client.newsletter().list_subscribed()` and `.get_metadata()` cannot be used:
+// their generated `Variables` mark every field `skip_serializing_if =
+// "Option::is_none"`, and the library passes them unset, so the request carries
+// `{}` (list) or a partial object (get). These persisted GraphQL operations
+// require EVERY declared variable to be present, and the server answers
+// `400 Bad Request` when one is missing. Measured against the live accounts:
+// `{}` and any partial set fail; the complete set succeeds regardless of the
+// booleans' values.
+//
+// So the calls below issue the same persisted operations through the public
+// `MexRequest` API with every variable populated, and parse the answer here.
+// The doc ids are the ones the library generated (identical in 0.7.0 and in
+// upstream main), NOT ones this project scraped.
+//
+// The moment #1372 lands, delete `list_subscribed`'s and `get_metadata`'s bodies
+// here and call the library again: nothing else in this module changes, because
+// the projection below is what the RPC returns either way.
+const LIST_QUERY: (&str, &str) = (
+    "WAWebMexFetchAllNewslettersMetadataJobQuery",
+    "25399611239711790",
+);
+const GET_QUERY: (&str, &str) = ("WAWebMexFetchNewsletterJobQuery", "27456920720571478");
+
 pub async fn list_subscribed(client: &Client) -> Result<pb::NewsletterList, WamuxError> {
-    let found = client
-        .newsletter()
-        .list_subscribed()
+    let response = client
+        .mex()
+        .query(MexRequest::new(
+            LIST_QUERY.0,
+            LIST_QUERY.1,
+            // Every declared variable, present. See the note above: absence is
+            // what the server rejects, not the value.
+            json!({ "fetch_status_metadata": true, "fetch_wamo_sub": true }),
+        ))
         .await
         .map_err(client_err)?;
+
+    let data = response
+        .data
+        .ok_or_else(|| WamuxError::Client("newsletter list: no data".to_string()))?;
+    let found = data["xwa2_newsletter_subscribed"]
+        .as_array()
+        .ok_or_else(|| {
+            WamuxError::Client("newsletter list: missing xwa2_newsletter_subscribed".to_string())
+        })?;
     Ok(pb::NewsletterList {
-        newsletters: found.into_iter().map(newsletter_to_proto).collect(),
+        newsletters: found.iter().map(newsletter_to_proto).collect(),
     })
 }
 
 pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, WamuxError> {
+    // Parsed for validation only: the query addresses the channel by string.
     let jid = parse_jid(jid)?;
-    let metadata = client
-        .newsletter()
-        .get_metadata(&jid)
+    let response = client
+        .mex()
+        .query(MexRequest::new(
+            GET_QUERY.0,
+            GET_QUERY.1,
+            json!({
+                "input": { "key": jid.to_string(), "type": "JID", "view_role": "GUEST" },
+                "fetch_creation_time": true,
+                "fetch_full_image": true,
+                "fetch_pinned_messages": false,
+                "fetch_status_metadata": false,
+                "fetch_viewer_metadata": true,
+                "fetch_wamo_sub": false,
+            }),
+        ))
         .await
         .map_err(client_err)?;
-    Ok(newsletter_to_proto(metadata))
-}
 
-/// Project the library's metadata onto the wire shape. Absent optionals relay as
-/// the proto3 default (empty string, zero), the same rule `wire_defaults` pins
-/// on the outbound side: the core never substitutes a placeholder for something
-/// the server did not say.
-fn newsletter_to_proto(metadata: NewsletterMetadata) -> pb::Newsletter {
-    pb::Newsletter {
-        jid: metadata.jid.to_string(),
-        name: metadata.name,
-        description: metadata.description.unwrap_or_default(),
-        subscriber_count: metadata.subscriber_count,
-        picture_url: metadata.picture_url.unwrap_or_default(),
-        verification: verification_label(&metadata.verification).to_string(),
-        state: state_label(&metadata.state).to_string(),
-        role: metadata.role.as_ref().map(role_label).unwrap_or_default(),
-        creation_time: metadata.creation_time.unwrap_or(0) as i64,
+    let data = response
+        .data
+        .ok_or_else(|| WamuxError::Client("newsletter: no data".to_string()))?;
+    let found = &data["xwa2_newsletter"];
+    if found.is_null() {
+        return Err(WamuxError::AccountNotFound(format!(
+            "no newsletter metadata for {jid}"
+        )));
     }
+    Ok(newsletter_to_proto(found))
 }
 
-/// Lowercase wire tokens, never Debug casing — the same convention
-/// `ReceiptEvent.type` and `CallEvent.action` follow, so the edge codes against
-/// the proto rather than against Rust's formatting.
+/// Project one newsletter node onto the wire shape.
 ///
-/// All three enums are `#[non_exhaustive]`: a variant added upstream relays its
-/// lowercased Debug name rather than being folded into a neighbouring token,
-/// which would be the core inventing an answer.
-fn verification_label(v: &NewsletterVerification) -> String {
-    match v {
-        NewsletterVerification::Verified => "verified".to_string(),
-        NewsletterVerification::Unverified => "unverified".to_string(),
-        other => format!("{other:?}").to_lowercase(),
+/// Mirrors the library's own `parse_newsletter_metadata` field for field, so the
+/// answer does not change when the workaround above is removed. Absent values
+/// relay as the proto3 default, never a placeholder: a channel the server
+/// described sparsely does not gain values it never had.
+fn newsletter_to_proto(value: &serde_json::Value) -> pb::Newsletter {
+    let thread = &value["thread_metadata"];
+    pb::Newsletter {
+        jid: value["id"].as_str().unwrap_or_default().to_string(),
+        name: thread["name"]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        description: thread["description"]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        // The server sends counts as strings.
+        subscriber_count: thread["subscribers_count"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        // A direct_path, not a URL: the same shape MediaDescriptor carries, so
+        // the edge fetches it the way it fetches any other media path.
+        picture_url: thread["picture"]["direct_path"]
+            .as_str()
+            .or_else(|| thread["preview"]["direct_path"].as_str())
+            .unwrap_or_default()
+            .to_string(),
+        verification: lowercase_token(&thread["verification"]),
+        state: lowercase_token(&value["state"]["type"]),
+        role: lowercase_token(&value["viewer_metadata"]["role"]),
+        creation_time: thread["creation_time"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
     }
 }
 
-fn state_label(s: &NewsletterState) -> String {
-    match s {
-        NewsletterState::Active => "active".to_string(),
-        NewsletterState::Suspended => "suspended".to_string(),
-        NewsletterState::Geosuspended => "geosuspended".to_string(),
-        other => format!("{other:?}").to_lowercase(),
-    }
-}
-
-fn role_label(r: &NewsletterRole) -> String {
-    match r {
-        NewsletterRole::Owner => "owner".to_string(),
-        NewsletterRole::Admin => "admin".to_string(),
-        NewsletterRole::Subscriber => "subscriber".to_string(),
-        NewsletterRole::Guest => "guest".to_string(),
-        other => format!("{other:?}").to_lowercase(),
-    }
+/// The server sends these as SCREAMING_CASE (`VERIFIED`, `ACTIVE`,
+/// `SUBSCRIBER`). Relay them lowercased, the same convention
+/// `ReceiptEvent.type` and `CallEvent.action` follow, so the edge codes against
+/// the proto rather than against whatever casing the server chose. An unknown
+/// value passes through lowercased rather than being folded into a known token.
+fn lowercase_token(value: &serde_json::Value) -> String {
+    value.as_str().unwrap_or_default().to_lowercase()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
-    use whatsapp_rust::Jid;
 
-    fn metadata() -> NewsletterMetadata {
-        NewsletterMetadata {
-            jid: Jid::from_str("120363454900123456@newsletter").unwrap(),
-            name: "Canal de Teste".to_string(),
-            description: Some("uma descrição".to_string()),
-            subscriber_count: 4242,
-            verification: NewsletterVerification::Verified,
-            state: NewsletterState::Active,
-            picture_url: Some("https://mmg.whatsapp.net/pic".to_string()),
-            preview_url: None,
-            invite_code: None,
-            role: Some(NewsletterRole::Subscriber),
-            creation_time: Some(1_717_932_000),
-        }
+    /// One node shaped exactly like the live server's answer, trimmed to the
+    /// fields this projection reads. Captured from the production accounts.
+    fn node() -> serde_json::Value {
+        json!({
+            "id": "120363144038483540@newsletter",
+            "state": { "type": "ACTIVE" },
+            "thread_metadata": {
+                "creation_time": "1688746895",
+                "description": { "text": "WhatsApp's official channel." },
+                "invite": "0029Va4K0PZ5a245NkngBA2M",
+                "name": { "text": "WhatsApp" },
+                "preview": { "direct_path": "/v/t61.24694-24/416962407.jpg" },
+                "subscribers_count": "4242",
+                "verification": "VERIFIED"
+            },
+            "viewer_metadata": { "role": "SUBSCRIBER" }
+        })
     }
 
     // The whole point of issue #6: the name has to survive the projection.
     #[test]
-    fn metadata_relays_the_name_and_the_jid() {
-        let out = newsletter_to_proto(metadata());
-        assert_eq!(out.jid, "120363454900123456@newsletter");
-        assert_eq!(out.name, "Canal de Teste");
-        assert_eq!(out.description, "uma descrição");
-        assert_eq!(out.subscriber_count, 4242);
-        assert_eq!(out.picture_url, "https://mmg.whatsapp.net/pic");
-        assert_eq!(out.creation_time, 1_717_932_000);
+    fn a_channel_node_relays_its_name_and_jid() {
+        let out = newsletter_to_proto(&node());
+        assert_eq!(out.jid, "120363144038483540@newsletter");
+        assert_eq!(out.name, "WhatsApp");
+        assert_eq!(out.description, "WhatsApp's official channel.");
+        assert_eq!(out.creation_time, 1_688_746_895);
     }
 
-    // Lowercase tokens per the proto contract, never Debug casing.
+    // The server sends counts as strings, not numbers.
+    #[test]
+    fn subscriber_count_parses_from_its_string_form() {
+        assert_eq!(newsletter_to_proto(&node()).subscriber_count, 4242);
+    }
+
+    // SCREAMING_CASE on the wire, lowercase tokens in the contract.
     #[test]
     fn enums_relay_as_lowercase_wire_tokens() {
-        let out = newsletter_to_proto(metadata());
+        let out = newsletter_to_proto(&node());
         assert_eq!(out.verification, "verified");
         assert_eq!(out.state, "active");
         assert_eq!(out.role, "subscriber");
     }
 
+    // `picture` is absent on most channels; `preview` is what they do carry.
+    #[test]
+    fn picture_falls_back_to_the_preview_path() {
+        assert_eq!(
+            newsletter_to_proto(&node()).picture_url,
+            "/v/t61.24694-24/416962407.jpg"
+        );
+        let mut with_picture = node();
+        with_picture["thread_metadata"]["picture"] = json!({ "direct_path": "/v/full.jpg" });
+        assert_eq!(
+            newsletter_to_proto(&with_picture).picture_url,
+            "/v/full.jpg"
+        );
+    }
+
     // A channel the server described sparsely must not gain invented values.
     #[test]
-    fn absent_optionals_stay_proto3_defaults() {
-        let sparse = NewsletterMetadata {
-            description: None,
-            picture_url: None,
-            role: None,
-            creation_time: None,
-            ..metadata()
-        };
-        let out = newsletter_to_proto(sparse);
+    fn a_bare_node_stays_at_proto3_defaults() {
+        let out = newsletter_to_proto(&json!({ "id": "1@newsletter" }));
+        assert_eq!(out.jid, "1@newsletter");
+        assert!(out.name.is_empty());
         assert!(out.description.is_empty());
-        assert!(out.picture_url.is_empty());
-        assert!(out.role.is_empty());
+        assert!(out.verification.is_empty());
+        assert_eq!(out.subscriber_count, 0);
         assert_eq!(out.creation_time, 0);
-        // The name is not optional and must still be there.
-        assert_eq!(out.name, "Canal de Teste");
     }
 }
