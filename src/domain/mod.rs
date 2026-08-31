@@ -11,6 +11,7 @@ pub mod jid_parse;
 pub mod lid_mapping;
 pub mod media_transfer;
 pub mod messaging;
+pub mod newsletters;
 pub(crate) mod outgoing_context;
 pub mod send_rich;
 pub mod status;

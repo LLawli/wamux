@@ -15,6 +15,7 @@ use crate::proto::v1::event_service_server::EventServiceServer;
 use crate::proto::v1::group_service_server::GroupServiceServer;
 use crate::proto::v1::media_service_server::MediaServiceServer;
 use crate::proto::v1::messaging_service_server::MessagingServiceServer;
+use crate::proto::v1::newsletter_service_server::NewsletterServiceServer;
 use crate::services::account_service::AccountSvc;
 use crate::services::admin_service::AdminSvc;
 use crate::services::contact_service::ContactSvc;
@@ -22,6 +23,7 @@ use crate::services::event_service::EventSvc;
 use crate::services::group_service::GroupSvc;
 use crate::services::media_service::MediaSvc;
 use crate::services::messaging_service::MessagingSvc;
+use crate::services::newsletter_service::NewsletterSvc;
 use crate::state::AccountRegistry;
 
 /// The router carries our one cross-cutting layer (per-request observability);
@@ -42,6 +44,9 @@ pub fn build_router(registry: Arc<AccountRegistry>, config: &Config) -> Observed
         )))
         .add_service(MediaServiceServer::new(MediaSvc::new(registry.clone())))
         .add_service(GroupServiceServer::new(GroupSvc::new(registry.clone())))
+        .add_service(NewsletterServiceServer::new(NewsletterSvc::new(
+            registry.clone(),
+        )))
         .add_service(ContactServiceServer::new(ContactSvc::new(registry.clone())))
         .add_service(AdminServiceServer::new(AdminSvc::new(
             registry.clone(),
