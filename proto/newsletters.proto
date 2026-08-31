@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+import "contacts.proto";
+
+// A channel (`@newsletter`), relayed as the server describes it.
+//
+// Issue #6: a channel's identity never crossed the contract, so a consumer that
+// materialises conversations from the event stream could only address these
+// rows by jid. Nothing here is derived or guessed — an inbound newsletter
+// message carries an empty `push_name` and a `sender` equal to the newsletter
+// jid, and history sync brings no name either, so this is the only place the
+// name exists.
+message Newsletter {
+  string jid = 1;
+  string name = 2;
+  // Absent fields relay as the proto3 default, never a placeholder.
+  string description = 3;
+  uint64 subscriber_count = 4;
+  string picture_url = 5;
+  // Lowercase wire token, same convention as ReceiptEvent.type and
+  // CallEvent.action ("verified" / "unverified").
+  string verification = 6;
+  string state = 7;
+  // Whether this account owns/administers the channel, when the server says so.
+  string role = 8;
+  // Unix seconds, 0 when the server omits it.
+  int64 creation_time = 9;
+}
+
+message NewsletterList {
+  repeated Newsletter newsletters = 1;
+}
+
+service NewsletterService {
+  // Every channel this account follows. The startup call: it lets a consumer
+  // name every newsletter row it already holds in one round trip, the way
+  // GroupService.ListParticipating does for groups.
+  rpc ListSubscribedNewsletters(AccountRef) returns (NewsletterList);
+  // One channel, for a jid that turned up in a message before the list was
+  // fetched.
+  rpc GetNewsletterMetadata(JidRequest) returns (Newsletter);
+}

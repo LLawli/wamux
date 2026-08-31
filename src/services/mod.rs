@@ -12,6 +12,7 @@ pub mod event_service;
 pub mod group_service;
 pub mod media_service;
 pub mod messaging_service;
+pub mod newsletter_service;
 
 use std::sync::Arc;
 
