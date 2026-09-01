@@ -144,6 +144,26 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             error: a.error.clone().unwrap_or_default(),
         })),
 
+        // Issue #11: the two halves of "did this reconnect owe me a backlog".
+        // `OfflineSyncPreview` is the server's own count of what it holds;
+        // `OfflineSyncCompleted` is how many the drain delivered. A preview with
+        // no completion after it is an abandoned resume, which is how ~700
+        // events were lost silently. Typed rather than left to the Raw catch-all
+        // so the comparison is part of the contract instead of a JSON shape that
+        // can move underneath a consumer.
+        Event::OfflineSyncPreview(p) => one(Pb::OfflineSyncPreview(pb::OfflineSyncPreview {
+            total: p.total,
+            messages: p.messages,
+            notifications: p.notifications,
+            receipts: p.receipts,
+            calls: p.calls,
+            statuses: p.statuses,
+            app_data_changes: p.app_data_changes,
+        })),
+        Event::OfflineSyncCompleted(c) => one(Pb::OfflineSyncCompleted(pb::OfflineSyncCompleted {
+            count: c.count,
+        })),
+
         // Intentionally dropped (internal/noisy).
         Event::Notification(_) | Event::RawNode(_) => Vec::new(),
 

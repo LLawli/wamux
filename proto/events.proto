@@ -177,6 +177,34 @@ message ServerAckEvent {
   string error = 5;
 }
 
+// What the server says it is holding for this account when a connection comes
+// back up, from the `offline_preview` node. `total` is authoritative; the
+// per-kind counts need not sum to it.
+//
+// Issue #11: this is the first half of the only signal a consumer has that a
+// reconnect owes it a backlog. Compare `total` here with `count` on the
+// OfflineSyncCompleted that should follow.
+message OfflineSyncPreview {
+  int32 total = 1;
+  int32 messages = 2;
+  int32 notifications = 3;
+  int32 receipts = 4;
+  int32 calls = 5;
+  int32 statuses = 6;
+  int32 app_data_changes = 7;
+}
+
+// How many the drain actually delivered.
+//
+// Issue #11: this is dispatched only when the drain finishes. A reconnect in
+// the middle of a resume means it never arrives, so a preview with no
+// completion after it is what an abandoned backlog looks like. The core does
+// not put a deadline on that wait: how long a missing completion is allowed to
+// stay missing is edge policy, same as a missing ack.
+message OfflineSyncCompleted {
+  int32 count = 1;
+}
+
 message EventEnvelope {
   string account_uuid = 1;
   int64 monotonic_seq = 2;
@@ -195,6 +223,8 @@ message EventEnvelope {
     AppStateUpdate app_state = 20;
     CallEvent call = 21;
     ServerAckEvent server_ack = 22;
+    OfflineSyncPreview offline_sync_preview = 23;
+    OfflineSyncCompleted offline_sync_completed = 24;
     RawEvent raw = 99;
   }
 }

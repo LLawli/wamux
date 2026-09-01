@@ -6,9 +6,10 @@ use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::{
     ArchiveUpdate, BatchOrigin, ChatPresenceUpdate, ConnectFailureReason, Connected,
     DecryptFailMode, DeleteChatUpdate, Disconnected, InboundMessage, LazyHistorySync, LoggedOut,
-    MarkChatAsReadUpdate, MessageBatch, MuteUpdate, OfflineSyncCompleted, PairError, PairSuccess,
-    PairingCode, PairingQrCode, PinUpdate, PresenceUpdate, PushNameUpdate, Receipt, ServerAck,
-    StarUpdate, TempBanReason, TemporaryBan, UnavailableType, UndecryptableMessage,
+    MarkChatAsReadUpdate, MessageBatch, MuteUpdate, OfflineSyncCompleted, OfflineSyncPreview,
+    PairError, PairSuccess, PairingCode, PairingCodeRefresh, PairingQrCode, PinUpdate,
+    PresenceUpdate, PushNameUpdate, Receipt, ServerAck, StarUpdate, TempBanReason, TemporaryBan,
+    UnavailableType, UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -623,14 +624,14 @@ fn drops_notification_and_raw_node_events() {
 
 #[test]
 fn catch_all_maps_unmatched_variant_to_raw_event() {
-    // OfflineSyncCompleted has no explicit arm: it must land in Raw, not vanish.
-    let event = Event::OfflineSyncCompleted(OfflineSyncCompleted::builder().count(7).build());
+    // PairingCodeRefresh has no explicit arm: it must land in Raw, not vanish.
+    let event = Event::PairingCodeRefresh(PairingCodeRefresh::builder().force_manual(true).build());
     match map_one(&event) {
         Some(PbEvent::Raw(raw)) => {
-            assert_eq!(raw.kind, "OfflineSyncCompleted");
+            assert_eq!(raw.kind, "PairingCodeRefresh");
             assert_eq!(raw.payload, serde_json::to_vec(&event).unwrap());
             let json: serde_json::Value = serde_json::from_slice(&raw.payload).unwrap();
-            assert_eq!(json["OfflineSyncCompleted"]["count"], 7);
+            assert_eq!(json["PairingCodeRefresh"]["force_manual"], true);
             assert!(raw.note.is_empty());
         }
         other => panic!("expected raw event, got {other:?}"),
@@ -703,6 +704,42 @@ fn server_nack_relays_its_error_code() {
             assert_eq!(a.timestamp, 0);
         }
         other => panic!("expected server ack, got {other:?}"),
+    }
+}
+
+// REGRESSION (issue #11): a reconnect can arm a resume for hundreds of events
+// and then be torn down mid-drain, leaving the backlog on the server. The two
+// numbers that make that visible have to be typed, not buried in Raw.
+#[test]
+fn maps_offline_sync_preview_with_the_server_count() {
+    let event = Event::OfflineSyncPreview(
+        OfflineSyncPreview::builder()
+            .total(711)
+            .messages(600)
+            .notifications(100)
+            .receipts(11)
+            .calls(0)
+            .statuses(0)
+            .app_data_changes(0)
+            .build(),
+    );
+    match map_one(&event) {
+        Some(PbEvent::OfflineSyncPreview(p)) => {
+            assert_eq!(p.total, 711);
+            assert_eq!(p.messages, 600);
+            assert_eq!(p.notifications, 100);
+            assert_eq!(p.receipts, 11);
+        }
+        other => panic!("expected offline sync preview, got {other:?}"),
+    }
+}
+
+#[test]
+fn maps_offline_sync_completed_with_what_was_delivered() {
+    let event = Event::OfflineSyncCompleted(OfflineSyncCompleted::builder().count(5).build());
+    match map_one(&event) {
+        Some(PbEvent::OfflineSyncCompleted(c)) => assert_eq!(c.count, 5),
+        other => panic!("expected offline sync completed, got {other:?}"),
     }
 }
 
