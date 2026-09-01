@@ -123,6 +123,8 @@ fn event_kind(envelope: &pb::EventEnvelope) -> &'static str {
         Some(Event::AppState(_)) => "app_state",
         Some(Event::Call(_)) => "call",
         Some(Event::ServerAck(_)) => "server_ack",
+        Some(Event::OfflineSyncPreview(_)) => "offline_sync_preview",
+        Some(Event::OfflineSyncCompleted(_)) => "offline_sync_completed",
         Some(Event::Raw(raw)) => raw_kind(raw),
         None => "empty",
     }
