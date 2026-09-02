@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status, Streaming};
 
 use super::{client_of, require_field, require_jid};
-use crate::domain::jid_parse::parse_jid;
+use crate::domain::jid_parse::{parse_jid, parse_optional_jid};
 use crate::domain::messaging::{self, send_result_to_proto};
 use crate::domain::{chat_actions, media_transfer, polls, send_rich, status};
 use crate::proto::v1 as pb;
@@ -160,7 +160,22 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let chat = parse_jid(&require_jid(req.chat)?)?;
-        messaging::mark_read(&client, &chat).await?;
+        // Both of these were dropped on the floor before issue #20. `sender` is
+        // optional (a DM's author is the chat itself); an empty `message_ids`
+        // acknowledges nothing and the library emits no stanza.
+        let sender = parse_optional_jid(&req.sender.unwrap_or_default().value)?;
+        messaging::mark_read(&client, &chat, sender.as_ref(), &req.message_ids).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn mark_chat_read(
+        &self,
+        request: Request<pb::MarkReadRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let chat = parse_jid(&require_jid(req.chat)?)?;
+        chat_actions::mark_chat_read(&client, &chat).await?;
         Ok(Response::new(pb::Empty {}))
     }
 

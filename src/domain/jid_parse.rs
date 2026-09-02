@@ -20,6 +20,19 @@ pub fn parse_jids(values: &[String]) -> Result<Vec<Jid>, WamuxError> {
     values.iter().map(|v| parse_jid(v)).collect()
 }
 
+/// Parse a JID that is allowed to be absent, where proto3's empty string IS
+/// absence (the same rule `require_jid` and `wire_defaults` follow).
+///
+/// Issue #20: `MarkReadRequest.sender` is genuinely optional -- a DM's author
+/// is the chat itself -- and an edge saying so with `Jid { value: "" }` rather
+/// than by omitting the field must not get `InvalidArgument("empty jid")`.
+pub fn parse_optional_jid(value: &str) -> Result<Option<Jid>, WamuxError> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    parse_jid(value).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,6 +88,30 @@ mod tests {
         assert_eq!(jids.len(), 2);
         assert_eq!(jids[0].to_string(), "5511999999999@s.whatsapp.net");
         assert_eq!(jids[1].to_string(), "120363001234567890@g.us");
+    }
+
+    // Proto3 has no presence for a string: an edge that means "no sender" can
+    // say it either way, and both must mean the same thing.
+    #[test]
+    fn an_empty_optional_jid_is_absence_not_an_error() {
+        assert!(parse_optional_jid("").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_present_optional_jid_parses_like_any_other() {
+        let jid = parse_optional_jid("5511999999999@s.whatsapp.net")
+            .unwrap()
+            .expect("a non-empty value must parse to Some");
+        assert_eq!(jid.user, "5511999999999");
+    }
+
+    // Absence is the empty string; garbage is still garbage.
+    #[test]
+    fn an_invalid_optional_jid_still_fails() {
+        assert!(matches!(
+            parse_optional_jid("not a jid"),
+            Err(WamuxError::InvalidArgument(_))
+        ));
     }
 
     #[test]

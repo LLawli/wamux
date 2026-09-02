@@ -32,8 +32,11 @@ src/
   `replay_from_ring` for ring replay. `EventEnvelope` oneof covers message, receipt,
   undecryptable, connection, pairing, presence, group, push_name, contact, `raw`.
 - **MessagingService**: SendText, SendMedia (client stream), SendReaction,
-  EditMessage, DeleteMessage, FetchMessageHistory, SendPresence, MarkRead,
-  MarkUnread; chat actions (StarMessage, ArchiveChat, PinChat, MuteChat,
+  EditMessage, DeleteMessage, FetchMessageHistory, SendPresence; read state
+  (MarkRead sends the RECEIPT that turns the other person's ticks blue;
+  MarkChatRead and MarkUnread are the app-state mutations that only reach this
+  account's own devices -- one WhatsApp operation per RPC, the edge composes,
+  issue #20 and docs/BREAKING-CHANGES-2026-09-02.md); chat actions (StarMessage, ArchiveChat, PinChat, MuteChat,
   DeleteChat); rich sends (SendContact, SendPoll); polls (SendPollVote,
   AggregatePollVotes -- the tally sends no stanza, it opens votes the edge
   supplies, issue #13); status (PostStatusText, PostStatusMedia).
