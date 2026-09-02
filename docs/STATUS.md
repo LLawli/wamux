@@ -317,6 +317,26 @@ Gotchas conhecidos:
   +15 testes unit (70 no lib) + 1 integração nova. `send_types` ganha o kind `ptt` + `WAMUX_REF`.
   (History sync: **feito** — backfill por conexão + `FetchMessageHistory` sob demanda.)
 
+**Issue #13 — Enquetes: votar e apurar** ✅ (validado ao vivo, 2026-09-02)
+- `MessagingService.SendPollVote` + `AggregatePollVotes` (relay puro: a borda manda o secret, as
+  opções e os votos; o core não guarda nada). Domínio em `src/domain/polls.rs`; a **criação**
+  continua em `send_rich` (é um send comum), estes dois são a metade de cripto.
+- `PollTally.undecryptable` conta os votos que não abriram. A lib engole essa falha com um
+  `log::warn!`, e sem o contador um voto ilegível é indistinguível de "ninguém votou". Custa uma
+  passada de `decrypt_vote` por voto — a única forma de saber quais falharam.
+- **A armadilha que o teste ao vivo achou**: o votante tem que estar no **mesmo namespace** do
+  criador. A chave vem do PAR criador/votante e a lib só troca os dois **juntos**, então um par
+  misto (criador PN, votante `@lid`) nunca é tentado na combinação que o remetente usou.
+  Enquete criada em PN, votada de um `@lid`: `undecryptable=3` de 3 passando o `sender` verbatim;
+  tally limpo passando o `sender_alt` (a forma PN do mesmo remetente). Documentado no
+  `PollVote.voter_jid`; é a borda que escolhe a forma, o core não normaliza jid.
+- Validação: `WAMUX_LIVE_DEST=<jid> WAMUX_REF=<conta> cargo run --release --bin poll_live
+  <socket> [segundos]` (mesmo guard de destino do `stress_live`; recusa rodar sem `WAMUX_LIVE_DEST`
+  e recusa enquete para o próprio número). **Resultado**: enquete entregue, voto do celular apurado
+  (`Sim -> [<primário>]`, `undecryptable=0`), segundo voto **substituiu** o primeiro
+  (`Talvez -> [<primário>]`, um votante), e o `SendPollVote` do RPC votou "Sim" e depois "Não"
+  aparecendo como um voto só no aparelho.
+
 **Sprint 6 — A borda (projeto separado)**
 - Camada HTTP/auth/permissões consumindo o socket; webhooks; filtragem por usuário.
 
@@ -324,6 +344,8 @@ Gotchas conhecidos:
 - Postgres: `docker run -d --name wamux-pg -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux -e POSTGRES_DB=wamux -p 5433:5432 postgres:16`
 - Testes: `DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux cargo test`
 - Daemon: `WAMUX_DATABASE_URL=... WAMUX_SOCKET_PATH=/tmp/wamux.sock cargo run`
-  (sem knob de roteamento: para forçar legacy, o cliente manda o JID `<numero>@c.us`)
+  (sem knob de roteamento: o cliente manda o JID que quiser e o core relaya verbatim. **Não**
+  mande `@c.us`: desde a #4 sabemos que a grafia legacy vira `Server::Legacy` e o caminho de
+  envio cifra para ninguém — ver CLAUDE.md.)
 - Pareamento QR (abre PNG): `cargo run --bin pair_socket /tmp/wamux.sock`
 - E2E completo: `WAMUX_E2E_DESTRUCTIVE=1 cargo run --bin e2e_all /tmp/wamux.sock <numero>`
