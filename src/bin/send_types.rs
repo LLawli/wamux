@@ -9,7 +9,14 @@
 //!      WAMUX_PTT_FILE  OGG/Opus path for the ptt kind (default /tmp/wamux-ptt-test.ogg)
 //!      WAMUX_PTT_SECS  voice note duration shown in the bubble (default 3)
 //! Requires the daemon running with the account paired. The core relays to the
-//! JID verbatim (no routing); this client targets @c.us to dodge the PN->LID upgrade.
+//! JID verbatim (no routing); this client targets @s.whatsapp.net.
+//!
+//! NOT `@c.us`, which is what this bin used to send and what its comment used to
+//! recommend. Issue #4 measured the cost: the legacy spelling parses as
+//! `Server::Legacy`, the send path stops treating the recipient as a phone user,
+//! no session is built, and the stanza ships encrypted for nobody -- while still
+//! answering with a real message id and a server ack. A validation tool that
+//! sends there reports success for a message that reached no one.
 
 use std::io::{Cursor, Read};
 use std::time::Duration;
@@ -35,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
     let number = std::env::args()
         .nth(2)
         .unwrap_or_else(|| "5511999999999".to_string());
-    let target = format!("{number}@c.us");
+    let target = format!("{number}@s.whatsapp.net");
 
     let channel = connect_uds(socket).await?;
     let mut account = AccountServiceClient::new(channel.clone());
