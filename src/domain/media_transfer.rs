@@ -87,6 +87,20 @@ pub(crate) struct MediaUpload {
     pub file_sha256: [u8; 32],
     pub file_enc_sha256: [u8; 32],
     pub file_length: u64,
+    /// Unix seconds the media key was generated. Every media sub-message
+    /// carries one, so the shared macro sets it (issue #18).
+    pub media_key_timestamp: i64,
+    /// Per-64-KiB HMAC table the official client uses to decrypt progressively
+    /// while playing. `wacore` computes it for AUDIO and VIDEO only, so it is
+    /// `None` for the kinds that are fetched whole -- and it is set in the
+    /// audio/video builders, never in the shared macro, because
+    /// `streamingSidecar` exists on only those two waproto messages.
+    ///
+    /// Issue #18: dropping this shipped audio and voice notes that drew their
+    /// bubble and refused to play, with a `delivered` receipt and no nack. The
+    /// bytes, the container, the encryption and the descriptor were all right;
+    /// the message was missing the table.
+    pub streaming_sidecar: Option<Vec<u8>>,
 }
 
 impl From<UploadResponse> for MediaUpload {
@@ -98,6 +112,8 @@ impl From<UploadResponse> for MediaUpload {
             file_sha256: up.file_sha256,
             file_enc_sha256: up.file_enc_sha256,
             file_length: up.file_length,
+            media_key_timestamp: up.media_key_timestamp,
+            streaming_sidecar: up.streaming_sidecar,
         }
     }
 }
@@ -163,6 +179,10 @@ macro_rules! submessage_with_upload {
             file_sha256: Some($up.file_sha256.to_vec()),
             file_enc_sha256: Some($up.file_enc_sha256.to_vec()),
             file_length: Some($up.file_length),
+            // Unconditional `Some`, matching the library's own builders: this
+            // comes from the finished upload, not from the wire, so it is never
+            // the proto3 default the wire-defaults rule is about.
+            media_key_timestamp: Some($up.media_key_timestamp),
             mimetype: nonempty_string(&$header.mime_type),
             context_info: $context,
             $($field: $value,)*
@@ -179,6 +199,11 @@ fn video_submessage(
     submessage_with_upload!(
         VideoMessage {
             caption: nonempty_string(&header.caption),
+            // Issue #18, same reason as the voice note: audio and video are the
+            // only two waproto messages with this field, and the only two
+            // wacore computes a sidecar for. PTV rides this builder too, so a
+            // video note gets it as well.
+            streaming_sidecar: up.streaming_sidecar.clone(),
         },
         header,
         up,
@@ -199,6 +224,8 @@ fn audio_submessage(
             ptt: header.ptt.then_some(true),
             seconds: nonzero_u32(header.seconds),
             waveform: nonempty_bytes(&header.waveform),
+            // Issue #18: without this the bubble draws and will not play.
+            streaming_sidecar: up.streaming_sidecar.clone(),
         },
         header,
         up,
@@ -381,6 +408,18 @@ mod tests {
             file_enc_sha256: [2u8; 32],
             file_sha256: [3u8; 32],
             file_length: 1234,
+            media_key_timestamp: 1_756_800_000,
+            // wacore computes one for audio and video only; the fixture carries
+            // it so a builder that drops it fails a test (issue #18).
+            streaming_sidecar: Some(vec![9u8; 3]),
+        }
+    }
+
+    /// An upload of a kind wacore builds no sidecar for.
+    fn upload_without_sidecar() -> MediaUpload {
+        MediaUpload {
+            streaming_sidecar: None,
+            ..fake_upload()
         }
     }
 
@@ -413,6 +452,75 @@ mod tests {
         assert_eq!(img.caption.as_deref(), Some("a caption"));
         // No ephemeral, no other context: the ContextInfo stays absent.
         assert!(img.context_info.is_unset());
+    }
+
+    // REGRESSION for issue #18: an AudioMessage without the sidecar draws its
+    // bubble on the phone and refuses to play, answering `delivered` with no
+    // nack and nothing in any log. The library asserts the same property for
+    // its own builder (whatsapp-rust src/media.rs).
+    #[test]
+    fn audio_message_carries_the_streaming_sidecar() {
+        let message = build_media_message(
+            MediaKind::Audio,
+            &pb::SendMediaHeader {
+                mime_type: "audio/ogg; codecs=opus".to_string(),
+                ptt: true,
+                seconds: 3,
+                ..header("audio")
+            },
+            fake_upload(),
+        );
+        let audio = message.audio_message.expect("audio_message must be set");
+        assert_eq!(audio.streaming_sidecar.as_deref(), Some(&[9u8; 3][..]));
+        assert_eq!(audio.ptt, Some(true));
+    }
+
+    #[test]
+    fn video_message_carries_the_streaming_sidecar() {
+        let message = build_media_message(MediaKind::Video, &header("video"), fake_upload());
+        let video = message.video_message.expect("video_message must be set");
+        assert_eq!(video.streaming_sidecar.as_deref(), Some(&[9u8; 3][..]));
+    }
+
+    // A video note rides the same builder, so it must not lose the sidecar on
+    // the way into the other Message slot.
+    #[test]
+    fn a_video_note_keeps_the_streaming_sidecar() {
+        let message = build_media_message(
+            MediaKind::Video,
+            &pb::SendMediaHeader {
+                ptv: true,
+                ..header("video")
+            },
+            fake_upload(),
+        );
+        let ptv = message.ptv_message.expect("ptv_message must be set");
+        assert_eq!(ptv.streaming_sidecar.as_deref(), Some(&[9u8; 3][..]));
+        assert!(message.video_message.is_unset());
+    }
+
+    // Absence must survive too: wacore returns no sidecar for the kinds fetched
+    // whole, and the field is then absent rather than Some(empty).
+    #[test]
+    fn no_sidecar_from_the_upload_means_an_absent_field() {
+        let message =
+            build_media_message(MediaKind::Audio, &header("audio"), upload_without_sidecar());
+        let audio = message.audio_message.expect("audio_message must be set");
+        assert_eq!(audio.streaming_sidecar, None);
+    }
+
+    // Every media sub-message carries a media_key_timestamp; the shared macro
+    // sets it, so one test over two kinds pins the whole table.
+    #[test]
+    fn media_key_timestamp_reaches_every_kind() {
+        let image = build_media_message(MediaKind::Image, &header("image"), fake_upload())
+            .image_message
+            .expect("image_message must be set");
+        assert_eq!(image.media_key_timestamp, Some(1_756_800_000));
+        let document = build_media_message(MediaKind::Document, &header("document"), fake_upload())
+            .document_message
+            .expect("document_message must be set");
+        assert_eq!(document.media_key_timestamp, Some(1_756_800_000));
     }
 
     #[test]
