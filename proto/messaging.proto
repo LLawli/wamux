@@ -185,6 +185,83 @@ message SendPollResult {
   bytes message_secret = 2;
 }
 
+// --- Polls: voting and tallying (issue #13) ---
+//
+// A vote is an encrypted add-on keyed by the poll's message_secret, its stanza
+// id, the CREATOR's jid and the VOTER's jid, in the namespace (LID or PN) the
+// poll was addressed in. That derivation is the library's, and the LID/PN half
+// of it reads the library's own identity store, which the edge does not have:
+// a vote authored across the LID migration opens under one addressing and not
+// the other. So these two are relayed rather than left to the edge.
+//
+// Both stay relay-pure: the edge supplies every stored value (secret, options,
+// the votes themselves) and the core persists nothing.
+
+// The poll is addressed by (chat, poll_id, poll_creator_jid) rather than by a
+// MessageKey: the library derives the key's other fields itself (from_me from
+// the creator, participant from the chat's kind), so a MessageKey here would be
+// three fields the core ignores. The creator is explicit for the same reason it
+// is not derived -- guessing an identity is exactly what the core does not do.
+message SendPollVoteRequest {
+  AccountRef account = 1;
+  Jid chat = 2;
+  string poll_id = 3;             // message id of the poll-creation message
+  string poll_creator_jid = 4;    // who sent the poll
+  bytes message_secret = 5;       // 32 bytes, from SendPollResult or the payload
+  // Chosen option names, spelled exactly as the poll offered them (a vote
+  // references options by SHA-256 of the name). Empty retracts the vote, and
+  // a second vote replaces the first rather than adding to it.
+  repeated string options = 6;
+}
+
+// One vote as it arrived, straight out of a PollUpdateMessage.
+message PollVote {
+  // MUST be in the SAME namespace as poll_creator_jid: both `@lid`, or both a
+  // phone jid. The key is derived from the creator/voter PAIR, and the library
+  // only ever swaps the two together, so a mixed pair is never tried in the
+  // combination the sender actually used -- it just fails to open. A vote
+  // arrives addressed by whichever namespace the stanza carried, which need
+  // not be the poll's; `InboundMessage.sender_alt` is the other form of the
+  // same sender, relayed for exactly this. Measured on 2026-09-02 against the
+  // live accounts: a PN-created poll voted from a `@lid` sender gives
+  // undecryptable=3 of 3 when the sender is passed verbatim, and a clean tally
+  // when the phone jid is passed instead.
+  string voter_jid = 1;
+  bytes enc_payload = 2;
+  bytes enc_iv = 3;
+}
+
+message AggregatePollVotesRequest {
+  AccountRef account = 1;
+  string poll_id = 2;
+  string poll_creator_jid = 3;
+  bytes message_secret = 4;
+  repeated string options = 5;    // in the order the poll offered them
+  // The edge holds these, not the core. ORDER IS THE CONTRACT: oldest first.
+  // Last vote wins, so a shuffled list tallies a stale answer. The core does
+  // not sort (it has no clock of its own to sort by, and picking one would be
+  // policy) -- it relays the order it was given.
+  repeated PollVote votes = 6;
+}
+
+message PollOptionResult {
+  string option = 1;
+  // Deduped by the voter's canonical identity, so someone who voted as a phone
+  // number and re-voted as a LID counts once. The count is `len(voters)`; a
+  // separate field could only ever disagree with it.
+  repeated string voters = 2;
+}
+
+message PollTally {
+  repeated PollOptionResult results = 1;
+  // How many of the supplied votes could not be opened at all: a wrong
+  // message_secret, or a voter in a namespace with no known counterpart. The
+  // library drops those from the tally with nothing but a log line, which from
+  // the edge is indistinguishable from "nobody voted". Same reasoning as the
+  // two offline-sync counts: a silent loss has to be countable.
+  uint32 undecryptable = 2;
+}
+
 // --- Status / stories ---
 
 message PostStatusTextRequest {
@@ -238,6 +315,12 @@ service MessagingService {
   // Rich content sends.
   rpc SendContact(SendContactRequest) returns (SendResult);
   rpc SendPoll(SendPollRequest) returns (SendPollResult);
+  // Vote in a poll (this account's own vote), and tally votes the edge holds.
+  // AggregatePollVotes reads nothing but its request plus the account's
+  // identity store, and sends no stanza -- but it still needs the account
+  // CONNECTED, because that store is reached through the live client.
+  rpc SendPollVote(SendPollVoteRequest) returns (SendResult);
+  rpc AggregatePollVotes(AggregatePollVotesRequest) returns (PollTally);
 
   // Status / stories.
   rpc PostStatusText(PostStatusTextRequest) returns (SendResult);
