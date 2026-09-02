@@ -181,8 +181,8 @@ message ServerAckEvent {
 // back up, from the `offline_preview` node. `total` is authoritative; the
 // per-kind counts need not sum to it.
 //
-// Issue #11: this is the first half of the only signal a consumer has that a
-// reconnect owes it a backlog. Compare `total` here with `count` on the
+// Issue #11: this is the first half of the signal that a reconnect owes this
+// account a backlog. Compare `total` here with `count` on the
 // OfflineSyncCompleted that should follow.
 message OfflineSyncPreview {
   int32 total = 1;
@@ -196,11 +196,29 @@ message OfflineSyncPreview {
 
 // How many the drain actually delivered.
 //
-// Issue #11: this is dispatched only when the drain finishes. A reconnect in
-// the middle of a resume means it never arrives, so a preview with no
-// completion after it is what an abandoned backlog looks like. The core does
-// not put a deadline on that wait: how long a missing completion is allowed to
-// stay missing is edge policy, same as a missing ack.
+// Issue #11: this is dispatched only when the drain finishes, so a reconnect
+// mid-resume means it never arrives and the consumer sees a preview with
+// nothing after it.
+//
+// CORRECTION (2026-09-02, upstream oxidezap/whatsapp-rust#1380). This comment
+// used to call that shape "an abandoned backlog". It never was one, on any
+// version. Offline stanzas are only confirmed by the aggregate receipt flush
+// that a COMPLETED drain performs, and teardown drops that buffer, so nothing
+// in an interrupted drain was ever acked and the server redelivers all of it on
+// the next connection. A missing completion means "not caught up yet", never
+// "lost" -- the earlier reading was wrong about the risk, not just the wording.
+//
+// From the release carrying #1380 the library also stops answering with
+// silence: it emits an explicit interrupted signal (total + delivered) when an
+// armed resume's connection ends, and holds WA Web's own 60s stanza-inactivity
+// timer, so a drain that stalls on a LIVE connection finishes itself. That
+// event is not typed here yet -- until this project pins such a release it
+// would relay as a RawEvent, and typing a variant the pinned library cannot
+// emit would be a contract that lies.
+//
+// What did not change: the core puts no deadline on the wait. How long a
+// missing completion may stay missing is edge policy, same as a missing ack.
+// Upstream agrees on where that timer belongs, which is inside the client.
 message OfflineSyncCompleted {
   int32 count = 1;
 }
