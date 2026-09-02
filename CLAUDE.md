@@ -86,6 +86,44 @@ The core also exposes a soft `max_connected_accounts` budget (fd self-protection
 **Litmus test before adding anything to the core:** "Could the edge do this with the
 primitives the core already exposes?" If yes, it does not belong in the core.
 
+## Diagnosing a library bug (the first fit is a hypothesis, not a cause)
+An explanation that accounts for the log is where the investigation starts, not where
+it ends. Of the three bugs this project has filed upstream, two came back corrected —
+one in its cause, one in its proposed remedy — by the same mistake both times: reading
+until the symptom was explained, then stopping.
+
+**Two searches before you write the report, the workaround, or the mitigation:**
+1. **Does the abstraction already exist?** Grep the crate for the concept before
+   concluding the fix would be invasive. The answer is often in the file the evidence
+   came from.
+2. **Read the path you are accusing, end to end.** A mechanism that *could* produce the
+   symptom is not the mechanism that *did*. Confirm the failure mode in the code rather
+   than inferring it backwards from the log.
+
+Then **say which half is which**: what you verified in the code, and what you inferred
+from behaviour. A report that marks its inferred half survives being wrong; one that
+states both as fact has to be retracted.
+
+**Worked example (upstream [#1376](https://github.com/oxidezap/whatsapp-rust/issues/1376),
+2026-08).** Reported the keepalive watchdog measuring in-process elapsed time on the wall
+clock — correct — and argued a local fix might be invasive. It was not: `wacore::time`
+already shipped `MonotonicProvider`, `Instant` and `set_monotonic_provider`, in the same
+file the `now_millis` evidence was quoted from, with the module doc describing this exact
+failure mode in its opening lines. It was also three bugs, not one; the two unreported
+ones were worse for this relay than the reported one.
+
+**Worked example (upstream [#1377](https://github.com/oxidezap/whatsapp-rust/issues/1377)
+→ [#1380](https://github.com/oxidezap/whatsapp-rust/pull/1380), 2026-09).** Reported an
+offline resume as *abandoned*, needing a re-arm. Re-arming already worked:
+`OfflineBatchCoordinator::reset()` ran in both connection-state resets and `is_armed_for`
+is generation-gated. The real gap was that the old resume never announced its end. Worse,
+the assumed RISK never existed — an interrupted drain acks nothing, so the server
+redelivers all of it — and a mitigation was recommended to the edge on the strength of
+that wrong model.
+
+**The tell in both:** the fix was proposed before the accused code had been read whole.
+Ten more minutes of grep would have caught each one.
+
 ## Stack
 - `tonic` for the gRPC server and client. This is the only RPC layer; never hand-roll
   framing over the socket.
