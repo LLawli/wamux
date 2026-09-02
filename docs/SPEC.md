@@ -32,9 +32,14 @@ src/
   `replay_from_ring` for ring replay. `EventEnvelope` oneof covers message, receipt,
   undecryptable, connection, pairing, presence, group, push_name, contact, `raw`.
 - **MessagingService**: SendText, SendMedia (client stream), SendReaction,
-  EditMessage, DeleteMessage, SendPresence, MarkRead.
+  EditMessage, DeleteMessage, FetchMessageHistory, SendPresence, MarkRead,
+  MarkUnread; chat actions (StarMessage, ArchiveChat, PinChat, MuteChat,
+  DeleteChat); rich sends (SendContact, SendPoll); polls (SendPollVote,
+  AggregatePollVotes -- the tally sends no stanza, it opens votes the edge
+  supplies, issue #13); status (PostStatusText, PostStatusMedia).
 - **MediaService**: DownloadMedia (server stream: meta frame + byte chunks).
-- **GroupService**, **ContactService**, **AdminService** (GetMetrics).
+- **GroupService**, **NewsletterService**, **ContactService**,
+  **AdminService** (GetMetrics).
 - **Identity (LID<->PN)**: `InboundMessage.sender_alt`/`recipient_alt` relay the
   stanza's other-namespace jids verbatim; `ContactService.ResolveLidPn` (batch,
   live client, cache-aside) and `ContactService.ListLidMappings` (storage-side,

@@ -13,6 +13,7 @@ pub mod media_transfer;
 pub mod messaging;
 pub mod newsletters;
 pub(crate) mod outgoing_context;
+pub mod polls;
 pub mod send_rich;
 pub mod status;
 pub(crate) mod wire_defaults;

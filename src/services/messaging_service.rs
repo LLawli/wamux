@@ -1,5 +1,6 @@
 //! MessagingService: text/reaction/edit/delete/presence/mark-read + media send,
-//! chat actions, contact/poll/PTV sends, and status posting.
+//! chat actions, contact/poll/PTV sends, poll voting/tallying, and status
+//! posting.
 
 use std::sync::Arc;
 
@@ -8,7 +9,7 @@ use tonic::{Request, Response, Status, Streaming};
 use super::{client_of, require_field, require_jid};
 use crate::domain::jid_parse::parse_jid;
 use crate::domain::messaging::{self, send_result_to_proto};
-use crate::domain::{chat_actions, media_transfer, send_rich, status};
+use crate::domain::{chat_actions, media_transfer, polls, send_rich, status};
 use crate::proto::v1 as pb;
 use crate::proto::v1::messaging_service_server::MessagingService;
 use crate::state::AccountRegistry;
@@ -257,6 +258,32 @@ impl MessagingService for MessagingSvc {
             key: send_result_to_proto(result.message_id, &result.to).key,
             message_secret,
         }))
+    }
+
+    async fn send_poll_vote(
+        &self,
+        request: Request<pb::SendPollVoteRequest>,
+    ) -> Result<Response<pb::SendResult>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let chat = parse_jid(&require_jid(req.chat.clone())?)?;
+        let result = polls::send_vote(&client, chat, &req).await?;
+        Ok(Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+        )))
+    }
+
+    // The one RPC on this service that sends nothing: it opens votes the edge
+    // already holds. It lives here because it needs the account's identity
+    // store, which is what the edge cannot reproduce (issue #13).
+    async fn aggregate_poll_votes(
+        &self,
+        request: Request<pb::AggregatePollVotesRequest>,
+    ) -> Result<Response<pb::PollTally>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        Ok(Response::new(polls::aggregate_votes(&client, &req).await?))
     }
 
     async fn post_status_text(
