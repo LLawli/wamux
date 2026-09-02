@@ -203,10 +203,27 @@ pub async fn send_presence(client: &Client, chat: Jid, state: &str) -> Result<()
     }
 }
 
-pub async fn mark_read(client: &Client, chat: &Jid) -> Result<(), WamuxError> {
+/// Send a read receipt: the stanza that turns the other person's ticks blue.
+///
+/// Issue #20: this used to call `chat_actions().mark_chat_as_read()`, whose own
+/// doc line says it is "distinct from `readMessages` IQ receipts -- this syncs
+/// state across linked devices". So `MarkRead` marked the chat read on the
+/// account's OWN devices, ignored `message_ids` and `sender`, and never put a
+/// receipt on the wire. It returned `Empty` either way, which is why nothing
+/// downstream noticed. That mutation still exists, under its own name, in
+/// `chat_actions::mark_chat_read`.
+///
+/// Empty `message_ids` is not an error: the library returns before building a
+/// stanza, so a caller with nothing to acknowledge costs nothing.
+pub async fn mark_read(
+    client: &Client,
+    chat: &Jid,
+    sender: Option<&Jid>,
+    message_ids: &[String],
+) -> Result<(), WamuxError> {
+    let ids: Vec<&str> = message_ids.iter().map(String::as_str).collect();
     client
-        .chat_actions()
-        .mark_chat_as_read(chat, true, None)
+        .mark_as_read(chat, sender, &ids)
         .await
         .map_err(client_err)
 }

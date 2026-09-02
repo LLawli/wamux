@@ -77,6 +77,21 @@ pub async fn mute_chat(
 /// Mark a chat unread. The symmetric twin of `messaging::mark_read`, kept apart
 /// because flipping MarkRead's proto3-default `read` bool would silently change
 /// the existing RPC's meaning.
+/// Mark the chat read on this account's own linked devices. No receipt leaves
+/// for anybody else -- that is `messaging::mark_read`.
+///
+/// Issue #20: this is the behaviour `MarkRead` used to have under a name that
+/// promised the other thing. It is worth keeping: the official app does both,
+/// and an edge that wants both composes them. The core does not compose them
+/// for it, because bundling would leave no way to ask for one alone.
+pub async fn mark_chat_read(client: &Client, chat: &Jid) -> Result<(), WamuxError> {
+    client
+        .chat_actions()
+        .mark_chat_as_read(chat, true, None)
+        .await
+        .map_err(client_err)
+}
+
 pub async fn mark_unread(client: &Client, chat: &Jid) -> Result<(), WamuxError> {
     client
         .chat_actions()

@@ -115,10 +115,19 @@ message SendPresenceRequest {
   string state = 3; // available|unavailable|composing|recording|paused
 }
 
+// Used by MarkRead (the receipt), MarkChatRead and MarkUnread (the app-state
+// mutations). The last two read only `account` and `chat` -- a chat's read
+// state is per chat, not per message.
 message MarkReadRequest {
   AccountRef account = 1;
   Jid chat = 2;
+  // The messages being acknowledged. Empty acknowledges nothing and the
+  // library returns without emitting a stanza, so a caller with nothing to say
+  // costs nothing.
   repeated string message_ids = 3;
+  // The message's author. Required for a group read: a receipt names whose
+  // messages are being acknowledged. Absent in a DM, where the chat is the
+  // author.
   Jid sender = 4;
 }
 
@@ -297,10 +306,31 @@ service MessagingService {
   rpc DeleteMessage(DeleteMessageRequest) returns (SendResult);
   rpc FetchMessageHistory(FetchMessageHistoryRequest) returns (FetchMessageHistoryResponse);
   rpc SendPresence(SendPresenceRequest) returns (Empty);
+  // Send a read receipt for `message_ids` from `sender`: the thing that turns
+  // the other person's ticks blue. BREAKING as of issue #20 -- this used to be
+  // the app-state mutation below, ignoring both of those fields, so it never
+  // put a receipt on the wire and nothing said so.
+  //
+  // One WhatsApp operation per RPC. The official app does this AND syncs its
+  // own devices, but composing the two is the edge's call: bundling them here
+  // would leave no way to ask for one without the other.
+  //
+  // Two things the core cannot tell you, both upstream's to expose. WhatsApp
+  // downgrades the receipt to `read-self` when the account has read receipts
+  // switched off in its privacy settings, and only for a private DM -- a group
+  // read goes out as `read` regardless. The library reads that flag off a
+  // device snapshot it does not expose (`persistence_manager` is `pub(crate)`
+  // and there is no getter), so the core cannot report which of the two it
+  // sent. Silence here is not evidence of either.
   rpc MarkRead(MarkReadRequest) returns (Empty);
 
-  // Mark a chat unread. Separate from MarkRead (which keeps its proto3 default
-  // read=true): flipping that bool would be a silent breaking change.
+  // Mark the chat read on THIS account's own linked devices. No receipt, and
+  // nobody else sees it. This is what MarkRead did before #20; it kept the name
+  // and lost the behaviour, so it gets a name of its own here.
+  rpc MarkChatRead(MarkReadRequest) returns (Empty);
+
+  // Mark a chat unread. Separate from MarkChatRead (which keeps its proto3
+  // default read=true): flipping that bool would be a silent breaking change.
   rpc MarkUnread(MarkReadRequest) returns (Empty);
 
   // Chat actions (synced across the account's linked devices).
