@@ -38,11 +38,28 @@ pub(crate) async fn client_of(
     registry: &AccountRegistry,
     account_ref: Option<&pb::AccountRef>,
 ) -> Result<Arc<Client>, Status> {
+    Ok(account_of(registry, account_ref).await?.1)
+}
+
+/// Resolve to the handle AND its live client. The handle owns the event bus, so
+/// a send that has to publish its own echo (issue #22) needs both.
+pub(crate) async fn account_of(
+    registry: &AccountRegistry,
+    account_ref: Option<&pb::AccountRef>,
+) -> Result<(Arc<AccountHandle>, Arc<Client>), Status> {
     let handle = registry.resolve(account_ref)?;
-    handle
+    let client = handle
         .client()
         .await
-        .ok_or_else(|| Status::failed_precondition("account is not connected"))
+        .ok_or_else(|| Status::failed_precondition("account is not connected"))?;
+    Ok((handle, client))
+}
+
+/// This account's own jid, for the `sender` of a message it sent. Empty when
+/// the client has no phone jid yet -- absent relays as the proto3 default, the
+/// core does not substitute a placeholder.
+pub(crate) fn own_jid(client: &Client) -> String {
+    client.pn().map(|jid| jid.to_string()).unwrap_or_default()
 }
 
 /// Extract a `Jid` string from an optional proto `Jid`, erroring if absent.

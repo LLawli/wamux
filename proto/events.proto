@@ -24,6 +24,48 @@ message SubscribeRequest {
   uint32 replay_from_ring = 3;
 }
 
+// A message in a chat. Almost always one WhatsApp delivered -- but ALSO the
+// echo of a message this relay itself sent, with `key.from_me` true.
+//
+// Issue #22: WhatsApp echoes a send to every device on the account except the
+// one that sent it. The relay holds ONE device session per account and every
+// consumer of the socket shares it, so a send made through MessagingService
+// comes from our own device and nothing comes back -- not live, not on the next
+// history read. Only the consumer that made the call ever learned the message
+// existed, while its receipts reached everyone, naming an id nobody had. So the
+// relay publishes the echo its own shape prevents. It is the only event on this
+// bus that WhatsApp did not produce.
+//
+// It goes to EVERY subscriber, the caller included: excluding the caller would
+// mean the bus knowing who called, and the core has no notion of client
+// identity. Drop the duplicate on `key.id`, which a consumer must handle
+// anyway, since a replayed event has to land on the same row.
+//
+// WHICH SENDS ECHO, and this list is the contract: SendText, SendMedia,
+// SendReaction and SendContact. Those are the four whose `wa::Message` the core
+// builds itself, so the echo carries the real payload rather than a
+// reconstruction.
+//
+// The echo's `raw_message` is that payload AS THE CORE BUILT IT, which is not
+// byte-identical to what the recipient decrypts. The library's send path hoists
+// a `messageContextInfo` (device-list metadata) into the encoded message when
+// the message carries none, so the recipient's copy is larger. Measured
+// 2026-09-03 on one text across both accounts of one relay: 30 bytes here, 69
+// on the receiving side, same message id. Everything a consumer decodes the
+// payload FOR -- text, media descriptors, poll options, sticker metadata -- is
+// identical; only the wire envelope the library adds per recipient is not.
+//
+// `chat` likewise names the conversation from THIS account's side: the echo
+// carries the jid the send was addressed to, while the recipient's own event
+// may name the same conversation by its `@lid` form. Neither is rewritten.
+//
+// WHICH DO NOT: SendPoll, SendPollVote, EditMessage, DeleteMessage,
+// PostStatusText, PostStatusMedia. whatsapp-rust builds those messages inside
+// the library and hands back only a SendResult, so there is nothing to echo and
+// nothing was invented. A partial event would have looked complete while
+// `raw_message` came back empty -- the failure mode this project has paid for
+// twice. The gap closes without a contract change if upstream returns the built
+// message; until then it is written down here rather than discovered.
 message InboundMessage {
   MessageKey key = 1;
   string chat = 2;

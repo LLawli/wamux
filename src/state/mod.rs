@@ -6,6 +6,7 @@ pub mod account_handle;
 pub mod account_registry;
 pub mod event_bridge;
 pub mod event_ring;
+pub mod send_echo;
 
 pub use account_handle::{AccountHandle, RunningBot};
 pub use account_registry::{AccountRegistry, RegistryTuning};

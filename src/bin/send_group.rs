@@ -95,7 +95,9 @@ async fn main() -> anyhow::Result<()> {
                 },
             )
             .await?;
-            println!("✅ sent to group, id={}", result.message_id);
+            // `send_media` also hands back the built message now (issue #22); this
+            // bin only needs the id.
+            println!("✅ sent to group, id={}", result.0.message_id);
         }
         None => {
             println!("group starting with \"{needle}\" NOT found. Groups I'm in:");

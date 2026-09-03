@@ -28,9 +28,16 @@ pub async fn send_text(
     client: &Client,
     to: Jid,
     req: &pb::SendTextRequest,
-) -> Result<SendResult, WamuxError> {
+) -> Result<(SendResult, wa::Message), WamuxError> {
     let message = build_text_message(req)?;
-    client.send_message(to, message).await.map_err(client_err)
+    // The built message rides back out so the service can echo it (issue #22):
+    // WhatsApp never echoes a send back to the device that made it, and the
+    // echo must carry the bytes that actually went, not a reconstruction.
+    let result = client
+        .send_message(to, message.clone())
+        .await
+        .map_err(client_err)?;
+    Ok((result, message))
 }
 
 /// Pure construction of the outgoing text `wa::Message`. Plain `conversation`
@@ -101,7 +108,7 @@ pub async fn send_reaction(
     client: &Client,
     target: &pb::MessageKey,
     emoji: &str,
-) -> Result<SendResult, WamuxError> {
+) -> Result<(SendResult, wa::Message), WamuxError> {
     let to = parse_jid(&target.remote_jid)?;
     let key = proto_key_to_wa(target);
     let message = wa::Message {
@@ -112,7 +119,11 @@ pub async fn send_reaction(
         }),
         ..Default::default()
     };
-    client.send_message(to, message).await.map_err(client_err)
+    let result = client
+        .send_message(to, message.clone())
+        .await
+        .map_err(client_err)?;
+    Ok((result, message))
 }
 
 pub async fn edit_message(
