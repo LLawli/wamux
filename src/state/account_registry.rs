@@ -147,6 +147,12 @@ impl AccountRegistry {
     }
 
     /// Resolve a proto `AccountRef` (uuid or external_ref) to a handle.
+    /// The ring's per-event size cap, so a caller publishing onto the same bus
+    /// (issue #22's send echo) honours the same budget the event bridge does.
+    pub fn replay_max_event_bytes(&self) -> u64 {
+        self.tuning.replay_max_event_bytes
+    }
+
     pub fn resolve(
         &self,
         account_ref: Option<&pb::AccountRef>,

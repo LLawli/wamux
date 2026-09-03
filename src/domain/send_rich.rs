@@ -17,9 +17,13 @@ pub async fn send_contact(
     client: &Client,
     to: Jid,
     req: &pb::SendContactRequest,
-) -> Result<SendResult, WamuxError> {
+) -> Result<(SendResult, wa::Message), WamuxError> {
     let message = build_contact_message(req);
-    client.send_message(to, message).await.map_err(client_err)
+    let result = client
+        .send_message(to, message.clone())
+        .await
+        .map_err(client_err)?;
+    Ok((result, message))
 }
 
 /// Pure construction of the outgoing contact `wa::Message`. Empty display_name

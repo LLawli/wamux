@@ -325,6 +325,18 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         ..Default::default()
     };
 
+    project_content(&mut out, msg, &chat);
+    out
+}
+
+/// Project a `wa::Message`'s content onto an already-addressed `InboundMessage`:
+/// text, mentions, quote, reaction, edit/revoke flags, media.
+///
+/// Split out of `map_message` so an ECHO of a message this relay sent goes
+/// through the exact same projection as one WhatsApp delivered (issue #22).
+/// One code path means an edge cannot end up with two shapes for one concept.
+fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, chat: &str) {
+    let chat = chat.to_string();
     if let Some(text) = &msg.conversation {
         out.text = text.clone();
     } else if let Some(ext) = msg.extended_text_message.as_option() {
@@ -362,7 +374,7 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
     // text or target). Relay-pure: only reprojects what raw_message already
     // carries (E2E triage 2026-06-16).
     if let Some(pm) = effective_protocol_message(msg) {
-        project_protocol_message(&mut out, pm);
+        project_protocol_message(out, pm);
     }
     if is_secret_message_edit(msg) {
         out.is_edit = true;
@@ -372,7 +384,44 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         out.media = Some(descriptor);
         out.caption = caption;
     }
+}
 
+/// Project a message THIS relay just sent into the same `InboundMessage` shape
+/// WhatsApp would have echoed, had it echoed anything (issue #22).
+///
+/// It does not, and that is the whole reason this exists: the relay holds ONE
+/// device session per account and every consumer shares it, so a send made
+/// through the socket comes from our own device and WhatsApp never sends it
+/// back. Without this, each consumer of a shared relay sees only its own
+/// writes, and an edge keeping a local mirror silently diverges the moment a
+/// second consumer sends anything.
+///
+/// This is the only event on the bus that WhatsApp did not produce. It goes
+/// through `project_content`, the same projection an inbound message uses, so
+/// there is exactly one shape per concept.
+///
+/// `raw_message` is the payload as the CORE built it, not a reconstruction —
+/// but not byte-identical to what the recipient decrypts either: the library's
+/// send path hoists a `messageContextInfo` (device-list metadata) into the
+/// encoded message when it carries none. The payload is the same; the wire
+/// envelope the library adds per recipient is not. Pinned in `events.proto`
+/// with the measurement.
+pub fn map_sent(
+    key: pb::MessageKey,
+    chat: &str,
+    sender: &str,
+    timestamp_ms: i64,
+    msg: &wa::Message,
+) -> pb::InboundMessage {
+    let mut out = pb::InboundMessage {
+        key: Some(key),
+        chat: chat.to_string(),
+        sender: sender.to_string(),
+        timestamp: timestamp_ms,
+        raw_message: msg.encode_to_vec(),
+        ..Default::default()
+    };
+    project_content(&mut out, msg, chat);
     out
 }
 

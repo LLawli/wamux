@@ -107,6 +107,81 @@ pub(super) fn mapped_media(msg: wa::Message) -> (pb::MediaDescriptor, String) {
     (media, out.caption)
 }
 
+/// Issue #22: the echo of a message this relay sent must come out of the SAME
+/// projection an inbound message does, or an edge ends up with two shapes for
+/// one concept.
+#[test]
+fn a_sent_text_echoes_with_the_inbound_shape() {
+    let msg = wa::Message {
+        conversation: Some("oi".to_string()),
+        ..Default::default()
+    };
+    let out = crate::domain::event_mapping::map_sent(
+        pb::MessageKey {
+            remote_jid: "5511999999999@s.whatsapp.net".to_string(),
+            id: "3EB0SENT".to_string(),
+            from_me: true,
+            participant: String::new(),
+        },
+        "5511999999999@s.whatsapp.net",
+        "5511888888888@s.whatsapp.net",
+        1_756_800_000_000,
+        &msg,
+    );
+    let key = out.key.expect("key must be set");
+    assert!(key.from_me, "an echo is always from_me");
+    assert_eq!(key.id, "3EB0SENT");
+    assert_eq!(out.chat, "5511999999999@s.whatsapp.net");
+    assert_eq!(out.sender, "5511888888888@s.whatsapp.net");
+    assert_eq!(out.text, "oi");
+    assert_eq!(out.timestamp, 1_756_800_000_000);
+}
+
+/// The bytes that went out, not a reconstruction: an edge that decodes
+/// raw_message (polls, stickers) must get the real payload.
+#[test]
+fn an_echo_carries_the_bytes_that_went_out() {
+    let msg = wa::Message {
+        conversation: Some("oi".to_string()),
+        ..Default::default()
+    };
+    let out = crate::domain::event_mapping::map_sent(
+        pb::MessageKey::default(),
+        "5511999999999@s.whatsapp.net",
+        "5511888888888@s.whatsapp.net",
+        0,
+        &msg,
+    );
+    assert_eq!(out.raw_message, msg.encode_to_vec());
+}
+
+/// Media echoes through the same descriptor extraction, so the edge downloads
+/// its own send exactly like anyone else's.
+#[test]
+fn a_sent_image_echoes_its_descriptor_and_caption() {
+    let msg = wa::Message {
+        image_message: whatsapp_rust::buffa::MessageField::some(wa::message::ImageMessage {
+            mimetype: Some("image/jpeg".to_string()),
+            direct_path: Some("/v/t62.sent".to_string()),
+            file_length: Some(4096),
+            caption: Some("a cat".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let out = crate::domain::event_mapping::map_sent(
+        pb::MessageKey::default(),
+        "5511999999999@s.whatsapp.net",
+        "5511888888888@s.whatsapp.net",
+        0,
+        &msg,
+    );
+    let media = out.media.expect("a sent image must carry its descriptor");
+    assert_eq!(media.media_type, "image");
+    assert_eq!(media.direct_path, "/v/t62.sent");
+    assert_eq!(out.caption, "a cat");
+}
+
 fn mapped_connection(event: &Event) -> pb::ConnectionStateChanged {
     match map_one(event) {
         Some(PbEvent::Connection(c)) => c,
