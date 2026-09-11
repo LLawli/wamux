@@ -136,6 +136,10 @@ message PresenceUpdate {
   // typing in a group, the contact's own jid in a direct chat. Empty on real
   // presence, which is not scoped to a conversation. Without it a group
   // "composing" and a DM "composing" are identical bytes (issue #24).
+  // Relayed verbatim, so in a direct chat it is whichever namespace the stanza
+  // used — measured live on 2026-09-11, that is the sender's `@lid`, equal to
+  // `jid`. The core does not rewrite it onto the phone namespace; resolve it
+  // with ContactService.ResolveLidPn if the edge files chats by number.
   string chat = 5;
 }
 
