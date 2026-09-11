@@ -164,9 +164,11 @@ fn print_event(env: pb::EventEnvelope) {
             println!("[recv] connection state={} {}", c.state, c.detail);
         }
         Some(pb::event_envelope::Event::Presence(p)) => {
+            // `online` is absent on a chat state and `chat` is empty on real
+            // presence: print what each event actually measured (issue #24).
             println!(
-                "[recv] presence jid={} online={} state={}",
-                p.jid, p.online, p.chat_state
+                "[recv] presence jid={} online={:?} state={} chat={}",
+                p.jid, p.online, p.chat_state, p.chat
             );
         }
         Some(other) => println!("[recv] other event: {other:?}"),

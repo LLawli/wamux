@@ -77,17 +77,26 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             reason: format!("{:?}", u.unavailable_type),
         })),
 
+        // The two arms fill disjoint halves of PresenceUpdate: presence answers
+        // online/last_seen, a chat state answers chat_state/chat. Each leaves
+        // the other half empty instead of inventing one (issue #24) — `online`
+        // used to be a hardcoded true on every chat state.
         Event::Presence(p) => one(Pb::Presence(pb::PresenceUpdate {
             jid: p.from.to_string(),
-            online: !p.unavailable,
+            online: Some(!p.unavailable),
             last_seen: p.last_seen.map(|t| t.timestamp()).unwrap_or(0),
             chat_state: String::new(),
+            chat: String::new(),
         })),
+        // `source.chat` is what tells a group "composing" from a DM one; both
+        // carry the same sender, so dropping it left the edge unable to draw the
+        // indicator in the conversation it belongs to (issue #24).
         Event::ChatPresence(c) => one(Pb::Presence(pb::PresenceUpdate {
             jid: c.source.sender.to_string(),
-            online: true,
+            online: None,
             last_seen: 0,
             chat_state: chat_state_label(c.state, c.media).to_string(),
+            chat: c.source.chat.to_string(),
         })),
 
         Event::GroupUpdate(g) => one(Pb::Group(pb::GroupUpdate {
