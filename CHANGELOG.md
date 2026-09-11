@@ -13,6 +13,15 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **`PresenceUpdate.chat`: the conversation a chat state happened in** (issue
+  #24). `Event::ChatPresence` carries a whole `MessageSource`, and only
+  `sender` survived the mapping. Somebody typing in a group therefore arrived
+  as identical bytes to the same person typing in the direct chat, so a client
+  drawing a typing indicator had no choice but to draw it on the DM. Field 5
+  now carries `source.chat` (the group jid in a group, the contact's jid in a
+  direct chat) and is empty on real presence, which is not scoped to a
+  conversation.
+
 - **The LID↔phone mapping is reachable over the contract** (issue #1). A chat
   whose only identity is a `@lid` was unnameable through the socket: the
   library learns the phone side and kept it to itself. Three reads, all pure
@@ -30,6 +39,16 @@ migration note, since the edge that consumes this socket has to follow them.
   invents a pair: an unknown jid answers `found=false`.
 
 ### Changed
+
+- **Breaking (behaviour): `PresenceUpdate.online` is optional and absent on a
+  chat state** (issue #24). The field was a hardcoded `true` on every
+  `composing`/`recording`/`paused`: `Event::ChatPresence` measures no presence,
+  so a consumer lighting an "online" dot off a typing event was lighting it off
+  a literal. It is now `optional bool`, present only on real presence
+  (`Event::Presence`). Migration: read `online` only when it is set; a consumer
+  on the old generated code reads `false` where it used to read `true` on chat
+  states, so gate the indicator on presence events. `last_seen` stays `0` on a
+  chat state, as before.
 
 - **`GetGroupMetadata` now hands back each participant whole** (issue #1). The
   JSON flattened every participant to its jid string, which in a LID-addressed

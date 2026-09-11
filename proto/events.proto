@@ -121,11 +121,22 @@ message ConnectionStateChanged {
   string detail = 2;
 }
 
+// Two library events share this message: real presence (Event::Presence) and a
+// chat state (Event::ChatPresence). They measure different things, so a field
+// only one of them can answer is left absent on the other rather than filled
+// with a literal (issue #24).
 message PresenceUpdate {
   string jid = 1;
-  bool online = 2;
+  // Present only on real presence. A chat state does not measure whether the
+  // contact is online, so it carries no value here — it used to hardcode true.
+  optional bool online = 2;
   int64 last_seen = 3;
   string chat_state = 4;            // composing|recording|paused|""
+  // The conversation a chat state happened in: the group jid when somebody is
+  // typing in a group, the contact's own jid in a direct chat. Empty on real
+  // presence, which is not scoped to a conversation. Without it a group
+  // "composing" and a DM "composing" are identical bytes (issue #24).
+  string chat = 5;
 }
 
 message GroupUpdate {

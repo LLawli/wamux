@@ -480,9 +480,11 @@ fn maps_presence_offline_with_last_seen_seconds() {
     ));
     assert_eq!(p.jid, SENDER_JID);
     // "unavailable" on the wire means offline for the edge: the flag inverts.
-    assert!(!p.online);
+    assert_eq!(p.online, Some(false));
     assert_eq!(p.last_seen, 1_717_932_000);
     assert!(p.chat_state.is_empty());
+    // Real presence is not scoped to a conversation (issue #24).
+    assert!(p.chat.is_empty());
 }
 
 #[test]
@@ -493,7 +495,7 @@ fn maps_presence_online_without_last_seen() {
             .unavailable(false)
             .build(),
     ));
-    assert!(p.online);
+    assert_eq!(p.online, Some(true));
     assert_eq!(p.last_seen, 0);
 }
 
@@ -507,11 +509,46 @@ fn maps_chat_presence_to_composing_state() {
             .build(),
     ));
     assert_eq!(p.jid, SENDER_JID);
-    // A contact that is typing is by definition online.
-    assert!(p.online);
+    // A chat state measures no presence: the field used to hardcode true, which
+    // lit an "online" dot off a literal (issue #24).
+    assert_eq!(p.online, None);
     // Lowercase wire token per the proto contract (composing|recording|paused),
     // round-trippable into SendPresenceRequest.state.
     assert_eq!(p.chat_state, "composing");
+}
+
+// Regression (issue #24): the conversation a chat state happened in used to be
+// dropped, so typing in a group and typing in the DM with the same person
+// arrived as identical bytes and the edge drew the indicator on the DM.
+#[test]
+fn chat_presence_in_a_group_names_the_group_not_only_the_sender() {
+    let p = mapped_presence(&Event::ChatPresence(
+        ChatPresenceUpdate::builder()
+            .source(sample_source())
+            .state(ChatPresence::Composing)
+            .media(ChatPresenceMedia::Text)
+            .build(),
+    ));
+    assert_eq!(p.jid, SENDER_JID);
+    assert_eq!(p.chat, CHAT_JID);
+}
+
+#[test]
+fn chat_presence_in_a_direct_chat_names_the_contact_as_the_conversation() {
+    let source = MessageSource {
+        chat: jid_of(SENDER_JID),
+        sender: jid_of(SENDER_JID),
+        ..Default::default()
+    };
+    let p = mapped_presence(&Event::ChatPresence(
+        ChatPresenceUpdate::builder()
+            .source(source)
+            .state(ChatPresence::Paused)
+            .media(ChatPresenceMedia::Text)
+            .build(),
+    ));
+    assert_eq!(p.chat, SENDER_JID);
+    assert_eq!(p.chat_state, "paused");
 }
 
 // The lib has no Recording variant: it models recording as Composing with
