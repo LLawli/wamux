@@ -45,6 +45,21 @@ message NewsletterReactionCount {
   uint64 count = 2;
 }
 
+// One option's tally in a channel poll, straight off `<votes><vote/></votes>`.
+//
+// The option is named by HASH, never by text: 32 bytes, the SHA-256 of the
+// option name exactly as the poll's payload spells it. Match it against
+// `sha256(option_name)` over the options in the poll's own `raw_message`.
+//
+// This is why a channel poll needs no `message_secret` and why voting in one
+// does not fit `SendPollVote` (issue #26): the vote is by hash, in the clear,
+// and the server does the counting. Measured live 2026-09-21: 4 `<vote>` nodes
+// for a 4-option channel poll, 32 bytes of content each.
+message NewsletterPollVote {
+  bytes option_hash = 1;   // 32 bytes, SHA-256 of the option name
+  uint64 count = 2;
+}
+
 // One row of a channel's history, as `<messages>` returned it (issue #26).
 message NewsletterMessage {
   // The message itself, in the SAME shape the event bus delivers. A channel
@@ -68,12 +83,23 @@ message NewsletterMessage {
   // reaction is addressed by `server_id`, not by the message id. Distinct from
   // `message.key.id`, which is what edit/revoke key on.
   uint64 server_id = 2;
-  // Lowercase wire token the server labelled the row with: text|media|reaction|
-  // revoke|poll_creation|poll_vote|edit. Same convention as ReceiptEvent.type:
-  // a token this core has never seen relays verbatim instead of being folded
-  // into a known one.
+  // Lowercase wire token the server labelled the row with. Measured live:
+  // `text`, `media`, `poll`. Same convention as ReceiptEvent.type — a token
+  // this core has never seen relays verbatim instead of being folded into a
+  // known one, which is the only reason `poll` survived at all (the library's
+  // own enum does not have it and its history parser never sees this node).
   string type = 3;
   repeated NewsletterReactionCount reactions = 4;
+  // The poll tally, on a `type = "poll"` row. Empty everywhere else, and empty
+  // on a poll nobody has voted in.
+  repeated NewsletterPollVote votes = 5;
+  // How many times the channel's subscribers forwarded this row. 0 when the
+  // server omits the node.
+  uint64 forwards_count = 6;
+  // `<meta polltype=...>`: "creation" on the poll itself. Relayed because it is
+  // what tells a `type = "poll"` row apart from whatever else the server may
+  // label `poll`. Empty when there is no `<meta>`.
+  string poll_type = 7;
 }
 
 // Read a page of a channel's history, newest first.
@@ -104,10 +130,11 @@ service NewsletterService {
   // A page of a channel's history (issue #26). Plain IQ, no decryption: a
   // channel is not E2E, so the server hands back the payloads itself.
   //
-  // It is also the only road to a channel's server-side tallies. Those add-ons
-  // never arrive as messages — a channel reaction is a server node, not a
-  // `ReactionMessage`, and in 2244 channel payloads measured on one live store
-  // not one carried a `pollResultSnapshotMessage`. What the server counts, it
-  // only counts here.
+  // It is also the only road to a channel's server-side tallies, and they are
+  // the reason it exists. Those add-ons never arrive as messages — a channel
+  // reaction is a server node, not a `ReactionMessage`, and in 2244 channel
+  // payloads measured on one live store not one carried a
+  // `pollResultSnapshotMessage`. Reaction counts, poll votes and forward counts
+  // are counted by the server and handed over only here.
   rpc GetNewsletterMessages(GetNewsletterMessagesRequest) returns (NewsletterMessageList);
 }
