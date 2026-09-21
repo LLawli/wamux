@@ -21,11 +21,13 @@
 //!      again and every other assertion would still pass;
 //!   3. `count = 0` is refused as InvalidArgument rather than answering an
 //!      empty list, which would read as "this channel has no history";
-//!   4. it names every `poll_creation` row it finds, with its `server_id`. That
-//!      is the key the vote tally hangs off (`WAWebMexFetchNewsletterPollVoters`
-//!      takes `newsletter_id` + `server_id` + `vote_hash`), and this bin is how
-//!      a real one gets found to look at.
+//!   4. on a poll row, it MATCHES the server's vote tally against the poll's own
+//!      options. The server names an option by a 32-byte hash and never by its
+//!      text, so the claim "that hash is `sha256(option_name)`" is the one thing
+//!      that makes a channel poll readable at all — and it is checked here
+//!      against the live server, not asserted from a fixture.
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
@@ -35,6 +37,8 @@ use tower::service_fn;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::newsletter_service_client::NewsletterServiceClient;
+use whatsapp_rust::buffa::Message as _;
+use whatsapp_rust::waproto::whatsapp as wa;
 
 const DEFAULT_REF: &str = "pair-socket";
 
@@ -107,7 +111,7 @@ async fn read_one(
     jid: &str,
     name: &str,
     count: u32,
-) -> anyhow::Result<Vec<(String, u64, String)>> {
+) -> anyhow::Result<Vec<String>> {
     let page = match fetch(newsletters, acct, jid, count, 0).await {
         Ok(page) => page,
         Err(status) => {
@@ -122,35 +126,113 @@ async fn read_one(
     Ok(poll_rows(&page, jid, name))
 }
 
-/// The `poll_creation` rows in one page, as (channel, server_id, label).
-fn poll_rows(page: &[pb::NewsletterMessage], jid: &str, name: &str) -> Vec<(String, u64, String)> {
+/// The poll rows in one page, each already checked against its own options.
+fn poll_rows(page: &[pb::NewsletterMessage], jid: &str, name: &str) -> Vec<String> {
     page.iter()
-        .filter(|row| row.r#type == "poll_creation" || row.r#type == "poll_vote")
-        .map(|row| {
-            let label = format!("{} <{jid}> [{}]", display_name(name, jid), row.r#type);
-            (label, row.server_id, text_of(row))
-        })
+        .filter(|row| row.r#type.contains("poll"))
+        .map(|row| describe_poll(row, jid, name))
         .collect()
 }
 
+/// A poll row, with the tally resolved back to option names.
+///
+/// This is the measurement issue #26 turns on: the server sends `<vote
+/// count="N">` with 32 opaque bytes and never the option's text. If those bytes
+/// are `sha256(option_name)`, a consumer can render the result with nothing but
+/// the poll's own payload — no key, no secret, no extra round trip.
+fn describe_poll(row: &pb::NewsletterMessage, jid: &str, name: &str) -> String {
+    let options = poll_options(row);
+    let mut out = format!(
+        "{} <{jid}> [{}/{}] server_id={} {} option(s), {} vote node(s)",
+        display_name(name, jid),
+        row.r#type,
+        row.poll_type,
+        row.server_id,
+        options.len(),
+        row.votes.len(),
+    );
+    for vote in &row.votes {
+        let named = options
+            .iter()
+            .find(|option| wacore::poll::compute_option_hash(option) == vote.option_hash[..]);
+        match named {
+            Some(option) => {
+                let _ = write!(out, "\n      \u{2705} {:>7} \"{option}\"", vote.count);
+            }
+            None => {
+                let _ = write!(
+                    out,
+                    "\n      \u{274C} {:>7} hash {} matches no option of this poll",
+                    vote.count,
+                    hex(&vote.option_hash),
+                );
+            }
+        }
+    }
+    out
+}
+
+/// The option names in the poll's own payload, across the V3/V4-era fields the
+/// two live polls actually used.
+fn poll_options(row: &pb::NewsletterMessage) -> Vec<String> {
+    let Some(message) = row.message.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(payload) = wa::Message::decode(&mut message.raw_message.as_slice()) else {
+        return Vec::new();
+    };
+    let creation = payload
+        .poll_creation_message_v3
+        .as_option()
+        .or_else(|| payload.poll_creation_message_v2.as_option())
+        .or_else(|| payload.poll_creation_message.as_option());
+    creation
+        .map(|poll| {
+            poll.options
+                .iter()
+                .filter_map(|option| option.option_name.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// One row, in one line: what the projection actually produced.
+///
+/// The reaction tally is clipped. A big channel carries hundreds of distinct
+/// emoji on one post (the WhatsApp channel's top row: 300+), and printing them
+/// all buries every other line this bin exists to show.
 fn describe(row: &pb::NewsletterMessage) -> String {
     let message = row.message.clone().unwrap_or_default();
-    let reactions: Vec<String> = row
-        .reactions
-        .iter()
-        .map(|count| format!("{}x{}", count.code, count.count))
-        .collect();
     format!(
-        "server_id={:<8} type={:<14} from_me={:<5} t={} raw={}B {} {}",
+        "server_id={:<8} type={:<8} from_me={:<5} t={} raw={}B fwd={} {} {}",
         row.server_id,
         row.r#type,
         message.key.as_ref().is_some_and(|key| key.from_me),
         message.timestamp,
         message.raw_message.len(),
-        reactions.join(","),
+        row.forwards_count,
+        top_reactions(row),
         preview(&message),
     )
+}
+
+/// The three most-used reactions, and how many kinds there were in all.
+fn top_reactions(row: &pb::NewsletterMessage) -> String {
+    if row.reactions.is_empty() {
+        return String::new();
+    }
+    let mut sorted: Vec<&pb::NewsletterReactionCount> = row.reactions.iter().collect();
+    sorted.sort_by_key(|count| std::cmp::Reverse(count.count));
+    let top: Vec<String> = sorted
+        .iter()
+        .take(3)
+        .map(|count| format!("{}x{}", count.code, count.count))
+        .collect();
+    format!("[{} of {} emoji]", top.join(","), row.reactions.len())
 }
 
 /// The second page must be strictly older than the first, or the cursor is a
@@ -206,9 +288,9 @@ async fn check_zero_count(
     }
 }
 
-/// Issue #26's driver: a channel poll cannot be voted on, and its tally is not
-/// in any payload. Naming the rows is what lets the next step look at one.
-fn report_polls(polls: &[(String, u64, String)]) {
+/// Issue #26's driver: a channel poll cannot be voted on, and its tally rides
+/// on no payload. Whether it can at least be READ is what this reports.
+fn report_polls(polls: &[String]) {
     if polls.is_empty() {
         println!(
             "\n\u{2139}\u{FE0F}  no poll row in the pages read (they are rare; widen `count`)"
@@ -216,10 +298,9 @@ fn report_polls(polls: &[(String, u64, String)]) {
         return;
     }
     println!("\n{} poll row(s) found:", polls.len());
-    for (label, server_id, text) in polls {
-        println!("   {label} server_id={server_id} {text}");
+    for poll in polls {
+        println!("   {poll}");
     }
-    println!("   server_id is the key WAWebMexFetchNewsletterPollVoters takes.");
 }
 
 async fn fetch(
@@ -247,10 +328,6 @@ fn display_name(name: &str, jid: &str) -> String {
     } else {
         name.to_string()
     }
-}
-
-fn text_of(row: &pb::NewsletterMessage) -> String {
-    preview(&row.message.clone().unwrap_or_default())
 }
 
 /// First line of the projected text, clipped. Empty for a row whose payload
