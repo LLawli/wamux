@@ -4,6 +4,7 @@ package wamux.v1;
 
 import "common.proto";
 import "contacts.proto";
+import "events.proto";
 
 // A channel (`@newsletter`), relayed as the server describes it.
 //
@@ -34,6 +35,64 @@ message NewsletterList {
   repeated Newsletter newsletters = 1;
 }
 
+// How many viewers reacted with one emoji, as the server tallies it.
+//
+// This is a COUNT, not a list: a channel has no participant roster the viewer
+// can see, so nobody's identity crosses here. It is also the only tally the
+// server volunteers per message.
+message NewsletterReactionCount {
+  string code = 1;   // the emoji, spelled as the server sent it
+  uint64 count = 2;
+}
+
+// One row of a channel's history, as `<messages>` returned it (issue #26).
+message NewsletterMessage {
+  // The message itself, in the SAME shape the event bus delivers. A channel
+  // message is plaintext on the wire (no Signal E2E), so the `<plaintext>`
+  // bytes decode to the very `wa.Message` a live event carries, and it goes
+  // through the same projection: one concept, one shape, one decoder on the
+  // edge.
+  //
+  // What a history row cannot fill stays at the proto3 default rather than
+  // gaining a placeholder: the node carries no sender, no push_name and no
+  // alt-namespace jids. `key.from_me` is the ONLY sender information it has
+  // (the server's `is_sender`), and `key.remote_jid`/`chat` are the jid the
+  // caller asked for, not something read off the node.
+  //
+  // `timestamp` is milliseconds, like every other timestamp in this contract.
+  // The stanza counts in seconds; the conversion happens in the core so the
+  // edge never has two units for one field.
+  InboundMessage message = 1;
+  // Server-assigned and monotonic. This is the pagination cursor (`before`),
+  // and the key the server's own side-channel add-ons hang off — a channel
+  // reaction is addressed by `server_id`, not by the message id. Distinct from
+  // `message.key.id`, which is what edit/revoke key on.
+  uint64 server_id = 2;
+  // Lowercase wire token the server labelled the row with: text|media|reaction|
+  // revoke|poll_creation|poll_vote|edit. Same convention as ReceiptEvent.type:
+  // a token this core has never seen relays verbatim instead of being folded
+  // into a known one.
+  string type = 3;
+  repeated NewsletterReactionCount reactions = 4;
+}
+
+// Read a page of a channel's history, newest first.
+message GetNewsletterMessagesRequest {
+  AccountRef account = 1;
+  string jid = 2;
+  // How many rows to ask for. Required: 0 would ask the server for nothing,
+  // and picking a default here would be the core choosing a page size for the
+  // edge. InvalidArgument when unset.
+  uint32 count = 3;
+  // Paginate backwards: a `server_id` from an earlier answer, whereupon the
+  // reply holds only rows older than it. 0 starts at the newest.
+  uint64 before = 4;
+}
+
+message NewsletterMessageList {
+  repeated NewsletterMessage messages = 1;
+}
+
 service NewsletterService {
   // Every channel this account follows. The startup call: it lets a consumer
   // name every newsletter row it already holds in one round trip, the way
@@ -42,4 +101,13 @@ service NewsletterService {
   // One channel, for a jid that turned up in a message before the list was
   // fetched.
   rpc GetNewsletterMetadata(JidRequest) returns (Newsletter);
+  // A page of a channel's history (issue #26). Plain IQ, no decryption: a
+  // channel is not E2E, so the server hands back the payloads itself.
+  //
+  // It is also the only road to a channel's server-side tallies. Those add-ons
+  // never arrive as messages — a channel reaction is a server node, not a
+  // `ReactionMessage`, and in 2244 channel payloads measured on one live store
+  // not one carried a `pollResultSnapshotMessage`. What the server counts, it
+  // only counts here.
+  rpc GetNewsletterMessages(GetNewsletterMessagesRequest) returns (NewsletterMessageList);
 }

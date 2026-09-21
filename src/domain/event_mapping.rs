@@ -344,7 +344,12 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
 /// Split out of `map_message` so an ECHO of a message this relay sent goes
 /// through the exact same projection as one WhatsApp delivered (issue #22).
 /// One code path means an edge cannot end up with two shapes for one concept.
-fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, chat: &str) {
+///
+/// `domain::newsletters` reuses it for a channel-history row (issue #26): a
+/// channel is not E2E, so the `<plaintext>` bytes decode to the very
+/// `wa::Message` a live event carries, and the same message must not project
+/// two ways depending on which call returned it.
+pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, chat: &str) {
     let chat = chat.to_string();
     if let Some(text) = &msg.conversation {
         out.text = text.clone();

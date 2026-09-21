@@ -1,7 +1,8 @@
 //! NewsletterService: read a channel's metadata, which is the only place its
-//! name exists (issue #6). Read-only on purpose: the library also offers
-//! create/join/leave/update, but nothing needed those yet and the core does not
-//! grow surface ahead of a caller.
+//! name exists (issue #6), and a page of its history, which is the only place
+//! the server's per-message tallies exist (issue #26). Read-only on purpose:
+//! the library also offers create/join/leave/update, but nothing needed those
+//! yet and the core does not grow surface ahead of a caller.
 
 use std::sync::Arc;
 
@@ -42,6 +43,17 @@ impl NewsletterService for NewsletterSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
             newsletters::get_metadata(&client, &req.jid).await?,
+        ))
+    }
+
+    async fn get_newsletter_messages(
+        &self,
+        request: Request<pb::GetNewsletterMessagesRequest>,
+    ) -> Result<Response<pb::NewsletterMessageList>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        Ok(Response::new(
+            newsletters::get_messages(&client, &req).await?,
         ))
     }
 }
