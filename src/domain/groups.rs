@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use wacore::iq::contacts::SetProfilePictureSpec;
 use wacore::iq::groups::{
-    GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupSubject,
-    ParticipantChangeResponse,
+    GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupParticipatingIq,
+    GroupSubject, ParticipantChangeResponse,
 };
 use whatsapp_rust::Client;
 use whatsapp_rust::features::{GroupParticipant, MembershipRequest, PreviousDescription};
@@ -51,7 +51,11 @@ fn metadata_json(md: &whatsapp_rust::GroupMetadata) -> Vec<u8> {
         md.participants.iter().map(participant_json).collect();
     serde_json::to_vec(&serde_json::json!({
         "id": md.id.to_string(),
-        "subject": md.subject,
+        // main made `subject` an `Option<String>` (upstream #1513, #30): the
+        // protocol may omit it. 0.7.0 parsed an absent subject as "", and the
+        // wire contract already promises that string, so absence keeps
+        // projecting as "" rather than a `null` the edge never asked for.
+        "subject": md.subject.clone().unwrap_or_default(),
         "description": md.description,
         // Which namespace the roster is addressed in, so the edge knows whether
         // `jid` is a `@lid` before it tries to name anyone.
@@ -204,11 +208,19 @@ pub async fn get_metadata(
     group: &str,
 ) -> Result<pb::GroupMetadataResponse, WamuxError> {
     let jid = parse_jid(group)?;
-    let metadata = client
+    // main split 0.7.0's `get_metadata` into `fetch_metadata` (protocol data
+    // only) plus an opt-in `resolve_participant_addresses` backfill (#30). The
+    // roster is one of the few places the server volunteers a username/PN pair
+    // at all (issue #1), so GetGroupMetadata keeps asking for both.
+    let mut metadata = client
         .groups()
-        .get_metadata(&jid)
+        .fetch_metadata(&jid)
         .await
         .map_err(client_err)?;
+    client
+        .groups()
+        .resolve_participant_addresses(&mut metadata)
+        .await;
     Ok(pb::GroupMetadataResponse {
         metadata: metadata_json(&metadata),
     })
@@ -253,31 +265,50 @@ pub async fn leave(client: &Client, group: &str) -> Result<(), WamuxError> {
 }
 
 /// List the groups the account participates in (summary + projected metadata).
-/// `get_participating` returns a non-Send future, so it runs isolated.
+///
+/// main renamed `get_participating` to `list_participating`, but the new one
+/// answers slim `GroupOverview`s with no participants and no description
+/// (#30): using it here would degrade ListGroups. So this issues the full
+/// `GroupParticipatingIq` itself, converts each group with `GroupMetadata::
+/// from`, and backfills phone numbers the same way `get_metadata` does (issue
+/// #1) -- 0.7.0's `get_participating` did that backfill internally; main only
+/// does it when asked, and dropping it would lose identities the edge relies
+/// on. The future this builds is still non-Send, so it runs isolated.
 pub async fn list_participating(client: Arc<Client>) -> Result<Vec<pb::GroupSummary>, WamuxError> {
     let groups = crate::domain::isolate::run_isolated(move || async move {
-        client.groups().get_participating().await
+        let response = client.execute(GroupParticipatingIq::new()).await?;
+        let mut metadatas: Vec<whatsapp_rust::GroupMetadata> = response
+            .groups
+            .into_iter()
+            .map(whatsapp_rust::GroupMetadata::from)
+            .collect();
+        for metadata in &mut metadatas {
+            client
+                .groups()
+                .resolve_participant_addresses(metadata)
+                .await;
+        }
+        Ok::<_, anyhow::Error>(metadatas)
     })
     .await?;
-    let mut summaries: Vec<pb::GroupSummary> = groups
-        .values()
-        .map(|m| pb::GroupSummary {
-            jid: m.id.to_string(),
-            subject: m.subject.clone(),
-            participants: m.participants.len() as u32,
-            metadata: metadata_json(m),
-        })
-        .collect();
-    summaries.sort_by(|a, b| a.subject.cmp(&b.subject));
-    Ok(summaries)
+    Ok(group_summaries(groups))
 }
 
 /// ListGroups' projection: one summary per group, sorted by subject, each
 /// carrying the full `metadata_json` (roster included). An absent subject is
 /// "", as 0.7.0 parsed it. Pure, so the contract is testable without a client.
 pub fn group_summaries(groups: Vec<whatsapp_rust::GroupMetadata>) -> Vec<pb::GroupSummary> {
-    let _ = groups;
-    todo!("#30: the projection list_participating does today, over Option subjects")
+    let mut summaries: Vec<pb::GroupSummary> = groups
+        .iter()
+        .map(|m| pb::GroupSummary {
+            jid: m.id.to_string(),
+            subject: m.subject.clone().unwrap_or_default(),
+            participants: m.participants.len() as u32,
+            metadata: metadata_json(m),
+        })
+        .collect();
+    summaries.sort_by(|a, b| a.subject.cmp(&b.subject));
+    summaries
 }
 
 pub async fn set_announce(client: &Client, group: &str, announce: bool) -> Result<(), WamuxError> {
