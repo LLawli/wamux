@@ -7,7 +7,6 @@
 //! this file pins the runner and the claim that matters: the account loads.
 #![cfg(feature = "migrate-0-7-main")]
 
-use wacore::store::traits::{AppSyncStore, DeviceStore};
 use wamux::storage::StorageEngine;
 use wamux::storage::blob_migration_0_7_main::MIGRATE_0_7_MAIN;
 use wamux::storage::blob_migration_runner::{apply_sqlite, build_plan_sqlite};
