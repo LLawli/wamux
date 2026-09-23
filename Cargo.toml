@@ -16,28 +16,35 @@ path = "src/lib.rs"
 # whatsapp-rust Clients can connect to a local endpoint. Off by default — never
 # part of the production daemon.
 #
-# DANGER: this feature also turns OFF Noise server-certificate-chain
-# verification for the whole build. The mock signs its chain with zeros
-# (`build_cert_chain_bytes`), and whatsapp-rust 0.7 started verifying the
-# intermediate's XEdDSA signature against WA's root key, which no mock can
-# satisfy. `wacore-noise` ships this escape hatch for exactly that.
+# DANGER: a build with this feature can skip Noise server-certificate-chain
+# verification. The mock signs its chain with zeros (`build_cert_chain_bytes`),
+# and whatsapp-rust verifies the intermediate's XEdDSA signature against WA's
+# root key, which no mock can satisfy. Since upstream #1441/#1444 the skip is a
+# per-client runtime policy (`NoiseCertPolicy::DangerSkipCertChainVerify`), no
+# longer a cargo feature that disabled the check for the whole build.
 #
 # The safety net is in `domain::bot_factory`: a build with this feature refuses
-# to connect to anything but a loopback endpoint, so it cannot reach the real
-# WhatsApp with certificate checking disabled. Keep the two welded together.
+# to connect to anything but a loopback endpoint, and it is the only place that
+# sets the danger policy. Keep the two welded together.
 stress = [
     "dep:tokio-websockets",
     "dep:wacore-noise",
     "dep:wacore-binary",
     "wacore-noise/test-util",
-    "wacore-noise/danger-skip-cert-chain-verify",
 ]
 
-# One-shot 0.6 -> 0.7 blob migration. Links `wacore` 0.6.0 ALONGSIDE 0.7.0 (they
-# are semver-incompatible, so cargo keeps both), which is the only way to read an
-# old blob and write a new one in the same process. Off by default; delete the
-# feature, the bin, and the `wacore06` dependency once every store has migrated.
-migrate-0-7 = ["dep:wacore06"]
+# One-shot 0.6 -> 0.7.0 blob migration. Links `wacore` 0.6.0 ALONGSIDE the
+# released 0.7.0 (`wacore070`), which is the only way to read an old blob and
+# write a new one in the same process. Its output is a 0.7.0 blob, so a 0.6
+# store then runs `migrate-0-7-main` as well. Off by default; delete the feature,
+# the bin, and the `wacore06` dependency once every store has migrated.
+migrate-0-7 = ["dep:wacore06", "dep:wacore070"]
+
+# One-shot 0.7.0 (crates.io release) -> git main blob migration (#30). Same
+# shape as `migrate-0-7`: the released `wacore` 0.7.0 is linked next to the git
+# one (different sources, so cargo keeps both) to read the old positional
+# bincode and write the new one. Delete with #31, or once every store migrated.
+migrate-0-7-main = ["dep:wacore070"]
 
 [[bin]]
 name = "wamux"
@@ -54,6 +61,12 @@ required-features = ["stress"]
 name = "migrate_0_7"
 path = "src/bin/migrate_0_7.rs"
 required-features = ["migrate-0-7"]
+
+# One-shot store migration; see the `migrate-0-7-main` feature above.
+[[bin]]
+name = "migrate_0_7_main"
+path = "src/bin/migrate_0_7_main.rs"
+required-features = ["migrate-0-7-main"]
 
 [dependencies]
 # gRPC / protobuf
@@ -115,18 +128,26 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 hyper-util = { version = "0.1", features = ["tokio"] }
 http = "1"
 
-# whatsapp-rust stack (Postgres backend => drop the default `sqlite-storage`)
-wacore = "0.7.0"
-whatsapp-rust = { version = "0.7.0", default-features = false, features = [
-    "simd",
+# whatsapp-rust stack (Postgres backend => drop the default `sqlite-storage`).
+#
+# Pinned to git `main` by SHA (#30): crates.io is still on 0.7.0 and the fixes
+# this project waits on (#15) are only on main. EVERY crate of the family moves
+# together: main still declares version 0.7.0, so a crates-io 0.7.0 left behind
+# resolves next to the git one and fails as `expected Jid, found Jid`. Never
+# `[patch.crates-io]`: it would also capture the `wacore06` / `wacore070` pins
+# the migrations need. Always a `rev`, never a branch.
+#
+# `simd` is gone: upstream removed it after measuring what it was worth (#1262).
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", default-features = false, features = [
     "tokio-transport",
     "tokio-runtime",
     "ureq-client",
     "tokio-native",
     "signal",
 ] }
-whatsapp-rust-tokio-transport = "0.7.0"
-whatsapp-rust-ureq-http-client = "0.7.0"
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
 
 # --- stress harness only (optional; enabled by the `stress` feature) ---
 # Server side of the WhatsApp WS endpoint for the mock.
@@ -139,10 +160,14 @@ tokio-websockets = { version = "0.13", optional = true, default-features = false
 # The OLD wacore, pinned exactly. Renamed so both versions can be named in one
 # file. default-features off: the migration only needs the store types, not simd.
 wacore06 = { package = "wacore", version = "=0.6.0", optional = true, default-features = false }
+# The RELEASED 0.7.0, from crates.io, next to the git one: the old side of
+# `migrate-0-7-main`, and the new side of `migrate-0-7`. Different sources, so
+# cargo keeps both. Renamed so both can be named in one file.
+wacore070 = { package = "wacore", version = "=0.7.0", optional = true, default-features = false }
 
 # Noise XX primitives + the e2e cert-chain test fixture (server mirror).
-wacore-noise = { version = "0.7.0", optional = true, default-features = false }
-wacore-binary = { version = "0.7.0", optional = true, default-features = false }
+wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", optional = true, default-features = false }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", optional = true, default-features = false }
 
 [build-dependencies]
 tonic-build = "0.12"
@@ -160,7 +185,7 @@ sqlx = { version = "0.8", default-features = false, features = [
     "postgres",
     "runtime-tokio",
 ] }
-wacore = "0.7.0"
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 tower = "0.5"
