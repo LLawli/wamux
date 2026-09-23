@@ -24,7 +24,7 @@
 //! 0.7.0 as `wacore070` next to the git one.
 
 use super::blob_migration::{
-    BlobMigration, BlobMigrationSteps, MigrateError, decode_whole, reserde,
+    BlobMigration, BlobMigrationSteps, MigrateError, decode_whole, encode_checked, reserde,
 };
 
 /// The table `blob_migration_runner` drives.
@@ -51,17 +51,7 @@ pub fn migrate_device_blob(bytes: &[u8]) -> Result<BlobMigration, MigrateError> 
         })?;
 
     let new = bridge_device(&old, LABEL)?;
-    let out = bincode::serde::encode_to_vec(&new, bincode::config::standard()).map_err(|e| {
-        MigrateError::RoundTrip {
-            label: LABEL,
-            cause: e.to_string(),
-        }
-    })?;
-    decode_whole::<wacore::store::Device>(&out).map_err(|cause| MigrateError::RoundTrip {
-        label: LABEL,
-        cause,
-    })?;
-    Ok(BlobMigration::Rewritten(out))
+    Ok(BlobMigration::Rewritten(encode_checked(&new, LABEL)?))
 }
 
 /// `app_state_versions.state_data`. One appended bool, but bincode is positional
@@ -93,17 +83,7 @@ pub fn migrate_hash_state_blob(bytes: &[u8]) -> Result<BlobMigration, MigrateErr
         // vouched for.
         bootstrapped: false,
     };
-    let out = bincode::serde::encode_to_vec(&new, bincode::config::standard()).map_err(|e| {
-        MigrateError::RoundTrip {
-            label: LABEL,
-            cause: e.to_string(),
-        }
-    })?;
-    decode_whole::<New>(&out).map_err(|cause| MigrateError::RoundTrip {
-        label: LABEL,
-        cause,
-    })?;
-    Ok(BlobMigration::Rewritten(out))
+    Ok(BlobMigration::Rewritten(encode_checked(&new, LABEL)?))
 }
 
 /// `app_state_keys.key_data` needs no rewrite; checked anyway, because

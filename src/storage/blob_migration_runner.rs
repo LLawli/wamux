@@ -78,36 +78,7 @@ pub async fn build_plan_pg(
     pool: &PgPool,
     steps: &BlobMigrationSteps,
 ) -> Result<MigrationPlan, RunError> {
-    let mut plan = MigrationPlan::default();
-
-    let devices: Vec<(i32, Vec<u8>)> =
-        sqlx::query_as("SELECT device_id, data FROM device ORDER BY device_id")
-            .fetch_all(pool)
-            .await
-            .map_err(|source| db_error("reading device", source))?;
-    plan.devices = plan_blob(devices, steps.device, &mut plan.devices_already_current)?;
-
-    let versions: Vec<(i32, String, Vec<u8>)> = sqlx::query_as(
-        "SELECT device_id, name, state_data FROM app_state_versions ORDER BY device_id, name",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|source| db_error("reading app_state_versions", source))?;
-    plan.versions = plan_versions(
-        versions,
-        steps.hash_state,
-        &mut plan.versions_already_current,
-    )?;
-
-    let keys: Vec<(Vec<u8>,)> = sqlx::query_as("SELECT key_data FROM app_state_keys")
-        .fetch_all(pool)
-        .await
-        .map_err(|source| db_error("reading app_state_keys", source))?;
-    for (blob,) in &keys {
-        (steps.sync_key)(blob)?;
-    }
-    plan.sync_keys_verified = keys.len();
-    Ok(plan)
+    build_plan(pool, steps).await
 }
 
 /// Read all three blob columns of a SQLite store and plan every rewrite.
@@ -115,6 +86,24 @@ pub async fn build_plan_sqlite(
     pool: &SqlitePool,
     steps: &BlobMigrationSteps,
 ) -> Result<MigrationPlan, RunError> {
+    build_plan(pool, steps).await
+}
+
+/// The plan, for either engine: the three SELECTs carry no placeholders, so
+/// the same SQL runs on both and only the pool type differs. The bounds are
+/// what `sqlx::query_as(..).fetch_all(pool)` needs to be written once.
+async fn build_plan<DB>(
+    pool: &sqlx::Pool<DB>,
+    steps: &BlobMigrationSteps,
+) -> Result<MigrationPlan, RunError>
+where
+    DB: sqlx::Database,
+    for<'c> &'c mut DB::Connection: sqlx::Executor<'c, Database = DB>,
+    for<'q> DB::Arguments<'q>: sqlx::IntoArguments<'q, DB>,
+    for<'r> (i32, Vec<u8>): sqlx::FromRow<'r, DB::Row>,
+    for<'r> (i32, String, Vec<u8>): sqlx::FromRow<'r, DB::Row>,
+    for<'r> (Vec<u8>,): sqlx::FromRow<'r, DB::Row>,
+{
     let mut plan = MigrationPlan::default();
 
     let devices: Vec<(i32, Vec<u8>)> =
@@ -244,13 +233,14 @@ struct Options {
     database_url: Option<String>,
 }
 
-fn parse_args(bin_name: &str) -> anyhow::Result<Options> {
+fn parse_args(migration: &str) -> anyhow::Result<Options> {
     let mut options = Options {
         apply: false,
         force: false,
         database_url: None,
     };
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args();
+    let program = args.next().unwrap_or_else(|| "migrate".to_string());
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--apply" => options.apply = true,
@@ -260,9 +250,9 @@ fn parse_args(bin_name: &str) -> anyhow::Result<Options> {
             }
             "-h" | "--help" => {
                 println!(
-                    "usage: {bin_name} [--apply] [--force] [--database-url URL]\n\
+                    "usage: {program} [--apply] [--force] [--database-url URL]\n\
                      \n\
-                     Converts the whatsapp-rust bincode blobs in place.\n\
+                     Converts the whatsapp-rust bincode blobs in place ({migration}).\n\
                      Without --apply it only reports what it would do.\n\
                      --force skips the running-daemon check (see below).\n"
                 );
