@@ -6,10 +6,21 @@
 //! device-scoped backend type.
 
 pub mod blob_codec;
-/// 0.6 -> 0.7 bincode blob conversion. Compiled only under `migrate-0-7`, which
-/// is what links the second `wacore`; delete both once every store has run it.
+/// Types and helpers every one-shot blob migration shares. See #31 for the plan
+/// that would make these migrations unnecessary.
+#[cfg(any(feature = "migrate-0-7", feature = "migrate-0-7-main"))]
+pub mod blob_migration;
+/// 0.6 -> 0.7.0 bincode blob conversion. Compiled only under `migrate-0-7`,
+/// which is what links the older `wacore`s; delete both once every store has
+/// run it.
 #[cfg(feature = "migrate-0-7")]
 pub mod blob_migration_0_7;
+/// 0.7.0 -> git main bincode blob conversion (#30), under `migrate-0-7-main`.
+#[cfg(feature = "migrate-0-7-main")]
+pub mod blob_migration_0_7_main;
+/// Plan / apply / CLI shared by the migration bins.
+#[cfg(any(feature = "migrate-0-7", feature = "migrate-0-7-main"))]
+pub mod blob_migration_runner;
 pub mod engine;
 pub mod postgres;
 pub mod sqlite;
