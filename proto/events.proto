@@ -42,9 +42,20 @@ message SubscribeRequest {
 // anyway, since a replayed event has to land on the same row.
 //
 // WHICH SENDS ECHO, and this list is the contract: SendText, SendMedia,
-// SendReaction and SendContact. Those are the four whose `wa::Message` the core
-// builds itself, so the echo carries the real payload rather than a
-// reconstruction.
+// SendReaction, SendContact and SendInteractiveReply. Those are the five whose
+// `wa::Message` the core builds itself, so the echo carries the real payload
+// rather than a reconstruction.
+//
+// One caveat on the newest of them (issue #28). An interactive reply echoes
+// with its `raw_message` whole — every id, label and the quoted offer — but
+// `text` comes back EMPTY, because `project_content` has no case for
+// `buttonsResponseMessage` / `listResponseMessage` /
+// `templateButtonReplyMessage` / `interactiveResponseMessage`. This is not
+// specific to the echo: an inbound reply from the other side projects the same
+// way today. A consumer that mirrors a conversation off `text` alone will show
+// a blank row where a tap happened, and must read `raw_message` for these.
+// Written down rather than papered over, because the display text IS in the
+// payload and looking blank is the kind of gap that reads as a delivery bug.
 //
 // The echo's `raw_message` is that payload AS THE CORE BUILT IT, which is not
 // byte-identical to what the recipient decrypts. The library's send path hoists

@@ -9,7 +9,7 @@ use tonic::{Request, Response, Status, Streaming};
 use super::{account_of, client_of, own_jid, require_field, require_jid};
 use crate::domain::jid_parse::{parse_jid, parse_optional_jid};
 use crate::domain::messaging::{self, send_result_to_proto};
-use crate::domain::{chat_actions, media_transfer, polls, send_rich, status};
+use crate::domain::{chat_actions, interactive_reply, media_transfer, polls, send_rich, status};
 use crate::proto::v1 as pb;
 use crate::proto::v1::messaging_service_server::MessagingService;
 use crate::state::AccountRegistry;
@@ -283,6 +283,20 @@ impl MessagingService for MessagingSvc {
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let to = parse_jid(&require_jid(req.to.clone())?)?;
         let (result, message) = send_rich::send_contact(&client, to, &req).await?;
+        let sent = send_result_to_proto(result.message_id, &result.to);
+        self.echo(&handle, &client, &sent, &message).await;
+        Ok(Response::new(sent))
+    }
+
+    async fn send_interactive_reply(
+        &self,
+        request: Request<pb::SendInteractiveReplyRequest>,
+    ) -> Result<Response<pb::SendResult>, Status> {
+        let req = request.into_inner();
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
+        let to = parse_jid(&require_jid(req.to.clone())?)?;
+        let (result, message) =
+            interactive_reply::send_interactive_reply(&client, to, &req).await?;
         let sent = send_result_to_proto(result.message_id, &result.to);
         self.echo(&handle, &client, &sent, &message).await;
         Ok(Response::new(sent))
