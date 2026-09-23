@@ -226,7 +226,9 @@ impl ProtocolStore for PgBackend {
     // --- Device registry ---
 
     async fn update_device_list(&self, record: DeviceListRecord) -> Result<()> {
-        let devices_json = serde_json::to_string(&record.devices)
+        // `record.devices` is `Box<[DeviceInfo]>` on main; a slice serializes
+        // to the same JSON array a `Vec` did, so the stored blob is unchanged.
+        let devices_json = serde_json::to_string(&*record.devices)
             .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
         sqlx::query(
             "INSERT INTO device_registry
@@ -239,7 +241,9 @@ impl ProtocolStore for PgBackend {
                 updated_at = EXCLUDED.updated_at,
                 raw_id = EXCLUDED.raw_id",
         )
-        .bind(&record.user)
+        // sqlx has no `Encode` for `Arc<str>` / `Box<str>`, so both are
+        // deref'd to `&str` at the bind site.
+        .bind(&*record.user)
         .bind(&devices_json)
         .bind(record.timestamp)
         .bind(record.phash.as_deref())
@@ -268,10 +272,10 @@ impl ProtocolStore for PgBackend {
                 let devices: Vec<DeviceInfo> = serde_json::from_str(&devices_json)
                     .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
                 Ok(Some(DeviceListRecord {
-                    user,
-                    devices,
+                    user: user.into(),
+                    devices: devices.into_boxed_slice(),
                     timestamp,
-                    phash,
+                    phash: phash.map(String::into_boxed_str),
                     raw_id: raw_id.map(|r| r as u32),
                 }))
             }
