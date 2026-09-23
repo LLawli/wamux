@@ -6,6 +6,7 @@ pub mod chat_actions;
 pub mod contacts;
 pub mod event_mapping;
 pub mod groups;
+pub mod interactive_reply;
 pub mod isolate;
 pub mod jid_parse;
 pub mod lid_mapping;

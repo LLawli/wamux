@@ -298,6 +298,83 @@ message PostStatusMediaChunk {
   }
 }
 
+// --- Answering a button, a list or a template (issue #28) ---
+//
+// An offer (`buttonsMessage`, `listMessage`, `templateMessage`,
+// `interactiveMessage`) is answered with a TYPED reply that names the choice by
+// id. Sending the button's label through SendText builds a `conversation`,
+// which is a different message: a bot matching on the id never sees the tap.
+//
+// The four shapes are kept apart rather than flattened into one `selected_id`,
+// because they do not carry the same fields: a template reply needs the
+// button's INDEX, a list reply carries the row's title and description, and a
+// native-flow reply carries a JSON blob. One RPC, one oneof, no lossy union.
+//
+// Field presence below is MEASURED, not assumed: 10 replies built by the
+// official client, captured in one live store on 2026-09-23 (5 button, 4 list,
+// 1 template). Where the core sets a constant instead of relaying an input, the
+// sample count is named on the field.
+
+// Answers a `buttonsMessage`.
+message ButtonReply {
+  string selected_id = 1;    // buttonsResponseMessage.selectedButtonId
+  string display_text = 2;   // selectedDisplayText
+}
+
+// Answers a `listMessage`. `title` and `description` are the chosen ROW's, and
+// the official client sends both (4 of 4) -- they are what the conversation
+// shows, while `selected_row_id` is what the bot matches on.
+message ListReply {
+  string selected_row_id = 1;  // singleSelectReply.selectedRowId
+  string title = 2;
+  string description = 3;
+}
+
+// Answers a `templateMessage`.
+message TemplateReply {
+  string selected_id = 1;      // templateButtonReplyMessage.selectedId
+  string display_text = 2;
+  // The button's position, and 0 is the FIRST one, not "unset": the captured
+  // reply carries an explicit 0. Relayed as-is, never folded away by the rule
+  // that maps proto3 zero defaults to an absent waproto field.
+  uint32 selected_index = 3;
+}
+
+// Answers an `interactiveMessage` (native flow).
+//
+// Built from the proto, NOT from a capture: the store held 13 interactive
+// offers and no reply to one, so unlike the three above nothing here is
+// confirmed against traffic the official client produced.
+message NativeFlowReply {
+  string name = 1;         // nativeFlowResponseMessage.name
+  string params_json = 2;  // nativeFlowResponseMessage.paramsJson
+  string body_text = 3;    // interactiveResponseMessage.body.text
+  // 0 leaves the field absent, which is the proto default of 1.
+  int32 version = 4;
+}
+
+message SendInteractiveReplyRequest {
+  AccountRef account = 1;
+  Jid to = 2;
+  // The offer being answered. REQUIRED, and InvalidArgument without it: a reply
+  // that names no offer is not a reply. All 10 captured ones quote the offer,
+  // and that is how the bot ties the tap back to what it asked.
+  QuoteContext quote = 3;
+  // The offer's own payload, verbatim -- the `raw_message` of the event that
+  // delivered it. OPTIONAL, and every captured reply carries it: the official
+  // client embeds the whole offer in `contextInfo.quotedMessage`, not just its
+  // id. The core looks nothing up; it relays this if the edge has it and omits
+  // it if not. Whether a given bot needs it is the bot's business, which is why
+  // this is a field and not a lookup.
+  bytes quoted_message = 4;
+  oneof reply {
+    ButtonReply button = 5;
+    ListReply list = 6;
+    TemplateReply template = 7;
+    NativeFlowReply native_flow = 8;
+  }
+}
+
 service MessagingService {
   rpc SendText(SendTextRequest) returns (SendResult);
   rpc SendMedia(stream SendMediaChunk) returns (SendResult);
@@ -344,6 +421,8 @@ service MessagingService {
 
   // Rich content sends.
   rpc SendContact(SendContactRequest) returns (SendResult);
+  // Answer a button / list / template / native-flow offer by id (issue #28).
+  rpc SendInteractiveReply(SendInteractiveReplyRequest) returns (SendResult);
   rpc SendPoll(SendPollRequest) returns (SendPollResult);
   // Vote in a poll (this account's own vote), and tally votes the edge holds.
   // AggregatePollVotes reads nothing but its request plus the account's
