@@ -8,8 +8,8 @@ use wacore::types::events::{
     DecryptFailMode, DeleteChatUpdate, Disconnected, InboundMessage, LazyHistorySync, LoggedOut,
     MarkChatAsReadUpdate, MessageBatch, MuteUpdate, OfflineSyncCompleted, OfflineSyncPreview,
     PairError, PairSuccess, PairingCode, PairingCodeRefresh, PairingQrCode, PinUpdate,
-    PresenceUpdate, PushNameUpdate, Receipt, ServerAck, StarUpdate, TempBanReason, TemporaryBan,
-    UnavailableType, UndecryptableMessage,
+    PresenceUpdate, Receipt, ServerAck, StarUpdate, TempBanReason, TemporaryBan, UnavailableType,
+    UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -52,8 +52,9 @@ fn sample_source() -> MessageSource {
 fn sample_info() -> MessageInfo {
     MessageInfo {
         source: sample_source(),
-        id: "WAMID-1".to_string(),
-        push_name: "Alice".to_string(),
+        // CompactString on main (#30).
+        id: "WAMID-1".into(),
+        push_name: "Alice".into(),
         // Fixed non-epoch instant: epoch (the Default) would hide a broken
         // timestamp mapping behind a zero.
         timestamp: wacore::time::from_secs(1_717_932_000).unwrap(),
@@ -428,7 +429,7 @@ fn maps_receipt_with_ids_type_and_millis() {
     let event = Event::Receipt(
         Receipt::builder()
             .source(sample_source())
-            .message_ids(vec!["AAA111".to_string(), "BBB222".to_string()])
+            .message_ids(vec!["AAA111".into(), "BBB222".into()])
             .timestamp(wacore::time::from_secs(1_717_932_111).unwrap())
             .r#type(ReceiptType::Read)
             // 0.7 added this: true only for receipts drained from the offline
@@ -565,24 +566,10 @@ fn maps_chat_presence_audio_to_recording_state() {
     assert_eq!(p.chat_state, "recording");
 }
 
-#[test]
-fn maps_push_name_update() {
-    let event = Event::PushNameUpdate(
-        PushNameUpdate::builder()
-            .jid(jid_of(SENDER_JID))
-            .message(Box::new(sample_info()))
-            .old_push_name("Old Alice".to_string())
-            .new_push_name("New Alice".to_string())
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::PushName(p)) => {
-            assert_eq!(p.jid, SENDER_JID);
-            assert_eq!(p.push_name, "New Alice");
-        }
-        other => panic!("expected push name, got {other:?}"),
-    }
-}
+// No `maps_push_name_update`: main retired `Event::PushNameUpdate` (#30,
+// upstream #1310) as a dead event, and 0.7.0 never constructed it either, so
+// the wire never carried one. `pb::PushNameUpdate` stays in the proto so the
+// contract does not break; nothing emits it, exactly as before the bump.
 
 #[test]
 fn maps_history_sync_with_raw_passthrough() {
@@ -646,12 +633,13 @@ fn maps_connected_and_disconnected_states() {
 fn maps_logged_out_with_reason_in_detail() {
     // 0.7 dropped `MainDeviceGone` from `ConnectFailureReason`; the assertion is
     // about the reason reaching `detail` at all, so any real variant serves.
-    let c = mapped_connection(&Event::LoggedOut(
+    // Boxed on main (#30, upstream #1417).
+    let c = mapped_connection(&Event::LoggedOut(Box::new(
         LoggedOut::builder()
             .on_connect(false)
             .reason(ConnectFailureReason::LoggedOut)
             .build(),
-    ));
+    )));
     assert_eq!(c.state, pb::ConnectionState::LoggedOut as i32);
     assert!(c.detail.contains("LoggedOut"), "detail was {:?}", c.detail);
 }
@@ -661,12 +649,12 @@ fn maps_temporary_ban_to_banned_state() {
     // chrono::Duration without a direct chrono dep: subtract two DateTimes.
     let start = wacore::time::from_secs(0).unwrap();
     let end = wacore::time::from_secs(3_600).unwrap();
-    let c = mapped_connection(&Event::TemporaryBan(
+    let c = mapped_connection(&Event::TemporaryBan(Box::new(
         TemporaryBan::builder()
             .code(TempBanReason::BlockedByUsers)
             .expire(end - start)
             .build(),
-    ));
+    )));
     assert_eq!(c.state, pb::ConnectionState::Banned as i32);
     assert!(
         c.detail.contains("BlockedByUsers"),
@@ -960,7 +948,7 @@ fn maps_delete_chat_update_to_typed_app_state() {
 
 #[test]
 fn maps_incoming_call_offer_to_typed_call_event() {
-    let event = Event::IncomingCall(
+    let event = Event::IncomingCall(Box::new(
         IncomingCall::builder()
             .from(jid_of(SENDER_JID))
             .stanza_id("STANZA-CALL-1".to_string())
@@ -978,7 +966,7 @@ fn maps_incoming_call_offer_to_typed_call_event() {
                 group_jid: None,
             })
             .build(),
-    );
+    ));
     match map_one(&event) {
         Some(PbEvent::Call(c)) => {
             assert_eq!(c.from, SENDER_JID);
@@ -995,7 +983,7 @@ fn maps_incoming_call_offer_to_typed_call_event() {
 
 #[test]
 fn maps_incoming_call_terminate_action_token() {
-    let event = Event::IncomingCall(
+    let event = Event::IncomingCall(Box::new(
         IncomingCall::builder()
             .from(jid_of(SENDER_JID))
             .stanza_id("STANZA-CALL-2".to_string())
@@ -1010,7 +998,7 @@ fn maps_incoming_call_terminate_action_token() {
                 audio_duration: None,
             })
             .build(),
-    );
+    ));
     match map_one(&event) {
         Some(PbEvent::Call(c)) => {
             assert_eq!(c.call_id, "CALL-ID-2");

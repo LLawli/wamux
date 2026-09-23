@@ -48,6 +48,21 @@ const LIST_QUERY: (&str, &str) = (
 );
 const GET_QUERY: (&str, &str) = ("WAWebMexFetchNewsletterJobQuery", "27456920720571478");
 
+/// The `WAWebMexFetchAllNewslettersMetadataJobQuery` request, every declared
+/// variable present (#1372). Name, doc id and declared variables come from the
+/// library's generated `mex_operations::fetch_all_newsletters_metadata` (#30),
+/// so a doc-id rotation upstream reaches this call without a copy to update.
+pub(crate) fn list_subscribed_request() -> MexRequest<serde_json::Value> {
+    todo!("#30: MexRequest::new with the generated NAME / DOC_ID / VARIABLE_KEYS")
+}
+
+/// The `WAWebMexFetchNewsletterJobQuery` request for one channel, every
+/// declared variable present. Same sourcing as `list_subscribed_request`.
+pub(crate) fn get_metadata_request(jid: &Jid) -> MexRequest<serde_json::Value> {
+    let _ = jid;
+    todo!("#30: MexRequest::new with the generated NAME / DOC_ID / VARIABLE_KEYS")
+}
+
 pub async fn list_subscribed(client: &Client) -> Result<pb::NewsletterList, WamuxError> {
     let response = client
         .mex()
@@ -404,6 +419,9 @@ fn newsletter_to_proto(value: &serde_json::Value) -> pb::Newsletter {
 fn lowercase_token(value: &serde_json::Value) -> String {
     value.as_str().unwrap_or_default().to_lowercase()
 }
+
+#[cfg(test)]
+mod mex_request_tests;
 
 #[cfg(test)]
 mod tests {
