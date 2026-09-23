@@ -8,6 +8,7 @@
 //! library already asks, the core just never relayed the answer.
 
 use serde_json::json;
+use wacore::iq::mex_operations::{fetch_all_newsletters_metadata, fetch_newsletter};
 use wacore::iq::newsletter::NEWSLETTER_XMLNS;
 use wacore::request::InfoQuery;
 use whatsapp_rust::buffa::Message as _;
@@ -42,37 +43,50 @@ use crate::proto::v1 as pb;
 // The moment #1372 lands, delete `list_subscribed`'s and `get_metadata`'s bodies
 // here and call the library again: nothing else in this module changes, because
 // the projection below is what the RPC returns either way.
-const LIST_QUERY: (&str, &str) = (
-    "WAWebMexFetchAllNewslettersMetadataJobQuery",
-    "25399611239711790",
-);
-const GET_QUERY: (&str, &str) = ("WAWebMexFetchNewsletterJobQuery", "27456920720571478");
+//
+// Update (#30): #1372 IS fixed on main -- `list_subscribed`/`get_metadata` no
+// longer send every declared variable unset. Removing this workaround is
+// still not part of #30 (scope is "keep today's behaviour"); it is queued in
+// #15, which has to verify the fix live before this hand-rolled path goes.
 
 /// The `WAWebMexFetchAllNewslettersMetadataJobQuery` request, every declared
 /// variable present (#1372). Name, doc id and declared variables come from the
 /// library's generated `mex_operations::fetch_all_newsletters_metadata` (#30),
 /// so a doc-id rotation upstream reaches this call without a copy to update.
 pub(crate) fn list_subscribed_request() -> MexRequest<serde_json::Value> {
-    todo!("#30: MexRequest::new with the generated NAME / DOC_ID / VARIABLE_KEYS")
+    MexRequest::new(
+        fetch_all_newsletters_metadata::NAME,
+        fetch_all_newsletters_metadata::DOC_ID,
+        fetch_all_newsletters_metadata::VARIABLE_KEYS,
+        // Every declared variable, present. See the note above: absence is
+        // what the server rejects, not the value.
+        json!({ "fetch_status_metadata": true, "fetch_wamo_sub": true }),
+    )
 }
 
 /// The `WAWebMexFetchNewsletterJobQuery` request for one channel, every
 /// declared variable present. Same sourcing as `list_subscribed_request`.
 pub(crate) fn get_metadata_request(jid: &Jid) -> MexRequest<serde_json::Value> {
-    let _ = jid;
-    todo!("#30: MexRequest::new with the generated NAME / DOC_ID / VARIABLE_KEYS")
+    MexRequest::new(
+        fetch_newsletter::NAME,
+        fetch_newsletter::DOC_ID,
+        fetch_newsletter::VARIABLE_KEYS,
+        json!({
+            "input": { "key": jid.to_string(), "type": "JID", "view_role": "GUEST" },
+            "fetch_creation_time": true,
+            "fetch_full_image": true,
+            "fetch_pinned_messages": false,
+            "fetch_status_metadata": false,
+            "fetch_viewer_metadata": true,
+            "fetch_wamo_sub": false,
+        }),
+    )
 }
 
 pub async fn list_subscribed(client: &Client) -> Result<pb::NewsletterList, WamuxError> {
     let response = client
         .mex()
-        .query(MexRequest::new(
-            LIST_QUERY.0,
-            LIST_QUERY.1,
-            // Every declared variable, present. See the note above: absence is
-            // what the server rejects, not the value.
-            json!({ "fetch_status_metadata": true, "fetch_wamo_sub": true }),
-        ))
+        .query(list_subscribed_request())
         .await
         .map_err(client_err)?;
 
@@ -94,19 +108,7 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
     let jid = parse_jid(jid)?;
     let response = client
         .mex()
-        .query(MexRequest::new(
-            GET_QUERY.0,
-            GET_QUERY.1,
-            json!({
-                "input": { "key": jid.to_string(), "type": "JID", "view_role": "GUEST" },
-                "fetch_creation_time": true,
-                "fetch_full_image": true,
-                "fetch_pinned_messages": false,
-                "fetch_status_metadata": false,
-                "fetch_viewer_metadata": true,
-                "fetch_wamo_sub": false,
-            }),
-        ))
+        .query(get_metadata_request(&jid))
         .await
         .map_err(client_err)?;
 
