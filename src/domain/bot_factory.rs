@@ -28,7 +28,10 @@ pub async fn build_bot(
     skip_history: bool,
     ws_url: Option<&str>,
 ) -> anyhow::Result<Bot> {
-    reject_non_loopback_under_stress(ws_url)?;
+    // `noise_cert_policy` folds the loopback guard in: a stress build only
+    // gets `DangerSkipCertChainVerify` after it, so this call is the single
+    // choke point for both "which policy" and "is this endpoint allowed".
+    let cert_policy = noise_cert_policy(ws_url)?;
 
     // `ws_url` overrides the upstream endpoint (stress mock); plaintext ws://
     // needs the Plain connector since the default forces TLS.
@@ -47,6 +50,7 @@ pub async fn build_bot(
         .with_transport_factory(transport)
         .with_http_client(UreqHttpClient::new())
         .with_runtime(TokioRuntime)
+        .with_noise_cert_policy(cert_policy)
         .on_event(move |event, client| {
             let ctx = ctx.clone();
             async move {
@@ -98,13 +102,6 @@ fn reject_non_loopback_under_stress(ws_url: Option<&str>) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// No-op in a normal build: certificate-chain verification is on, so any
-/// endpoint is the operator's call.
-#[cfg(not(feature = "stress"))]
-fn reject_non_loopback_under_stress(_ws_url: Option<&str>) -> anyhow::Result<()> {
-    Ok(())
-}
-
 /// The Noise certificate policy for a client that will connect to `ws_url`.
 ///
 /// Since upstream #1441/#1444 (#30) skipping the chain check is a per-client
@@ -116,9 +113,15 @@ fn reject_non_loopback_under_stress(_ws_url: Option<&str>) -> anyhow::Result<()>
 ///   and refuses anything else exactly as `reject_non_loopback_under_stress`.
 ///
 /// `build_bot` must take the policy from here and hand it to the builder.
+#[cfg(feature = "stress")]
 pub(crate) fn noise_cert_policy(ws_url: Option<&str>) -> anyhow::Result<NoiseCertPolicy> {
-    let _ = ws_url;
-    todo!("#30: Strict unless stress; stress = loopback guard, then the danger policy")
+    reject_non_loopback_under_stress(ws_url)?;
+    Ok(NoiseCertPolicy::DangerSkipCertChainVerify)
+}
+
+#[cfg(not(feature = "stress"))]
+pub(crate) fn noise_cert_policy(_ws_url: Option<&str>) -> anyhow::Result<NoiseCertPolicy> {
+    Ok(NoiseCertPolicy::Strict)
 }
 
 /// Whether a `ws://`/`wss://` URL points at this machine. `localhost` is
