@@ -182,3 +182,128 @@ async fn both_engines_persist_byte_identical_device_blobs() {
 
     assert!(pg.delete_account(pg_account.uuid).await.unwrap());
 }
+
+/// whatsapp-rust main (#30) made the absence of an app-state version part of
+/// the contract: WA Web treats "no record" as "bootstrap from a snapshot", and a
+/// collection that synced and is legitimately empty sits at version 0 WITH a
+/// record. Reading an absent row as `HashState::default()` made every empty
+/// collection re-request a snapshot forever. `delete_version` is how the
+/// library expresses a rebuild, so its no-op and isolation cases matter too.
+async fn app_state_versions_distinguish_absent_from_empty(storage: Arc<dyn StorageEngine>) {
+    use wacore::appstate::hash::HashState;
+    const NAME: &str = "regular_low";
+
+    let a = storage
+        .create_account(Some(&format!("version-a-{}", uuid::Uuid::new_v4())))
+        .await
+        .expect("create account a");
+    let b = storage
+        .create_account(Some(&format!("version-b-{}", uuid::Uuid::new_v4())))
+        .await
+        .expect("create account b");
+    let ba = storage.device_backend(a.device_id);
+    let bb = storage.device_backend(b.device_id);
+
+    assert!(
+        ba.get_version(NAME).await.unwrap().is_none(),
+        "a collection that never synced must read as None, not as a default"
+    );
+    ba.delete_version(NAME)
+        .await
+        .expect("deleting a version that has no row is a no-op, not an error");
+
+    // Version 0 with a record is the legitimately-empty collection: it must
+    // come back as Some, and `bootstrapped` (new on main) must survive.
+    let empty = HashState {
+        bootstrapped: true,
+        ..Default::default()
+    };
+    ba.set_version(NAME, empty).await.unwrap();
+    bb.set_version(
+        NAME,
+        HashState {
+            version: 7,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let back = ba.get_version(NAME).await.unwrap().expect("row written");
+    assert_eq!(back.version, 0);
+    assert!(back.bootstrapped, "bootstrapped must round-trip");
+
+    ba.delete_version(NAME).await.unwrap();
+    assert!(ba.get_version(NAME).await.unwrap().is_none());
+    assert_eq!(
+        bb.get_version(NAME).await.unwrap().map(|s| s.version),
+        Some(7),
+        "delete_version must only touch its own device"
+    );
+
+    assert!(storage.delete_account(a.uuid).await.unwrap());
+    assert!(storage.delete_account(b.uuid).await.unwrap());
+}
+
+#[tokio::test]
+async fn postgres_app_state_versions_distinguish_absent_from_empty() {
+    app_state_versions_distinguish_absent_from_empty(common::pg_engine(5).await).await;
+}
+
+#[tokio::test]
+async fn sqlite_app_state_versions_distinguish_absent_from_empty() {
+    let (storage, _dir) = common::sqlite_engine().await;
+    app_state_versions_distinguish_absent_from_empty(storage).await;
+}
+
+/// `DeviceListRecord` moved to `Arc<str>` / `Box<[DeviceInfo]>` /
+/// `Option<Box<str>>` and `DeviceInfo` packed its fields behind accessors (#30).
+/// The persisted JSON is meant to be unchanged; this pins what reads back,
+/// including the two cases the packing makes easy to get wrong: a key index of
+/// `Some(0)` versus `None`, and the hosted flag.
+async fn device_registry_round_trips_every_field(storage: Arc<dyn StorageEngine>) {
+    use wacore::store::traits::{DeviceInfo, DeviceListRecord};
+    const USER: &str = "5511999999999";
+
+    let a = storage
+        .create_account(Some(&format!("registry-{}", uuid::Uuid::new_v4())))
+        .await
+        .expect("create account");
+    let ba = storage.device_backend(a.device_id);
+
+    let devices = [
+        DeviceInfo::new(0, None),
+        DeviceInfo::new(3, Some(0)),
+        DeviceInfo::new(7, Some(9)).with_hosting(true),
+    ];
+    ba.update_device_list(DeviceListRecord {
+        user: USER.into(),
+        devices: devices.into(),
+        timestamp: 1_749_400_000,
+        phash: Some("2:abcdef".into()),
+        raw_id: Some(11),
+    })
+    .await
+    .unwrap();
+
+    let back = ba.get_devices(USER).await.unwrap().expect("record written");
+    assert_eq!(&*back.user, USER);
+    assert_eq!(&*back.devices, &devices[..]);
+    assert_eq!(back.devices[1].key_index(), Some(0), "Some(0) is not None");
+    assert!(back.devices[2].is_hosted());
+    assert_eq!(back.timestamp, 1_749_400_000);
+    assert_eq!(back.phash.as_deref(), Some("2:abcdef"));
+    assert_eq!(back.raw_id, Some(11));
+
+    assert!(storage.delete_account(a.uuid).await.unwrap());
+}
+
+#[tokio::test]
+async fn postgres_device_registry_round_trips_every_field() {
+    device_registry_round_trips_every_field(common::pg_engine(5).await).await;
+}
+
+#[tokio::test]
+async fn sqlite_device_registry_round_trips_every_field() {
+    let (storage, _dir) = common::sqlite_engine().await;
+    device_registry_round_trips_every_field(storage).await;
+}

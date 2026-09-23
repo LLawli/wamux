@@ -42,7 +42,12 @@ impl AppSyncStore for PgBackend {
         Ok(())
     }
 
-    async fn get_version(&self, name: &str) -> Result<HashState> {
+    // `main` made absence meaningful: no row means "never synced" (the lib
+    // bootstraps from a snapshot), while a row at version 0 means a collection
+    // that synced and is legitimately empty (the lib asks for patches).
+    // Collapsing both into `HashState::default()` made an empty collection
+    // re-request a snapshot forever, so a missing row now reads as `None`.
+    async fn get_version(&self, name: &str) -> Result<Option<HashState>> {
         let row: Option<Vec<u8>> = sqlx::query_scalar(
             "SELECT state_data FROM app_state_versions WHERE name = $1 AND device_id = $2",
         )
@@ -52,9 +57,22 @@ impl AppSyncStore for PgBackend {
         .await
         .map_err(db)?;
         match row {
-            None => Ok(HashState::default()),
-            Some(bytes) => bincode_decode(&bytes),
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bincode_decode(&bytes)?)),
         }
+    }
+
+    /// Forget a collection's version, returning it to the never-synced state.
+    /// A missing row is a no-op, not an error; only this device's row is
+    /// touched.
+    async fn delete_version(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM app_state_versions WHERE name = $1 AND device_id = $2")
+            .bind(name)
+            .bind(self.device_id)
+            .execute(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(())
     }
 
     async fn set_version(&self, name: &str, state: HashState) -> Result<()> {

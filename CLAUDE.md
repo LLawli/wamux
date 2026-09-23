@@ -17,8 +17,9 @@ account(s)' events to receive (one / all / none = send-only).
 (Postgres), never business message history. See `docs/PRD.md` and `docs/SPEC.md` for
 the product/spec, and `docs/crate-notes/` for the verbatim whatsapp-rust API map.
 
-**Toolchain.** Pinned **nightly** (`rust-toolchain.toml`): `whatsapp-rust` enables the
-`simd` feature (`core::simd`/`portable_simd`) and edition 2024, both nightly-only.
+**Toolchain.** Pinned **nightly** (`rust-toolchain.toml`), aligned with the nightly upstream
+`whatsapp-rust` builds on. The lib itself is pinned to a git `rev` on main, not a crates.io
+release (#30): re-align both on every bump, and move every crate of the family together.
 
 > Convention note: `AGENTS.md` is the canonical cross-tool file; keep this as
 > `CLAUDE.md` and symlink `AGENTS.md -> CLAUDE.md` if you add other agents.

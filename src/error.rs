@@ -178,7 +178,24 @@ mod tests {
             text: text.into(),
             error_type: None,
             backoff: None,
+            response: rejection_stanza(code),
         })
+    }
+
+    /// main (#30) hands the `type="error"` stanza over whole next to the
+    /// summary. Built through marshal + unpack, the path the receive side takes.
+    fn rejection_stanza(code: u16) -> whatsapp_rust::request::RejectionStanza {
+        use whatsapp_rust::wacore_binary::{OwnedNodeRef, marshal::marshal, util::unpack};
+        let node = whatsapp_rust::NodeBuilder::new("iq")
+            .attr("type", "error")
+            .children([whatsapp_rust::NodeBuilder::new("error")
+                .attr("code", code.to_string())
+                .build()])
+            .build();
+        // unwrap: marshalling and re-reading a node built one line above.
+        let packed = marshal(&node).unwrap();
+        let bytes = unpack(&packed).unwrap().into_owned();
+        std::sync::Arc::new(OwnedNodeRef::new(bytes).unwrap()).into()
     }
 
     // Regression for edge-review-insights.md achado #3: WhatsApp auth errors

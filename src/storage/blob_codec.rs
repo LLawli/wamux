@@ -109,6 +109,9 @@ mod blob_format_tests {
             // 0.7 appended this; it is the flag that says the collection's
             // ltHash is beyond repair, so a fresh state starts clean.
             mac_mismatch_fatal: false,
+            // main appended this (#30). Set to the non-default value so a codec
+            // that dropped the trailing field would fail here.
+            bootstrapped: true,
         };
         let blob = bincode_encode(&state).unwrap();
         let restored: HashState = bincode_decode(&blob).unwrap();
@@ -116,6 +119,7 @@ mod blob_format_tests {
         assert_eq!(restored.version, state.version);
         assert_eq!(restored.hash, state.hash);
         assert_eq!(restored.index_value_map, state.index_value_map);
+        assert!(restored.bootstrapped);
     }
 
     #[test]
@@ -131,13 +135,19 @@ mod blob_format_tests {
         let json = serde_json::to_string(&devices).unwrap();
         let restored: Vec<DeviceInfo> = serde_json::from_str(&json).unwrap();
 
+        // main packed the fields behind accessors (#30); the JSON is unchanged.
         assert_eq!(restored.len(), 2);
-        assert_eq!(restored[0].device_id, 0);
-        assert_eq!(restored[0].key_index, None);
-        assert!(!restored[0].is_hosted);
-        assert_eq!(restored[1].device_id, 7);
-        assert_eq!(restored[1].key_index, Some(3));
-        assert!(restored[1].is_hosted);
+        assert_eq!(restored[0].device_id(), 0);
+        assert_eq!(restored[0].key_index(), None);
+        assert!(!restored[0].is_hosted());
+        assert_eq!(restored[1].device_id(), 7);
+        assert_eq!(restored[1].key_index(), Some(3));
+        assert!(restored[1].is_hosted());
+        assert_eq!(
+            json,
+            r#"[{"device_id":0,"key_index":null,"is_hosted":false},{"device_id":7,"key_index":3,"is_hosted":true}]"#,
+            "the stored devices_json shape must not change across the bump"
+        );
     }
 
     #[test]

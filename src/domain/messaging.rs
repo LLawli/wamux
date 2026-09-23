@@ -136,10 +136,16 @@ pub async fn edit_message(
         conversation: Some(new_text.to_string()),
         ..Default::default()
     };
-    client
+    // main's edit_message/revoke_message return a full SendResult (upstream
+    // #1406); 0.7.0 returned only the id. `message_id` is the edit stanza's own
+    // fresh id (the library's doc on the field), the same value 0.7.0 handed
+    // back, so the signature here stays unchanged (#30). Echoing the rest of
+    // SendResult is a new feature, tracked separately (#15).
+    let result = client
         .edit_message(to, target.id.clone(), new)
         .await
-        .map_err(client_err)
+        .map_err(client_err)?;
+    Ok(result.message_id)
 }
 
 pub async fn delete_message(
@@ -149,10 +155,13 @@ pub async fn delete_message(
 ) -> Result<(), WamuxError> {
     let to = parse_jid(&target.remote_jid)?;
     if for_everyone {
+        // See edit_message: SendResult's other fields (message/timestamp) are
+        // not relayed here either, on purpose (#30, echo tracked in #15).
         client
             .revoke_message(to, target.id.clone(), RevokeType::Sender)
             .await
-            .map_err(client_err)
+            .map_err(client_err)?;
+        Ok(())
     } else {
         client
             .chat_actions()

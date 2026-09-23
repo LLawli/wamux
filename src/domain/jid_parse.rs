@@ -46,15 +46,17 @@ mod tests {
         assert_eq!(jid.server, Server::Pn);
     }
 
-    // REGRESSION (core purity, Sprint 1 worked example in CLAUDE.md): the edge
-    // sends `@c.us` to bypass the library's PN->LID upgrade, so the core must
-    // parse it as the legacy server and relay it verbatim -- never rewrite it
-    // to `@s.whatsapp.net` or anything else.
+    // `@c.us` is the other spelling of the phone namespace, and since
+    // whatsapp-rust main (#30, upstream #1371) the LIBRARY parses it as one:
+    // `Server::Legacy` no longer exists. That is the fix for #4 (a legacy
+    // recipient was encrypted for nobody). The core still rewrites nothing
+    // itself; this pins what the library now hands back, so an echo or event
+    // naming a `@c.us` recipient says `@s.whatsapp.net`.
     #[test]
-    fn legacy_c_us_jid_survives_verbatim() {
+    fn legacy_c_us_spelling_parses_as_a_phone_user() {
         let jid = parse_jid("5511999999999@c.us").unwrap();
-        assert_eq!(jid.server, Server::Legacy);
-        assert_eq!(jid.to_string(), "5511999999999@c.us");
+        assert_eq!(jid.server, Server::Pn);
+        assert_eq!(jid.to_string(), "5511999999999@s.whatsapp.net");
     }
 
     #[test]

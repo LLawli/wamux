@@ -50,7 +50,7 @@ state required for encryption, never business message history.
 | Socket trust | No core auth; FS perms 0660 + owning group; SO_PEERCRED for logs |
 | Config | TOML + `WAMUX_` env overrides |
 | Observability | tracing logs + `AdminService.GetMetrics` (Prometheus text) |
-| Toolchain | Pinned nightly + edition 2024 (`simd`) |
+| Toolchain | Pinned nightly + edition 2024, aligned with upstream whatsapp-rust |
 | Name | crate/binary `wamux` |
 | Deploy | systemd and container |
 

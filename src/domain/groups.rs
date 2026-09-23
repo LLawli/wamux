@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use wacore::iq::contacts::SetProfilePictureSpec;
 use wacore::iq::groups::{
-    GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupSubject,
-    ParticipantChangeResponse,
+    GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupParticipatingIq,
+    GroupSubject, ParticipantChangeResponse,
 };
 use whatsapp_rust::Client;
 use whatsapp_rust::features::{GroupParticipant, MembershipRequest, PreviousDescription};
@@ -51,7 +51,11 @@ fn metadata_json(md: &whatsapp_rust::GroupMetadata) -> Vec<u8> {
         md.participants.iter().map(participant_json).collect();
     serde_json::to_vec(&serde_json::json!({
         "id": md.id.to_string(),
-        "subject": md.subject,
+        // main made `subject` an `Option<String>` (upstream #1513, #30): the
+        // protocol may omit it. 0.7.0 parsed an absent subject as "", and the
+        // wire contract already promises that string, so absence keeps
+        // projecting as "" rather than a `null` the edge never asked for.
+        "subject": md.subject.clone().unwrap_or_default(),
         "description": md.description,
         // Which namespace the roster is addressed in, so the edge knows whether
         // `jid` is a `@lid` before it tries to name anyone.
@@ -204,11 +208,19 @@ pub async fn get_metadata(
     group: &str,
 ) -> Result<pb::GroupMetadataResponse, WamuxError> {
     let jid = parse_jid(group)?;
-    let metadata = client
+    // main split 0.7.0's `get_metadata` into `fetch_metadata` (protocol data
+    // only) plus an opt-in `resolve_participant_addresses` backfill (#30). The
+    // roster is one of the few places the server volunteers a username/PN pair
+    // at all (issue #1), so GetGroupMetadata keeps asking for both.
+    let mut metadata = client
         .groups()
-        .get_metadata(&jid)
+        .fetch_metadata(&jid)
         .await
         .map_err(client_err)?;
+    client
+        .groups()
+        .resolve_participant_addresses(&mut metadata)
+        .await;
     Ok(pb::GroupMetadataResponse {
         metadata: metadata_json(&metadata),
     })
@@ -253,23 +265,50 @@ pub async fn leave(client: &Client, group: &str) -> Result<(), WamuxError> {
 }
 
 /// List the groups the account participates in (summary + projected metadata).
-/// `get_participating` returns a non-Send future, so it runs isolated.
+///
+/// main renamed `get_participating` to `list_participating`, but the new one
+/// answers slim `GroupOverview`s with no participants and no description
+/// (#30): using it here would degrade ListGroups. So this issues the full
+/// `GroupParticipatingIq` itself, converts each group with `GroupMetadata::
+/// from`, and backfills phone numbers the same way `get_metadata` does (issue
+/// #1) -- 0.7.0's `get_participating` did that backfill internally; main only
+/// does it when asked, and dropping it would lose identities the edge relies
+/// on. The future this builds is still non-Send, so it runs isolated.
 pub async fn list_participating(client: Arc<Client>) -> Result<Vec<pb::GroupSummary>, WamuxError> {
     let groups = crate::domain::isolate::run_isolated(move || async move {
-        client.groups().get_participating().await
+        let response = client.execute(GroupParticipatingIq::new()).await?;
+        let mut metadatas: Vec<whatsapp_rust::GroupMetadata> = response
+            .groups
+            .into_iter()
+            .map(whatsapp_rust::GroupMetadata::from)
+            .collect();
+        for metadata in &mut metadatas {
+            client
+                .groups()
+                .resolve_participant_addresses(metadata)
+                .await;
+        }
+        Ok::<_, anyhow::Error>(metadatas)
     })
     .await?;
+    Ok(group_summaries(groups))
+}
+
+/// ListGroups' projection: one summary per group, sorted by subject, each
+/// carrying the full `metadata_json` (roster included). An absent subject is
+/// "", as 0.7.0 parsed it. Pure, so the contract is testable without a client.
+pub fn group_summaries(groups: Vec<whatsapp_rust::GroupMetadata>) -> Vec<pb::GroupSummary> {
     let mut summaries: Vec<pb::GroupSummary> = groups
-        .values()
+        .iter()
         .map(|m| pb::GroupSummary {
             jid: m.id.to_string(),
-            subject: m.subject.clone(),
+            subject: m.subject.clone().unwrap_or_default(),
             participants: m.participants.len() as u32,
             metadata: metadata_json(m),
         })
         .collect();
     summaries.sort_by(|a, b| a.subject.cmp(&b.subject));
-    Ok(summaries)
+    summaries
 }
 
 pub async fn set_announce(client: &Client, group: &str, announce: bool) -> Result<(), WamuxError> {
@@ -387,131 +426,4 @@ pub async fn reject_membership(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use wacore::types::message::AddressingMode;
-    use whatsapp_rust::features::ParticipantType;
-    use whatsapp_rust::{GroupMetadata, Jid};
-
-    use super::*;
-
-    #[test]
-    fn metadata_json_round_trips_key_fields() {
-        let member = Jid::from_str("5511999999999@s.whatsapp.net").unwrap();
-        let md = GroupMetadata {
-            id: Jid::from_str("120363001234567890@g.us").unwrap(),
-            subject: "Test Group".to_string(),
-            description: Some("a description".to_string()),
-            participants: vec![GroupParticipant {
-                jid: member.clone(),
-                phone_number: None,
-                lid: None,
-                username: None,
-                participant_type: ParticipantType::Member,
-                details: None,
-            }],
-            ..GroupMetadata::default()
-        };
-        let bytes = metadata_json(&md);
-        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["id"], "120363001234567890@g.us");
-        assert_eq!(value["subject"], "Test Group");
-        assert_eq!(value["description"], "a description");
-        assert_eq!(value["participants"][0]["jid"], member.to_string());
-    }
-
-    // REGRESSION (issue #1): in a LID-addressed group every participant jid is
-    // a `@lid` and `phone_number` is the only PN the roster carries. Flattening
-    // a participant to its jid string dropped that, and the admin role with it.
-    #[test]
-    fn participant_keeps_its_phone_number_and_role() {
-        let lid = Jid::from_str("169815004184633@lid").unwrap();
-        let pn = Jid::from_str("5511999000111@s.whatsapp.net").unwrap();
-        let md = GroupMetadata {
-            id: Jid::from_str("120363001234567890@g.us").unwrap(),
-            addressing_mode: AddressingMode::Lid,
-            participants: vec![GroupParticipant {
-                jid: lid.clone(),
-                phone_number: Some(pn.clone()),
-                lid: Some(lid.clone()),
-                username: Some("fulano".into()),
-                participant_type: ParticipantType::SuperAdmin,
-                details: None,
-            }],
-            ..GroupMetadata::default()
-        };
-        let value: serde_json::Value = serde_json::from_slice(&metadata_json(&md)).unwrap();
-        assert_eq!(value["addressing_mode"], "lid");
-        let participant = &value["participants"][0];
-        assert_eq!(participant["jid"], lid.to_string());
-        assert_eq!(participant["phone_number"], pn.to_string());
-        assert_eq!(participant["lid"], lid.to_string());
-        assert_eq!(participant["username"], "fulano");
-        assert_eq!(participant["type"], "superadmin");
-    }
-
-    // A PN-addressed group sends no `phone_number`: `jid` already is the phone,
-    // and the core must leave the absence visible rather than copying the jid
-    // into it (that would be the edge guessing, done in the core).
-    #[test]
-    fn absent_phone_number_stays_null() {
-        let md = GroupMetadata {
-            id: Jid::from_str("120363001234567890@g.us").unwrap(),
-            participants: vec![GroupParticipant {
-                jid: Jid::from_str("5511999000111@s.whatsapp.net").unwrap(),
-                phone_number: None,
-                lid: None,
-                username: None,
-                participant_type: ParticipantType::Member,
-                details: None,
-            }],
-            ..GroupMetadata::default()
-        };
-        let value: serde_json::Value = serde_json::from_slice(&metadata_json(&md)).unwrap();
-        assert!(value["participants"][0]["phone_number"].is_null());
-        assert!(value["participants"][0]["lid"].is_null());
-        assert!(value["participants"][0]["username"].is_null());
-        assert_eq!(value["participants"][0]["type"], "member");
-        assert_eq!(value["addressing_mode"], "pn");
-    }
-
-    // None description must serialize as JSON null (not be omitted), so the
-    // edge can distinguish "no description" without schema guessing.
-    #[test]
-    fn metadata_json_none_description_is_null() {
-        let md = GroupMetadata {
-            id: Jid::from_str("120363009876543210@g.us").unwrap(),
-            subject: "No Desc".to_string(),
-            ..GroupMetadata::default()
-        };
-        let value: serde_json::Value = serde_json::from_slice(&metadata_json(&md)).unwrap();
-        assert!(value["description"].is_null());
-        assert_eq!(value["participants"].as_array().unwrap().len(), 0);
-    }
-
-    // We relay MembershipRequest's own Serialize verbatim (relay-pure). Jid
-    // serializes to a structured object ({user, server, ...}), not a string, so
-    // assert on the component the edge keys off (user) rather than a flat jid string.
-    #[test]
-    fn requests_json_projects_jid_and_time() {
-        let reqs = vec![
-            MembershipRequest {
-                jid: Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
-                request_time: Some(1718500000),
-            },
-            MembershipRequest {
-                jid: Jid::from_str("5511888888888@s.whatsapp.net").unwrap(),
-                request_time: None,
-            },
-        ];
-        let value: serde_json::Value = serde_json::from_slice(&requests_json(&reqs)).unwrap();
-        let arr = value.as_array().unwrap();
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0]["jid"]["user"], "5511999999999");
-        assert_eq!(arr[0]["jid"]["server"], "s.whatsapp.net");
-        assert_eq!(arr[0]["request_time"], 1718500000);
-        // request_time is skip_serializing_if = None, so it's absent (not null).
-        assert!(arr[1].get("request_time").is_none());
-    }
-}
+mod tests;

@@ -104,10 +104,10 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             kind: "group_update".to_string(),
             raw: serde_json::to_vec(g).unwrap_or_default(),
         })),
-        Event::PushNameUpdate(p) => one(Pb::PushName(pb::PushNameUpdate {
-            jid: p.jid.to_string(),
-            push_name: p.new_push_name.clone(),
-        })),
+        // main retired `Event::PushNameUpdate` (upstream #1310, #30): it never
+        // fired, and 0.7.0 never constructed it either, so the wire never
+        // carried one. `pb::PushNameUpdate` stays in the proto so the contract
+        // does not break; nothing emits it, exactly as before the bump.
         Event::ContactUpdate(c) => one(Pb::Contact(pb::ContactUpdate {
             jid: c.jid.to_string(),
             kind: "contact_update".to_string(),
@@ -323,7 +323,10 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         chat: chat.clone(),
         sender,
         timestamp: info.timestamp.timestamp_millis(),
-        push_name: info.push_name.clone(),
+        // main made this a `CompactString` (#30): a name usually short enough
+        // to live inline rather than heap-allocated. The wire contract still
+        // wants an owned `String`.
+        push_name: info.push_name.to_string(),
         // The parser already put the stanza's other-namespace jids here
         // (sender_pn/participant_pn/participant_lid). Dropping them forced the
         // edge to poll for an identity the event itself carried (issue #1);

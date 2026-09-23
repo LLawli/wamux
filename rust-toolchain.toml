@@ -1,6 +1,8 @@
-# Pinned nightly: whatsapp-rust enables `simd` (core::simd / portable_simd) and
-# edition 2024, both nightly-only. This date is validated to build the graph.
+# Pinned nightly, aligned with the whatsapp-rust revision pinned in Cargo.toml
+# (#30). The lib no longer needs `simd` (removed upstream, #1262) and uses no
+# `#![feature]`, but upstream builds and tests on this exact nightly, so this is
+# the toolchain the pinned graph is validated against. Re-align it on every bump.
 [toolchain]
-channel = "nightly-2026-06-08"
+channel = "nightly-2026-06-16"
 components = ["rustfmt", "clippy", "rust-src"]
 profile = "default"

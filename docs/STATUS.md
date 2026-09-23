@@ -9,7 +9,8 @@ separada** (fora de escopo).
 
 ### Infra / build
 - Crate `wamux` (lib + binário) e bins utilitários; `rust-toolchain.toml` pinado
-  (`nightly-2026-06-08`, por causa de `simd`/edição 2024 da lib).
+  (`nightly-2026-06-16`, a mesma que o upstream do `whatsapp-rust` usa; a lib
+  está pinada por `rev` no git, #30).
 - `build.rs` com **protoc vendorizado** (`protoc-bin-vendored`) — sem instalar nada
   no host; regenera de `proto/` a cada build; emite `FILE_DESCRIPTOR_SET` (reflection).
 - Dual prost: `prost 0.13` (codegen tonic) + alias `prost014` (`waproto`, p/ encode de `wa::Message`).

@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use wacore::handshake::NoiseCertPolicy;
 use whatsapp_rust::TokioRuntime;
 use whatsapp_rust::bot::Bot;
 use whatsapp_rust::pair_code::PairCodeOptions;
@@ -27,7 +28,10 @@ pub async fn build_bot(
     skip_history: bool,
     ws_url: Option<&str>,
 ) -> anyhow::Result<Bot> {
-    reject_non_loopback_under_stress(ws_url)?;
+    // `noise_cert_policy` folds the loopback guard in: a stress build only
+    // gets `DangerSkipCertChainVerify` after it, so this call is the single
+    // choke point for both "which policy" and "is this endpoint allowed".
+    let cert_policy = noise_cert_policy(ws_url)?;
 
     // `ws_url` overrides the upstream endpoint (stress mock); plaintext ws://
     // needs the Plain connector since the default forces TLS.
@@ -46,6 +50,7 @@ pub async fn build_bot(
         .with_transport_factory(transport)
         .with_http_client(UreqHttpClient::new())
         .with_runtime(TokioRuntime)
+        .with_noise_cert_policy(cert_policy)
         .on_event(move |event, client| {
             let ctx = ctx.clone();
             async move {
@@ -63,11 +68,11 @@ pub async fn build_bot(
     builder.build().await.map_err(|e| anyhow::anyhow!(e))
 }
 
-/// A build carrying the `stress` feature has the Noise server-certificate chain
-/// check DISABLED (`wacore-noise/danger-skip-cert-chain-verify`), because the
-/// mock signs its chain with zeros and whatsapp-rust 0.7 started verifying the
-/// intermediate's XEdDSA signature. Such a build cannot tell the real WhatsApp
-/// from anything else holding the socket, so it must never reach it.
+/// A build carrying the `stress` feature can skip the Noise server-certificate
+/// chain check (`noise_cert_policy`), because the mock signs its chain with
+/// zeros and whatsapp-rust verifies the intermediate's XEdDSA signature. Such a
+/// client cannot tell the real WhatsApp from anything else holding the socket,
+/// so a stress build must never reach it.
 ///
 /// This is the choke point: every connect goes through `build_bot`, so refusing
 /// a non-loopback endpoint here makes "stress build talks to production" a
@@ -97,11 +102,26 @@ fn reject_non_loopback_under_stress(ws_url: Option<&str>) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// No-op in a normal build: certificate-chain verification is on, so any
-/// endpoint is the operator's call.
+/// The Noise certificate policy for a client that will connect to `ws_url`.
+///
+/// Since upstream #1441/#1444 (#30) skipping the chain check is a per-client
+/// runtime policy, not a cargo feature that disabled it for the whole build.
+/// This is the one place wamux chooses it, welded to the loopback guard:
+///
+/// - a normal build always answers `NoiseCertPolicy::Strict`, whatever the URL;
+/// - a `stress` build answers `DangerSkipCertChainVerify` for a loopback mock,
+///   and refuses anything else exactly as `reject_non_loopback_under_stress`.
+///
+/// `build_bot` must take the policy from here and hand it to the builder.
+#[cfg(feature = "stress")]
+pub(crate) fn noise_cert_policy(ws_url: Option<&str>) -> anyhow::Result<NoiseCertPolicy> {
+    reject_non_loopback_under_stress(ws_url)?;
+    Ok(NoiseCertPolicy::DangerSkipCertChainVerify)
+}
+
 #[cfg(not(feature = "stress"))]
-fn reject_non_loopback_under_stress(_ws_url: Option<&str>) -> anyhow::Result<()> {
-    Ok(())
+pub(crate) fn noise_cert_policy(_ws_url: Option<&str>) -> anyhow::Result<NoiseCertPolicy> {
+    Ok(NoiseCertPolicy::Strict)
 }
 
 /// Whether a `ws://`/`wss://` URL points at this machine. `localhost` is
@@ -156,5 +176,45 @@ mod stress_endpoint_guard_tests {
         assert!(!is_loopback_ws_url("ws://localtest.me:8080"));
         assert!(!is_loopback_ws_url("ws://10.0.0.1:8080"));
         assert!(!is_loopback_ws_url("not a url at all"));
+    }
+}
+
+#[cfg(all(test, feature = "stress"))]
+mod stress_cert_policy_tests {
+    use super::{NoiseCertPolicy, noise_cert_policy};
+
+    // The mock signs its chain with zeros, so without this the stress suite
+    // cannot finish a handshake at all.
+    #[test]
+    fn a_loopback_mock_gets_the_danger_policy() {
+        assert_eq!(
+            noise_cert_policy(Some("ws://127.0.0.1:42963")).unwrap(),
+            NoiseCertPolicy::DangerSkipCertChainVerify
+        );
+    }
+
+    // The policy may only be chosen after the guard passes.
+    #[test]
+    fn a_stress_build_still_refuses_the_real_endpoint() {
+        assert!(noise_cert_policy(None).is_err());
+        assert!(noise_cert_policy(Some("wss://web.whatsapp.com/ws/chat")).is_err());
+    }
+}
+
+#[cfg(all(test, not(feature = "stress")))]
+mod cert_policy_tests {
+    use super::{NoiseCertPolicy, noise_cert_policy};
+
+    // Production never skips the chain check, not even for a loopback URL:
+    // the danger policy exists only in a `stress` build.
+    #[test]
+    fn a_normal_build_always_verifies_the_chain() {
+        for url in [
+            None,
+            Some("ws://127.0.0.1:42963"),
+            Some("wss://web.whatsapp.com/ws/chat"),
+        ] {
+            assert_eq!(noise_cert_policy(url).unwrap(), NoiseCertPolicy::Strict);
+        }
     }
 }
