@@ -303,13 +303,17 @@ fn report_polls(polls: &[String]) {
     }
 }
 
+// `tonic::Status` is the size clippy's `result_large_err` complains about; the
+// callers match on `.message()`/`.code()` (not just propagate with `?`), so
+// boxing here (rather than switching to anyhow) keeps those call sites working
+// unchanged through `Box`'s `Deref`.
 async fn fetch(
     newsletters: &mut NewsletterServiceClient<Channel>,
     acct: &pb::AccountRef,
     jid: &str,
     count: u32,
     before: u64,
-) -> Result<Vec<pb::NewsletterMessage>, tonic::Status> {
+) -> Result<Vec<pb::NewsletterMessage>, Box<tonic::Status>> {
     Ok(newsletters
         .get_newsletter_messages(pb::GetNewsletterMessagesRequest {
             account: Some(acct.clone()),
@@ -317,7 +321,8 @@ async fn fetch(
             count,
             before,
         })
-        .await?
+        .await
+        .map_err(Box::new)?
         .into_inner()
         .messages)
 }

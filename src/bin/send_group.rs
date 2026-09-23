@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use tracing_subscriber::EnvFilter;
 
-use wamux::domain::messaging;
+use wamux::domain::{groups, jid_parse, messaging};
 use wamux::proto::v1 as pb;
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage;
@@ -73,22 +73,27 @@ async fn main() -> anyhow::Result<()> {
     }
     println!("✅ reconnected WITHOUT re-pairing (persisted session works)");
 
-    // Give app-state a moment, then list participating groups.
+    // Give app-state a moment, then list participating groups. `Client::groups
+    // ().get_participating()` is gone on main; `list_participating` reuses the
+    // domain helper (#30), which issues the full `GroupParticipatingIq` itself
+    // rather than main's slim `list_participating` (no participants/description)
+    // -- same reasoning as `src/domain/groups.rs::list_participating`.
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let groups = client.groups().get_participating().await?;
-    println!("participating in {} groups", groups.len());
+    let found_groups = groups::list_participating(client.clone()).await?;
+    println!("participating in {} groups", found_groups.len());
 
     let needle_lower = needle.to_lowercase();
-    let found = groups.values().find(|m| {
-        m.subject.starts_with(&needle) || m.subject.to_lowercase().contains(&needle_lower)
+    let found = found_groups.iter().find(|g| {
+        g.subject.starts_with(&needle) || g.subject.to_lowercase().contains(&needle_lower)
     });
 
     match found {
-        Some(meta) => {
-            println!("→ group: \"{}\"  jid={}", meta.subject, meta.id);
+        Some(summary) => {
+            println!("→ group: \"{}\"  jid={}", summary.subject, summary.jid);
+            let jid = jid_parse::parse_jid(&summary.jid)?;
             let result = messaging::send_text(
                 &client,
-                meta.id.clone(),
+                jid,
                 &pb::SendTextRequest {
                     text: text.clone(),
                     ..Default::default()
@@ -101,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
         }
         None => {
             println!("group starting with \"{needle}\" NOT found. Groups I'm in:");
-            let mut names: Vec<&String> = groups.values().map(|m| &m.subject).collect();
+            let mut names: Vec<&String> = found_groups.iter().map(|g| &g.subject).collect();
             names.sort();
             for name in names {
                 println!("  - {name}");

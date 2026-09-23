@@ -5,8 +5,12 @@
 //! Usage: e2e_all [socket_path] [target_number]
 //!   defaults: /tmp/wamux.sock  5511999999999
 //! Requires the daemon running with the "pair-socket" account already paired.
-//! The core relays to the JID verbatim (no routing); this client targets @c.us
-//! so delivery dodges the library's PN->LID upgrade.
+//! The core relays to the JID verbatim (no routing); this client targets @c.us.
+//! Note (#30, upstream #1371): on whatsapp-rust main the library now parses
+//! `@c.us` as `@s.whatsapp.net` (a phone user), so this no longer dodges the
+//! PN->LID upgrade the way it used to on 0.6 -- it just spells the same
+//! recipient differently. Left as-is; see CLAUDE.md for why the core does not
+//! pick a routing recipe.
 
 use std::io::{Cursor, Read};
 use std::sync::{Arc, Mutex};
