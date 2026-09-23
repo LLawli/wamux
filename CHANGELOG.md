@@ -40,6 +40,31 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **whatsapp-rust moves from the crates.io 0.7.0 release to git main
+  `f4d73ebe`** (issue #30). No new upstream feature is exposed; the gRPC
+  contract is unchanged except as noted here.
+  - **Operators: migrate the store before starting the new build.** `Device`
+    and `HashState` are positional bincode and main changed both layouts, so
+    without the migration no paired account loads. Stop the daemon, back up,
+    then `cargo run --release --features migrate-0-7-main --bin migrate_0_7_main`
+    (dry run) and again with `-- --apply`. It is idempotent and writes nothing
+    unless every blob converts. A store still on 0.6 runs `migrate_0_7` first.
+    After it, each account's first connect does one full Noise XX handshake
+    (the cached server chain is re-verified) and each app-state collection
+    bootstraps once more; both are upstream's documented behaviour for records
+    written before those fields existed. Tracked for good in #31.
+  - **A `@c.us` recipient now echoes as `@s.whatsapp.net`.** The library parses
+    the legacy spelling as a phone user (upstream #1371), which is the fix for
+    #4: such sends used to be encrypted for nobody. The core still rewrites no
+    jid itself.
+  - `ListGroups` keeps its full metadata (participants, description): main's
+    new listing call returns a slim overview, so the core issues the full query
+    itself. An absent group subject still projects as `""`.
+  - Media downloads now verify the hashes the message declares (upstream
+    #1541): a file that used to download with a mismatching hash now fails.
+  - New upstream events (chat lock, sticker sync, and others) reach the socket
+    as `RawEvent`, like any variant the core does not type.
+
 - **Breaking (behaviour): `PresenceUpdate.online` is optional and absent on a
   chat state** (issue #24). The field was a hardcoded `true` on every
   `composing`/`recording`/`paused`: `Event::ChatPresence` measures no presence,

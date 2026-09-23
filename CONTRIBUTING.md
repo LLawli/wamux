@@ -28,9 +28,9 @@ docker run -d --name wamux-pg -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux 
   -e POSTGRES_DB=wamux -p 5433:5432 postgres:16
 ```
 
-The toolchain is a pinned nightly (`rust-toolchain.toml`) because
-`whatsapp-rust` uses `core::simd` and edition 2024. `rustup` picks it up on its
-own.
+The toolchain is a pinned nightly (`rust-toolchain.toml`), the one upstream
+`whatsapp-rust` builds on; the lib itself is pinned to a git revision (#30).
+`rustup` picks it up on its own.
 
 ## The rule that overrides the others
 

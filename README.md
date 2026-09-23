@@ -45,9 +45,10 @@ Signal/session/device state (in Postgres), never business message history.
 
 ## Requirements
 
-- **Rust nightly** — pinned in `rust-toolchain.toml`. `whatsapp-rust` enables
-  the `simd` feature (`core::simd` / `portable_simd`) and edition 2024, both
-  nightly-only. `rustup` will pick up the pinned toolchain automatically.
+- **Rust nightly**: pinned in `rust-toolchain.toml`, the nightly upstream
+  `whatsapp-rust` builds and tests on (the lib is pinned to a git revision of
+  its main branch, see #30). `rustup` will pick up the pinned toolchain
+  automatically.
 - **Postgres or SQLite** for the Signal/device store. The `database_url`
   scheme picks the engine: `postgres://` for the multi-account deployment,
   `sqlite://` for a single file with no server process.

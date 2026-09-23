@@ -7,7 +7,7 @@
 FROM rust:bookworm AS build
 WORKDIR /src
 
-# The pinned nightly (whatsapp-rust needs core::simd and edition 2024) is
+# The pinned nightly (the one upstream whatsapp-rust builds on, #30) is
 # installed from rust-toolchain.toml alone, so this layer only rebuilds when
 # the pin changes - not on every source edit.
 COPY rust-toolchain.toml ./
