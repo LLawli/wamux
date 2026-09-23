@@ -1,4 +1,5 @@
-//! One-shot conversion of the bincode blobs from whatsapp-rust 0.6 to 0.7.
+//! One-shot conversion of the bincode blobs from whatsapp-rust 0.6 to the
+//! released 0.7.0.
 //!
 //! bincode-standard is POSITIONAL: it stores no field names, so `#[serde(default)]`
 //! does NOT rescue a struct that gained a field. Two of the blobs wamux persists
@@ -14,118 +15,61 @@
 //! migration is possible at all. Without it every paired account is lost.
 //!
 //! This module is compiled only under the `migrate-0-7` feature, which is what
-//! pulls in the second `wacore` (0.6.0 alongside 0.7.0). The two are
-//! semver-incompatible, so cargo links both, and that is the whole trick.
+//! pulls in the second `wacore` (0.6.0 alongside the released 0.7.0, named
+//! `wacore070`). The two are semver-incompatible, so cargo links both, and that
+//! is the whole trick. Its output is the 0.7.0 layout, so a 0.6 store then runs
+//! `blob_migration_0_7_main` as well (#30).
 //!
 //! Delete this module, its feature, and the `wacore06` dependency once every
 //! deployment has run the migration.
 
-use thiserror::Error;
+use super::blob_migration::{
+    BlobMigration, BlobMigrationSteps, MigrateError, decode_whole, encode_checked, reserde,
+};
 
-/// What one blob needed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlobMigration {
-    /// Already decodes as 0.7: a re-run, or a store written after the upgrade.
-    /// Makes the whole migration idempotent.
-    AlreadyCurrent,
-    /// Decoded as 0.6 and re-encoded as 0.7. These are the bytes to write back.
-    Rewritten(Vec<u8>),
-}
-
-#[derive(Debug, Error)]
-pub enum MigrateError {
-    /// Neither version can read the blob. Never migrate past this: the row is
-    /// something other than what the column claims, and overwriting it would
-    /// destroy whatever it actually is.
-    #[error("{label}: unreadable by both 0.6 and 0.7 (0.6 said: {as_0_6}; 0.7 said: {as_0_7})")]
-    Unreadable {
-        label: &'static str,
-        as_0_6: String,
-        as_0_7: String,
-    },
-    /// Decoded, but the 0.7 bytes we produced do not read back. A bug here, not
-    /// bad data; the caller must abort rather than write.
-    #[error("{label}: re-encoded to 0.7 but the result does not decode back: {cause}")]
-    RoundTrip { label: &'static str, cause: String },
-    #[error(
-        "{label}: 0.6 protobuf bytes did not survive the buffa round trip ({before} -> {after} bytes)"
-    )]
-    AccountBytes {
-        label: &'static str,
-        before: usize,
-        after: usize,
-    },
-    #[error("{label}: could not rebuild the {field} key material: {cause}")]
-    KeyMaterial {
-        label: &'static str,
-        field: &'static str,
-        cause: String,
-    },
-}
-
-fn config() -> bincode::config::Configuration {
-    bincode::config::standard()
-}
-
-/// Decode consuming EVERY byte. A partial decode means the blob is not really
-/// this type — it just happens to start like one — and accepting it would let a
-/// 0.6 `HashState` masquerade as an already-current 0.7 one (the two differ by a
-/// single trailing byte).
-fn decode_whole<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-    let (value, used) =
-        bincode::serde::decode_from_slice::<T, _>(bytes, config()).map_err(|e| e.to_string())?;
-    if used != bytes.len() {
-        return Err(format!(
-            "trailing bytes: consumed {used} of {}",
-            bytes.len()
-        ));
-    }
-    Ok(value)
-}
+/// The table `blob_migration_runner` drives.
+pub const MIGRATE_0_7: BlobMigrationSteps = BlobMigrationSteps {
+    name: "whatsapp-rust 0.6 -> 0.7.0",
+    device: migrate_device_blob,
+    hash_state: migrate_hash_state_blob,
+    sync_key: verify_sync_key_blob,
+};
 
 /// `device.data`. See the module docs for why a plain re-encode is not enough.
 pub fn migrate_device_blob(bytes: &[u8]) -> Result<BlobMigration, MigrateError> {
     const LABEL: &str = "device.data";
 
-    let as_0_7 = match decode_whole::<wacore::store::Device>(bytes) {
+    let as_new = match decode_whole::<wacore070::store::Device>(bytes) {
         Ok(_) => return Ok(BlobMigration::AlreadyCurrent),
         Err(e) => e,
     };
     let old: wacore06::store::Device =
-        decode_whole(bytes).map_err(|as_0_6| MigrateError::Unreadable {
+        decode_whole(bytes).map_err(|as_old| MigrateError::Unreadable {
             label: LABEL,
-            as_0_6,
-            as_0_7: as_0_7.clone(),
+            as_old,
+            as_new: as_new.clone(),
         })?;
 
     let new = bridge_device(&old, LABEL)?;
-    let out =
-        bincode::serde::encode_to_vec(&new, config()).map_err(|e| MigrateError::RoundTrip {
-            label: LABEL,
-            cause: e.to_string(),
-        })?;
-    decode_whole::<wacore::store::Device>(&out).map_err(|cause| MigrateError::RoundTrip {
-        label: LABEL,
-        cause,
-    })?;
+    let out = encode_checked(&new, LABEL)?;
     Ok(BlobMigration::Rewritten(out))
 }
 
 /// `app_state_versions.state_data`. One appended bool, but bincode is positional
-/// so the old blob still ends one byte short of what 0.7 reads.
+/// so the old blob still ends one byte short of what 0.7.0 reads.
 pub fn migrate_hash_state_blob(bytes: &[u8]) -> Result<BlobMigration, MigrateError> {
     const LABEL: &str = "app_state_versions.state_data";
-    use wacore::appstate::hash::HashState as New;
     use wacore06::appstate::hash::HashState as Old;
+    use wacore070::appstate::hash::HashState as New;
 
-    let as_0_7 = match decode_whole::<New>(bytes) {
+    let as_new = match decode_whole::<New>(bytes) {
         Ok(_) => return Ok(BlobMigration::AlreadyCurrent),
         Err(e) => e,
     };
-    let old: Old = decode_whole(bytes).map_err(|as_0_6| MigrateError::Unreadable {
+    let old: Old = decode_whole(bytes).map_err(|as_old| MigrateError::Unreadable {
         label: LABEL,
-        as_0_6,
-        as_0_7: as_0_7.clone(),
+        as_old,
+        as_new: as_new.clone(),
     })?;
 
     let new = New {
@@ -137,15 +81,7 @@ pub fn migrate_hash_state_blob(bytes: &[u8]) -> Result<BlobMigration, MigrateErr
         // check did not exist, so the honest starting value is false.
         mac_mismatch_fatal: false,
     };
-    let out =
-        bincode::serde::encode_to_vec(&new, config()).map_err(|e| MigrateError::RoundTrip {
-            label: LABEL,
-            cause: e.to_string(),
-        })?;
-    decode_whole::<New>(&out).map_err(|cause| MigrateError::RoundTrip {
-        label: LABEL,
-        cause,
-    })?;
+    let out = encode_checked(&new, LABEL)?;
     Ok(BlobMigration::Rewritten(out))
 }
 
@@ -155,11 +91,11 @@ pub fn migrate_hash_state_blob(bytes: &[u8]) -> Result<BlobMigration, MigrateErr
 /// place to find out it is false.
 pub fn verify_sync_key_blob(bytes: &[u8]) -> Result<(), MigrateError> {
     const LABEL: &str = "app_state_keys.key_data";
-    decode_whole::<wacore::store::traits::AppStateSyncKey>(bytes).map_err(|as_0_7| {
+    decode_whole::<wacore070::store::traits::AppStateSyncKey>(bytes).map_err(|as_new| {
         MigrateError::Unreadable {
             label: LABEL,
-            as_0_6: "not attempted".to_string(),
-            as_0_7,
+            as_old: "not attempted".to_string(),
+            as_new,
         }
     })?;
     Ok(())
@@ -171,8 +107,8 @@ pub fn verify_sync_key_blob(bytes: &[u8]) -> Result<(), MigrateError> {
 fn bridge_device(
     old: &wacore06::store::Device,
     label: &'static str,
-) -> Result<wacore::store::Device, MigrateError> {
-    Ok(wacore::store::Device {
+) -> Result<wacore070::store::Device, MigrateError> {
+    let mut new = wacore070::store::Device {
         pn: reserde(&old.pn, label, "pn")?,
         lid: reserde(&old.lid, label, "lid")?,
         registration_id: old.registration_id,
@@ -182,7 +118,11 @@ fn bridge_device(
         signed_pre_key_id: old.signed_pre_key_id,
         signed_pre_key_signature: old.signed_pre_key_signature,
         adv_secret_key: old.adv_secret_key,
-        account: bridge_account(old, label)?,
+        // Set below: `wacore070` is not re-exported by any nameable crate here
+        // (unlike the main-era bridge, which names the type through
+        // `whatsapp_rust::waproto`), so the field is filled by inferred
+        // assignment in `bridge_account_into` instead of a typed return value.
+        account: None,
         push_name: old.push_name.clone(),
         app_version_primary: old.app_version_primary,
         app_version_secondary: old.app_version_secondary,
@@ -198,12 +138,12 @@ fn bridge_device(
         server_has_prekeys: old.server_has_prekeys,
         nct_salt: old.nct_salt.clone(),
         server_cert_chain: old.server_cert_chain.as_ref().map(|c| {
-            wacore::store::CachedServerCertChain {
+            wacore070::store::CachedServerCertChain {
                 intermediate: bridge_cert(&c.intermediate),
                 leaf: bridge_cert(&c.leaf),
             }
         }),
-        // --- the five fields 0.7 added, each at the value the lib documents as
+        // --- the five fields 0.7.0 added, each at the value the lib documents as
         // --- "this device predates the field", never a guess.
         // 0 = legacy device; the first prekey upload initialises the watermark.
         first_unupload_pre_key_id: 0,
@@ -218,27 +158,9 @@ fn bridge_device(
         // false is WhatsApp's own default (`readreceipts = all`); the real value
         // is refetched from the privacy settings after the next connect.
         read_receipts_disabled: false,
-    })
-}
-
-/// Carry an opaque value (`Jid`) across the version boundary through its own
-/// bincode. The round trip PROVES the two layouts agree instead of assuming it.
-fn reserde<A, B>(value: &A, label: &'static str, field: &'static str) -> Result<B, MigrateError>
-where
-    A: serde::Serialize,
-    B: serde::de::DeserializeOwned,
-{
-    let bytes =
-        bincode::serde::encode_to_vec(value, config()).map_err(|e| MigrateError::KeyMaterial {
-            label,
-            field,
-            cause: e.to_string(),
-        })?;
-    decode_whole::<B>(&bytes).map_err(|cause| MigrateError::KeyMaterial {
-        label,
-        field,
-        cause,
-    })
+    };
+    bridge_account_into(&mut new, old, label)?;
+    Ok(new)
 }
 
 /// Rebuild a Signal keypair from its raw 32-byte halves. Deliberately explicit
@@ -248,8 +170,8 @@ fn bridge_key_pair(
     old: &wacore06::libsignal::protocol::KeyPair,
     label: &'static str,
     field: &'static str,
-) -> Result<wacore::libsignal::protocol::KeyPair, MigrateError> {
-    use wacore::libsignal::protocol::{KeyPair, PrivateKey, PublicKey};
+) -> Result<wacore070::libsignal::protocol::KeyPair, MigrateError> {
+    use wacore070::libsignal::protocol::{KeyPair, PrivateKey, PublicKey};
     let private = old.private_key.serialize();
     let public =
         PublicKey::from_djb_public_key_bytes(old.public_key.public_key_bytes()).map_err(|e| {
@@ -267,8 +189,8 @@ fn bridge_key_pair(
     Ok(KeyPair::new(public, private))
 }
 
-fn bridge_cert(old: &wacore06::store::CachedNoiseCert) -> wacore::store::CachedNoiseCert {
-    wacore::store::CachedNoiseCert {
+fn bridge_cert(old: &wacore06::store::CachedNoiseCert) -> wacore070::store::CachedNoiseCert {
+    wacore070::store::CachedNoiseCert {
         key: old.key,
         not_before: old.not_before,
         not_after: old.not_after,
@@ -276,24 +198,28 @@ fn bridge_cert(old: &wacore06::store::CachedNoiseCert) -> wacore::store::CachedN
 }
 
 /// The one field whose Rust type genuinely changed: `ADVSignedDeviceIdentity`
-/// was prost-generated in 0.6 and is buffa-generated in 0.7. The bridge is the
+/// was prost-generated in 0.6 and is buffa-generated in 0.7.0. The bridge is the
 /// PROTOBUF BYTES, which is the stable format; the Rust struct is not.
 ///
 /// Both versions already persist this field as protobuf bytes inside the bincode
 /// blob (`account_serde` on either side), so the on-disk shape does not change
 /// at all — only the in-memory type does.
-fn bridge_account(
+///
+/// Takes `new` by `&mut` and sets its `account` field, rather than returning the
+/// value: `wacore070`'s `ADVSignedDeviceIdentity` has no path nameable from this
+/// crate (unlike the main-era bridge, which reaches it through the always-linked
+/// `whatsapp_rust::waproto` re-export), so the decoded value's type is left to
+/// flow from the field assignment instead of being spelled out in a return type.
+fn bridge_account_into(
+    new: &mut wacore070::store::Device,
     old: &wacore06::store::Device,
     label: &'static str,
-) -> Result<
-    Option<std::sync::Arc<whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity>>,
-    MigrateError,
-> {
+) -> Result<(), MigrateError> {
     let Some(account) = old.account.as_ref() else {
-        return Ok(None);
+        return Ok(());
     };
     let bytes = wacore06::store::device::account_serde::to_bytes(account);
-    let decoded = wacore::store::device::account_serde::from_bytes(&bytes).map_err(|e| {
+    let decoded = wacore070::store::device::account_serde::from_bytes(&bytes).map_err(|e| {
         MigrateError::KeyMaterial {
             label,
             field: "account",
@@ -302,7 +228,7 @@ fn bridge_account(
     })?;
     // The pairing identity is what proves this device to WhatsApp. Assert the
     // bytes are unchanged rather than trusting that two generators agree.
-    let reencoded = wacore::store::device::account_serde::to_bytes(&decoded);
+    let reencoded = wacore070::store::device::account_serde::to_bytes(&decoded);
     if reencoded != bytes {
         return Err(MigrateError::AccountBytes {
             label,
@@ -310,7 +236,8 @@ fn bridge_account(
             after: reencoded.len(),
         });
     }
-    Ok(Some(std::sync::Arc::new(decoded)))
+    new.account = Some(std::sync::Arc::new(decoded));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -328,16 +255,16 @@ mod blob_migration_tests {
         device.next_pre_key_id = 42;
         device.server_has_prekeys = true;
         device.props_hash = Some("abc123".to_string());
-        let blob = bincode::serde::encode_to_vec(&device, config()).unwrap();
+        let blob = bincode::serde::encode_to_vec(&device, bincode::config::standard()).unwrap();
         (device, blob)
     }
 
     #[test]
-    fn a_legacy_device_blob_does_not_decode_as_0_7() {
+    fn a_legacy_device_blob_does_not_decode_as_0_7_0() {
         // The premise of the whole migration. If this ever passes, the blobs are
         // compatible and this module is dead code.
         let (_, blob) = legacy_device_blob();
-        assert!(decode_whole::<wacore::store::Device>(&blob).is_err());
+        assert!(decode_whole::<wacore070::store::Device>(&blob).is_err());
     }
 
     #[test]
@@ -346,7 +273,7 @@ mod blob_migration_tests {
         let BlobMigration::Rewritten(out) = migrate_device_blob(&blob).unwrap() else {
             panic!("a 0.6 blob must be rewritten, not reported as current");
         };
-        let new: wacore::store::Device = decode_whole(&out).unwrap();
+        let new: wacore070::store::Device = decode_whole(&out).unwrap();
 
         assert_eq!(
             new.pn.as_ref().map(ToString::to_string),
@@ -373,7 +300,7 @@ mod blob_migration_tests {
         let BlobMigration::Rewritten(out) = migrate_device_blob(&blob).unwrap() else {
             panic!("expected a rewrite");
         };
-        let new: wacore::store::Device = decode_whole(&out).unwrap();
+        let new: wacore070::store::Device = decode_whole(&out).unwrap();
 
         for (label, a, b) in [
             ("noise", &old.noise_key, &new.noise_key),
@@ -401,7 +328,7 @@ mod blob_migration_tests {
         let BlobMigration::Rewritten(out) = migrate_device_blob(&blob).unwrap() else {
             panic!("expected a rewrite");
         };
-        let new: wacore::store::Device = decode_whole(&out).unwrap();
+        let new: wacore070::store::Device = decode_whole(&out).unwrap();
         assert_eq!(new.first_unupload_pre_key_id, 0);
         assert_eq!(new.login_counter, 0);
         assert!(!new.lid_migrated);
@@ -430,12 +357,12 @@ mod blob_migration_tests {
             hash: [0xAB; 128],
             index_value_map: HashMap::from([("index-mac".to_string(), vec![1u8, 2, 3])]),
         };
-        let blob = bincode::serde::encode_to_vec(&old, config()).unwrap();
+        let blob = bincode::serde::encode_to_vec(&old, bincode::config::standard()).unwrap();
 
         let BlobMigration::Rewritten(out) = migrate_hash_state_blob(&blob).unwrap() else {
             panic!("a 0.6 HashState must be rewritten");
         };
-        let new: wacore::appstate::hash::HashState = decode_whole(&out).unwrap();
+        let new: wacore070::appstate::hash::HashState = decode_whole(&out).unwrap();
         assert_eq!(new.version, old.version);
         assert_eq!(new.hash, old.hash);
         assert_eq!(new.index_value_map, old.index_value_map);
@@ -460,11 +387,11 @@ mod blob_migration_tests {
             hash: [0x11; 128],
             index_value_map: map.clone(),
         };
-        let blob = bincode::serde::encode_to_vec(&old, config()).unwrap();
+        let blob = bincode::serde::encode_to_vec(&old, bincode::config::standard()).unwrap();
         let BlobMigration::Rewritten(out) = migrate_hash_state_blob(&blob).unwrap() else {
             panic!("expected a rewrite");
         };
-        let new: wacore::appstate::hash::HashState = decode_whole(&out).unwrap();
+        let new: wacore070::appstate::hash::HashState = decode_whole(&out).unwrap();
         assert_eq!(new.index_value_map, map);
     }
 
@@ -475,10 +402,10 @@ mod blob_migration_tests {
             fingerprint: vec![0x22, 0x33, 0x44],
             timestamp: 1_749_400_000,
         };
-        let blob = bincode::serde::encode_to_vec(&key, config()).unwrap();
-        verify_sync_key_blob(&blob).expect("0.7 must read a 0.6 sync key unchanged");
+        let blob = bincode::serde::encode_to_vec(&key, bincode::config::standard()).unwrap();
+        verify_sync_key_blob(&blob).expect("0.7.0 must read a 0.6 sync key unchanged");
 
-        let restored: wacore::store::traits::AppStateSyncKey = decode_whole(&blob).unwrap();
+        let restored: wacore070::store::traits::AppStateSyncKey = decode_whole(&blob).unwrap();
         assert_eq!(restored.key_data, key.key_data);
         assert_eq!(restored.fingerprint, key.fingerprint);
         assert_eq!(restored.timestamp, key.timestamp);
