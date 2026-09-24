@@ -5,22 +5,8 @@
 //! implementations, each implementing wacore's four store traits on a
 //! device-scoped backend type.
 
+pub mod bincode_upgrade;
 pub mod blob_codec;
-/// Types and helpers every one-shot blob migration shares. See #31 for the plan
-/// that would make these migrations unnecessary.
-#[cfg(any(feature = "migrate-0-7", feature = "migrate-0-7-main"))]
-pub mod blob_migration;
-/// 0.6 -> 0.7.0 bincode blob conversion. Compiled only under `migrate-0-7`,
-/// which is what links the older `wacore`s; delete both once every store has
-/// run it.
-#[cfg(feature = "migrate-0-7")]
-pub mod blob_migration_0_7;
-/// 0.7.0 -> git main bincode blob conversion (#30), under `migrate-0-7-main`.
-#[cfg(feature = "migrate-0-7-main")]
-pub mod blob_migration_0_7_main;
-/// Plan / apply / CLI shared by the migration bins.
-#[cfg(any(feature = "migrate-0-7", feature = "migrate-0-7-main"))]
-pub mod blob_migration_runner;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod bootstrapped_repair;
 pub mod engine;

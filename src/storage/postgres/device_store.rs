@@ -1,18 +1,19 @@
-//! `DeviceStore` over Postgres. The whole `Device` is stored as one
-//! bincode-standard blob keyed by `device_id`.
+//! `DeviceStore` over Postgres. The whole `Device` is stored as one protobuf
+//! blob (`blob_codec::encode_device`, #31) keyed by `device_id`.
 
 use async_trait::async_trait;
 use wacore::store::Device;
 use wacore::store::error::Result;
 use wacore::store::traits::DeviceStore;
 
-use super::{PgBackend, bincode_decode, bincode_encode};
+use super::PgBackend;
+use crate::storage::blob_codec::{decode_device, encode_device};
 use crate::storage::sqlx_error::db;
 
 #[async_trait]
 impl DeviceStore for PgBackend {
     async fn save(&self, device: &Device) -> Result<()> {
-        let data = bincode_encode(device)?;
+        let data = encode_device(device);
         sqlx::query(
             "INSERT INTO device (device_id, data) VALUES ($1, $2)
              ON CONFLICT (device_id) DO UPDATE SET data = EXCLUDED.data",
@@ -34,17 +35,9 @@ impl DeviceStore for PgBackend {
                 .map_err(db)?;
         match row {
             None => Ok(None),
-            Some(bytes) => {
-                let mut device: Device = bincode_decode(&bytes)?;
-                // Runtime-only fields are #[serde(skip)] -> Default on decode.
-                // Restore device_props like the reference does; ClientProfile's
-                // Default already equals ::web().
-                // 0.7 holds this behind an Arc (snapshot clones bump a refcount);
-                // DEVICE_PROPS itself is still a plain LazyLock<DeviceProps>.
-                device.device_props =
-                    std::sync::Arc::new(wacore::store::device::DEVICE_PROPS.clone());
-                Ok(Some(device))
-            }
+            // decode_device restores the runtime-only fields (device_props
+            // included), so what comes back is ready to use.
+            Some(bytes) => Ok(Some(decode_device(&bytes)?)),
         }
     }
 
@@ -59,7 +52,7 @@ impl DeviceStore for PgBackend {
     }
 
     async fn create(&self) -> Result<i32> {
-        let data = bincode_encode(&Device::new())?;
+        let data = encode_device(&Device::new());
         sqlx::query(
             "INSERT INTO device (device_id, data) VALUES ($1, $2)
              ON CONFLICT (device_id) DO NOTHING",

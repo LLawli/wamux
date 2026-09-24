@@ -26,6 +26,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .file_descriptor_set_path(out_dir.join("wamux_descriptor.bin"))
         .compile_protos(&protos, &["proto"])?;
 
+    // The on-disk blob format (#31). Messages only: no service, and no entry in
+    // the reflection descriptor above, because it is not part of the socket's
+    // contract. btree_map makes map encoding deterministic, which the
+    // cross-engine byte-parity test depends on.
+    tonic_build::configure()
+        .build_client(false)
+        .build_server(false)
+        .btree_map(["."])
+        .compile_protos(&["proto/store/blobs.proto"], &["proto"])?;
+
     println!("cargo:rerun-if-changed=proto");
     Ok(())
 }

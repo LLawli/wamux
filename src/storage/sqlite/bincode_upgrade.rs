@@ -1,0 +1,118 @@
+//! SQLite half of `storage::bincode_upgrade`. Mirrors
+//! `postgres/bincode_upgrade.rs` statement for statement; only the dialect differs.
+
+use sqlx::{SqliteConnection, SqlitePool};
+
+use crate::storage::bincode_upgrade::{
+    BLOB_FORMAT_PROTOBUF, BincodeUpgradeError, BincodeUpgradePlan, LegacyBlobRows, log_upgrade,
+    needs_bincode_upgrade, plan_bincode_upgrade, upgrade_db_error,
+};
+
+/// Convert the store if `blob_format` says it is still bincode: read, plan and
+/// prove every row, write them and flip the marker, all in one transaction.
+pub(super) async fn upgrade_bincode_blobs(pool: &SqlitePool) -> Result<(), BincodeUpgradeError> {
+    let mut tx = pool.begin().await.map_err(upgrade_db_error("begin"))?;
+    // No row lock in SQLite, and none needed: the pool is one connection
+    // (see `connect`), and the file has one daemon.
+    let format: String = sqlx::query_scalar("SELECT format FROM blob_format WHERE id = 1")
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(upgrade_db_error("reading blob_format"))?;
+    if !needs_bincode_upgrade(&format)? {
+        return Ok(());
+    }
+    let plan = plan_bincode_upgrade(read_legacy_rows(&mut tx).await?)?;
+    write_plan(&mut tx, &plan).await?;
+    sqlx::query("UPDATE blob_format SET format = ? WHERE id = 1")
+        .bind(BLOB_FORMAT_PROTOBUF)
+        .execute(&mut *tx)
+        .await
+        .map_err(upgrade_db_error("updating blob_format"))?;
+    tx.commit().await.map_err(upgrade_db_error("commit"))?;
+    log_upgrade(&plan);
+    Ok(())
+}
+
+async fn read_legacy_rows(
+    conn: &mut SqliteConnection,
+) -> Result<LegacyBlobRows, BincodeUpgradeError> {
+    let devices = sqlx::query_as("SELECT device_id, data FROM device ORDER BY device_id")
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(upgrade_db_error("reading device"))?;
+    let versions = sqlx::query_as(
+        "SELECT device_id, name, state_data FROM app_state_versions ORDER BY device_id, name",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(upgrade_db_error("reading app_state_versions"))?;
+    let sync_keys = sqlx::query_as(
+        "SELECT device_id, key_id, key_data FROM app_state_keys ORDER BY device_id, key_id",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(upgrade_db_error("reading app_state_keys"))?;
+    Ok(LegacyBlobRows {
+        devices,
+        versions,
+        sync_keys,
+    })
+}
+
+async fn write_plan(
+    conn: &mut SqliteConnection,
+    plan: &BincodeUpgradePlan,
+) -> Result<(), BincodeUpgradeError> {
+    write_devices(conn, plan).await?;
+    write_versions(conn, plan).await?;
+    write_sync_keys(conn, plan).await
+}
+
+async fn write_devices(
+    conn: &mut SqliteConnection,
+    plan: &BincodeUpgradePlan,
+) -> Result<(), BincodeUpgradeError> {
+    for (device_id, blob) in &plan.devices {
+        sqlx::query("UPDATE device SET data = ? WHERE device_id = ?")
+            .bind(blob)
+            .bind(device_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(upgrade_db_error("updating device"))?;
+    }
+    Ok(())
+}
+
+async fn write_versions(
+    conn: &mut SqliteConnection,
+    plan: &BincodeUpgradePlan,
+) -> Result<(), BincodeUpgradeError> {
+    for (device_id, name, blob) in &plan.versions {
+        sqlx::query(
+            "UPDATE app_state_versions SET state_data = ? WHERE device_id = ? AND name = ?",
+        )
+        .bind(blob)
+        .bind(device_id)
+        .bind(name)
+        .execute(&mut *conn)
+        .await
+        .map_err(upgrade_db_error("updating app_state_versions"))?;
+    }
+    Ok(())
+}
+
+async fn write_sync_keys(
+    conn: &mut SqliteConnection,
+    plan: &BincodeUpgradePlan,
+) -> Result<(), BincodeUpgradeError> {
+    for (device_id, key_id, blob) in &plan.sync_keys {
+        sqlx::query("UPDATE app_state_keys SET key_data = ? WHERE device_id = ? AND key_id = ?")
+            .bind(blob)
+            .bind(device_id)
+            .bind(key_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(upgrade_db_error("updating app_state_keys"))?;
+    }
+    Ok(())
+}

@@ -71,17 +71,6 @@ cargo clippy --all-targets -- -D warnings
 stage "clippy (--features stress)"
 cargo clippy --features stress --all-targets -- -D warnings
 
-# The 0.6 -> 0.7 store migration lives behind its own feature (it links a second
-# wacore), so nothing else in this pipeline compiles it. Gate it until every
-# deployment has migrated and the feature is deleted.
-stage "clippy (--features migrate-0-7)"
-cargo clippy --features migrate-0-7 --all-targets -- -D warnings
-
-# Same reasoning for the 0.7.0 -> git main migration (#30): it links the released
-# wacore 0.7.0 next to the git one, which only this gate compiles.
-stage "clippy (--features migrate-0-7-main)"
-cargo clippy --features migrate-0-7-main --all-targets -- -D warnings
-
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -96,13 +85,7 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
 
   stage "no-postgres: sqlite-only storage cases"
   must_run_tests --test storage_backend sqlite_
-
-  stage "no-postgres: 0.6 -> 0.7 blob migration"
-  must_run_tests --features migrate-0-7 --lib blob_migration
-
-  stage "no-postgres: 0.7.0 -> main blob migration"
-  must_run_tests --features migrate-0-7-main --lib blob_migration
-  must_run_tests --features migrate-0-7-main --test blob_migration_0_7_main
+  must_run_tests --test bincode_upgrade sqlite_
 
   stage "CI PASSED (no-postgres subset)"
   exit 0
@@ -119,17 +102,6 @@ WAMUX_TEST_ENGINE=sqlite cargo test
 
 stage "stress tests (fast: M1/M2a/M2b)"
 cargo test --features stress --test stress_handshake
-
-# Pure conversion tests, no database: they pin that a 0.6 blob still fails to
-# decode as 0.7 (the premise) and that the bridge loses no key material.
-stage "0.6 -> 0.7 blob migration"
-must_run_tests --features migrate-0-7 --lib blob_migration
-
-# The 0.7.0 -> main conversion, plus the runner end to end on SQLite: a store as
-# 0.7.0 left it does not load on main, and loads after the migration.
-stage "0.7.0 -> main blob migration"
-must_run_tests --features migrate-0-7-main --lib blob_migration
-must_run_tests --features migrate-0-7-main --test blob_migration_0_7_main
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"

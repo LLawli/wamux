@@ -33,19 +33,6 @@ stress = [
     "wacore-noise/test-util",
 ]
 
-# One-shot 0.6 -> 0.7.0 blob migration. Links `wacore` 0.6.0 ALONGSIDE the
-# released 0.7.0 (`wacore070`), which is the only way to read an old blob and
-# write a new one in the same process. Its output is a 0.7.0 blob, so a 0.6
-# store then runs `migrate-0-7-main` as well. Off by default; delete the feature,
-# the bin, and the `wacore06` dependency once every store has migrated.
-migrate-0-7 = ["dep:wacore06", "dep:wacore070"]
-
-# One-shot 0.7.0 (crates.io release) -> git main blob migration (#30). Same
-# shape as `migrate-0-7`: the released `wacore` 0.7.0 is linked next to the git
-# one (different sources, so cargo keeps both) to read the old positional
-# bincode and write the new one. Delete with #31, or once every store migrated.
-migrate-0-7-main = ["dep:wacore070"]
-
 [[bin]]
 name = "wamux"
 path = "src/main.rs"
@@ -55,18 +42,6 @@ path = "src/main.rs"
 name = "stress_live"
 path = "src/bin/stress_live.rs"
 required-features = ["stress"]
-
-# One-shot store migration; see the `migrate-0-7` feature above.
-[[bin]]
-name = "migrate_0_7"
-path = "src/bin/migrate_0_7.rs"
-required-features = ["migrate-0-7"]
-
-# One-shot store migration; see the `migrate-0-7-main` feature above.
-[[bin]]
-name = "migrate_0_7_main"
-path = "src/bin/migrate_0_7_main.rs"
-required-features = ["migrate-0-7-main"]
 
 [dependencies]
 # gRPC / protobuf
@@ -116,7 +91,8 @@ toml = "0.8"
 figment = { version = "0.10", features = ["toml", "env"] }
 dashmap = "6"
 bytes = "1"
-# serialization formats matching the whatsapp-rust sqlite reference exactly
+# Reads a store written before #31 (bincode-standard blobs) so
+# storage::bincode_upgrade can convert it to protobuf. Delete with that module.
 bincode = { version = "2", features = ["serde"] }
 serde_json = "1"
 # blocking HTTP GET for the "send media from URL" path (run via spawn_blocking)
@@ -133,9 +109,10 @@ http = "1"
 # Pinned to git `main` by SHA (#30): crates.io is still on 0.7.0 and the fixes
 # this project waits on (#15) are only on main. EVERY crate of the family moves
 # together: main still declares version 0.7.0, so a crates-io 0.7.0 left behind
-# resolves next to the git one and fails as `expected Jid, found Jid`. Never
-# `[patch.crates-io]`: it would also capture the `wacore06` / `wacore070` pins
-# the migrations need. Always a `rev`, never a branch.
+# resolves next to the git one and fails as `expected Jid, found Jid`. Always a
+# `rev`, never a branch. (`[patch.crates-io]` was ruled out while the one-shot
+# migrations pinned a crates.io `wacore` next to the git one; #31 deleted them,
+# so that reason is gone.)
 #
 # `simd` is gone: upstream removed it after measuring what it was worth (#1262).
 wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
@@ -156,15 +133,6 @@ tokio-websockets = { version = "0.13", optional = true, default-features = false
     "ring",
     "rand",
 ] }
-# --- 0.6 -> 0.7 blob migration only (optional; enabled by `migrate-0-7`) ---
-# The OLD wacore, pinned exactly. Renamed so both versions can be named in one
-# file. default-features off: the migration only needs the store types, not simd.
-wacore06 = { package = "wacore", version = "=0.6.0", optional = true, default-features = false }
-# The RELEASED 0.7.0, from crates.io, next to the git one: the old side of
-# `migrate-0-7-main`, and the new side of `migrate-0-7`. Different sources, so
-# cargo keeps both. Renamed so both can be named in one file.
-wacore070 = { package = "wacore", version = "=0.7.0", optional = true, default-features = false }
-
 # Noise XX primitives + the e2e cert-chain test fixture (server mirror).
 wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", optional = true, default-features = false }
 wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", optional = true, default-features = false }

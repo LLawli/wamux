@@ -1,5 +1,5 @@
-//! `AppSyncStore` over Postgres. Sync keys and version state are bincode-standard
-//! blobs (matching the reference); MACs are raw bytes.
+//! `AppSyncStore` over Postgres. Sync keys and version state are protobuf blobs
+//! (`blob_codec`, #31); MACs are raw bytes.
 
 use async_trait::async_trait;
 use wacore::appstate::hash::HashState;
@@ -7,7 +7,10 @@ use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::error::Result;
 use wacore::store::traits::{AppStateSyncKey, AppSyncStore};
 
-use super::{PgBackend, bincode_decode, bincode_encode};
+use super::PgBackend;
+use crate::storage::blob_codec::{
+    decode_app_state_sync_key, decode_hash_state, encode_app_state_sync_key, encode_hash_state,
+};
 use crate::storage::sqlx_error::db;
 
 #[async_trait]
@@ -23,12 +26,12 @@ impl AppSyncStore for PgBackend {
         .map_err(db)?;
         match row {
             None => Ok(None),
-            Some(bytes) => Ok(Some(bincode_decode(&bytes)?)),
+            Some(bytes) => Ok(Some(decode_app_state_sync_key(&bytes)?)),
         }
     }
 
     async fn set_sync_key(&self, key_id: &[u8], key: AppStateSyncKey) -> Result<()> {
-        let data = bincode_encode(&key)?;
+        let data = encode_app_state_sync_key(&key);
         sqlx::query(
             "INSERT INTO app_state_keys (key_id, key_data, device_id) VALUES ($1, $2, $3)
              ON CONFLICT (key_id, device_id) DO UPDATE SET key_data = EXCLUDED.key_data",
@@ -58,7 +61,7 @@ impl AppSyncStore for PgBackend {
         .map_err(db)?;
         match row {
             None => Ok(None),
-            Some(bytes) => Ok(Some(bincode_decode(&bytes)?)),
+            Some(bytes) => Ok(Some(decode_hash_state(&bytes)?)),
         }
     }
 
@@ -76,7 +79,7 @@ impl AppSyncStore for PgBackend {
     }
 
     async fn set_version(&self, name: &str, state: HashState) -> Result<()> {
-        let data = bincode_encode(&state)?;
+        let data = encode_hash_state(&state);
         sqlx::query(
             "INSERT INTO app_state_versions (name, state_data, device_id) VALUES ($1, $2, $3)
              ON CONFLICT (name, device_id) DO UPDATE SET state_data = EXCLUDED.state_data",
