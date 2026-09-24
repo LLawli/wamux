@@ -85,6 +85,18 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **Channel metadata stays on the core's own projection** (issue #38, the
+  #15 queue). `ListSubscribedNewsletters` / `GetNewsletterMetadata` were
+  queued to move onto whatsapp-rust's calls once upstream #1372 was fixed. It
+  is fixed, but the library folds the answer: it matches the channel state in
+  lowercase while the server sends uppercase, so every channel, suspended ones
+  included, reads as active (reported as upstream #1546). It also folds unknown
+  values, fails a whole list on one malformed node, and turns a missing channel
+  into `Unavailable`. The core keeps issuing the queries itself and relays the
+  server's tokens verbatim. Nothing changes on the wire. A new stress suite
+  (`tests/stress_newsletter_parse.rs`, in `scripts/ci.sh`) pins both halves:
+  the core's promise, and a canary that fails when upstream changes.
+
 - **The store's structured blobs are protobuf, not bincode** (issue #31).
   `Device`, app-state versions and app-state sync keys were positional
   bincode: every field whatsapp-rust appended made every stored blob

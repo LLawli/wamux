@@ -24,30 +24,30 @@ use crate::domain::jid_parse::parse_jid;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
-// WORKAROUND (upstream oxidezap/whatsapp-rust#1372) — REMOVE WHEN FIXED.
+// WHY THE CORE ISSUES THESE QUERIES ITSELF (issue #38, upstream
+// oxidezap/whatsapp-rust#1546).
 //
-// `client.newsletter().list_subscribed()` and `.get_metadata()` cannot be used:
-// their generated `Variables` mark every field `skip_serializing_if =
-// "Option::is_none"`, and the library passes them unset, so the request carries
-// `{}` (list) or a partial object (get). These persisted GraphQL operations
-// require EVERY declared variable to be present, and the server answers
-// `400 Bad Request` when one is missing. Measured against the live accounts:
-// `{}` and any partial set fail; the complete set succeeds regardless of the
-// booleans' values.
+// This started as a workaround for upstream #1372: the library sent these
+// persisted queries with declared variables missing and the server answered
+// `400`. #1378 fixed that and the pin carries it, so `client.newsletter()
+// .list_subscribed()` / `.get_metadata()` now reach the server fine. They are
+// still not used, because of what they do with the ANSWER: they fold it into
+// `NewsletterMetadata`, and the fold loses what this RPC exists to relay.
+// Measured 2026-09-24 through the real client, with the stress mock playing the
+// server (`tests/stress_newsletter_parse.rs`):
 //
-// So the calls below issue the same persisted operations through the public
-// `MexRequest` API with every variable populated, and parse the answer here.
-// The doc ids are the ones the library generated (identical in 0.7.0 and in
-// upstream main), NOT ones this project scraped.
+//   - the state is matched in lowercase while the server sends uppercase, so
+//     every channel reads `Active`, suspended ones included (#1546);
+//   - an unknown state or verification folds into `Active` / `Unverified`;
+//   - one node without an id fails the whole list;
+//   - a missing channel is an `InvalidRequest`, which `client_err` maps to
+//     Unavailable ("the core is down") instead of NotFound.
 //
-// The moment #1372 lands, delete `list_subscribed`'s and `get_metadata`'s bodies
-// here and call the library again: nothing else in this module changes, because
-// the projection below is what the RPC returns either way.
-//
-// Update (#30): #1372 IS fixed on main -- `list_subscribed`/`get_metadata` no
-// longer send every declared variable unset. Removing this workaround is
-// still not part of #30 (scope is "keep today's behaviour"); it is queued in
-// #15, which has to verify the fix live before this hand-rolled path goes.
+// So the core sends the same persisted operations through the public
+// `MexRequest` API and projects the raw answer below, relaying the server's
+// tokens lowercased and unfolded. Revisit when #1546 is fixed AND the fold is
+// gone; the canary test in that file fails when the library changes. Every
+// variable stays populated: the server rejects an absent one, not a value.
 
 /// The `WAWebMexFetchAllNewslettersMetadataJobQuery` request, every declared
 /// variable present (#1372). Name, doc id and declared variables come from the
@@ -124,9 +124,17 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
     Ok(newsletter_to_proto(found))
 }
 
-// WORKAROUND (upstream whatsapp-rust 0.7.0, NOT YET REPORTED) — REMOVE WHEN FIXED.
+// WORKAROUND (whatsapp-rust 0.7.0) — FIXED UPSTREAM, ALREADY IN THE PIN.
 //
-// `client.newsletter().get_messages()` cannot be used, for two independent
+// Both reasons below were fixed upstream on 2026-09-22, by #1523 (the IQ goes
+// to the server and names the channel) and #1518 (every child of a
+// `<message>` is read, `<votes>` included). The pin (`f4d73ebe`, #30) carries
+// both. The hand-rolled path is still here because replacing it needs the same
+// check the MEX queries above got (#38): that the library's parsed
+// `NewsletterMessage` loses nothing this RPC relays. Until that is done, this
+// is the path production has validated.
+//
+// `client.newsletter().get_messages()` could not be used, for two independent
 // reasons, both measured live on 2026-09-21 against the production accounts.
 //
 // 1. It addresses the IQ wrong, and the server does not answer AT ALL. The
@@ -157,9 +165,7 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
 //    `<votes>` is the channel poll tally — the thing issue #26 went looking
 //    for. The library's `NewsletterMessageType` does not even have `poll`.
 //
-// So the IQ is built and parsed here, the same shape the workaround above uses
-// for the MEX queries. When this is fixed upstream, it goes back to one library
-// call and the projection below stays as it is.
+// So the IQ is built and parsed here, the same shape the MEX queries above use.
 
 /// A page of a channel's history, newest first (issue #26).
 ///
