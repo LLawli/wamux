@@ -13,6 +13,16 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **`OfflineSyncInterrupted`: a resume that was cut says so** (issue #38,
+  upstream #1380, the #15 queue). When the connection ends mid-drain, the
+  library now emits `total` (what the preview announced) and `delivered` (what
+  was processed before the cut). It reached the socket as an untyped
+  `RawEvent`; it is now `EventEnvelope.offline_sync_interrupted` (field 25),
+  typed like its two siblings. It means "not caught up, the remainder comes
+  back", never "lost": the drain acked nothing, so the server redelivers all of
+  it behind a fresh `OfflineSyncPreview`. A consumer matching the `Raw` kind
+  `OfflineSyncInterrupted` should switch to the typed event.
+
 - **`PresenceUpdate.chat`: the conversation a chat state happened in** (issue
   #24). `Event::ChatPresence` carries a whole `MessageSource`, and only
   `sender` survived the mapping. Somebody typing in a group therefore arrived

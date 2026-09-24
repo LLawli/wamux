@@ -6,10 +6,10 @@ use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::{
     ArchiveUpdate, BatchOrigin, ChatPresenceUpdate, ConnectFailureReason, Connected,
     DecryptFailMode, DeleteChatUpdate, Disconnected, InboundMessage, LazyHistorySync, LoggedOut,
-    MarkChatAsReadUpdate, MessageBatch, MuteUpdate, OfflineSyncCompleted, OfflineSyncPreview,
-    PairError, PairSuccess, PairingCode, PairingCodeRefresh, PairingQrCode, PinUpdate,
-    PresenceUpdate, Receipt, ServerAck, StarUpdate, TempBanReason, TemporaryBan, UnavailableType,
-    UndecryptableMessage,
+    MarkChatAsReadUpdate, MessageBatch, MuteUpdate, OfflineSyncCompleted, OfflineSyncInterrupted,
+    OfflineSyncPreview, PairError, PairSuccess, PairingCode, PairingCodeRefresh, PairingQrCode,
+    PinUpdate, PresenceUpdate, Receipt, ServerAck, StarUpdate, TempBanReason, TemporaryBan,
+    UnavailableType, UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -840,6 +840,26 @@ fn maps_offline_sync_completed_with_what_was_delivered() {
     match map_one(&event) {
         Some(PbEvent::OfflineSyncCompleted(c)) => assert_eq!(c.count, 5),
         other => panic!("expected offline sync completed, got {other:?}"),
+    }
+}
+
+// Issue #38 (upstream #1380): the interrupted resume used to reach the edge as
+// an untyped RawEvent. Typed like its two siblings, and never folded into
+// OfflineSyncCompleted: "not caught up" is a different statement from "done".
+#[test]
+fn maps_offline_sync_interrupted_with_both_counts() {
+    let event = Event::OfflineSyncInterrupted(
+        OfflineSyncInterrupted::builder()
+            .total(711)
+            .delivered(300)
+            .build(),
+    );
+    match map_one(&event) {
+        Some(PbEvent::OfflineSyncInterrupted(i)) => {
+            assert_eq!(i.total, 711);
+            assert_eq!(i.delivered, 300);
+        }
+        other => panic!("expected offline sync interrupted, got {other:?}"),
     }
 }
 

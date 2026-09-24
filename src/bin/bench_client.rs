@@ -125,6 +125,7 @@ fn event_kind(envelope: &pb::EventEnvelope) -> &'static str {
         Some(Event::ServerAck(_)) => "server_ack",
         Some(Event::OfflineSyncPreview(_)) => "offline_sync_preview",
         Some(Event::OfflineSyncCompleted(_)) => "offline_sync_completed",
+        Some(Event::OfflineSyncInterrupted(_)) => "offline_sync_interrupted",
         Some(Event::Raw(raw)) => raw_kind(raw),
         None => "empty",
     }
