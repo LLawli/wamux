@@ -35,6 +35,11 @@ max_connected_accounts = 200
 # Grace period (ms) for a graceful per-account stop before a hard abort.
 graceful_stop_timeout_ms = 3000
 
+# After SIGTERM, how long (ms) the server may keep draining before the
+# connections it still holds are closed. Event subscriptions end on their own
+# at shutdown; this bounds anything else. Keep it under systemd's stop timeout.
+shutdown_grace_ms = 10000
+
 # Max bytes accepted for an inbound media send (inline or URL).
 media_max_bytes = 104857600
 

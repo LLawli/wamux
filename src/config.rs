@@ -32,6 +32,11 @@ pub struct Config {
     /// Grace period for a per-account graceful stop (`Client::disconnect` +
     /// awaiting the run loop) before falling back to a hard abort.
     pub graceful_stop_timeout_ms: u64,
+    /// After SIGTERM/SIGINT, how long the server may keep draining before the
+    /// connections it still holds are closed (#35). Event subscriptions end on
+    /// their own when shutdown fires; this bounds anything else. Keep it, plus
+    /// `graceful_stop_timeout_ms`, well under systemd's 90 s stop timeout.
+    pub shutdown_grace_ms: u64,
     /// Max bytes accepted for an inbound media send (inline streamed chunks).
     pub media_max_bytes: u64,
     /// `tracing` env-filter directive.
@@ -56,6 +61,7 @@ impl Default for Config {
             replay_max_event_bytes: 0,
             max_connected_accounts: 200,
             graceful_stop_timeout_ms: 3000,
+            shutdown_grace_ms: 10_000,
             media_max_bytes: 100 * 1024 * 1024,
             log_level: "info,wamux=debug".to_string(),
             log_format: "text".to_string(),

@@ -44,7 +44,7 @@ async fn account_lifecycle_over_socket() {
         ..Config::default()
     };
     let stream = transport::uds_listener::bind(&socket_str, 0o660, None).expect("bind");
-    let router = server::build_router(registry, &config);
+    let router = server::build_router(registry, &config, transport::shutdown::Shutdown::new());
     tokio::spawn(async move {
         let _ = router.serve_with_incoming(stream).await;
     });
@@ -162,7 +162,7 @@ async fn spawn_server() -> (tonic::transport::Channel, Arc<dyn StorageEngine>) {
         ..Config::default()
     };
     let stream = transport::uds_listener::bind(&socket_str, 0o660, None).expect("bind");
-    let router = server::build_router(registry, &config);
+    let router = server::build_router(registry, &config, transport::shutdown::Shutdown::new());
     tokio::spawn(async move {
         let _ = router.serve_with_incoming(stream).await;
     });

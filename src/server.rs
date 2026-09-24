@@ -25,19 +25,28 @@ use crate::services::media_service::MediaSvc;
 use crate::services::messaging_service::MessagingSvc;
 use crate::services::newsletter_service::NewsletterSvc;
 use crate::state::AccountRegistry;
+use crate::transport::shutdown::Shutdown;
 
 /// The router carries our one cross-cutting layer (per-request observability);
 /// the type names that layer so callers can store the router.
 pub type ObservedRouter = Router<Stack<RequestObserveLayer, Identity>>;
 
-pub fn build_router(registry: Arc<AccountRegistry>, config: &Config) -> ObservedRouter {
+/// `shutdown` ends every event subscription when it fires, which is what lets
+/// the server drain at all (#35).
+pub fn build_router(
+    registry: Arc<AccountRegistry>,
+    config: &Config,
+    shutdown: Shutdown,
+) -> ObservedRouter {
     // Render handle for AdminService.GetMetrics; also installs the global
     // recorder the observability layer below feeds.
     let prometheus = crate::observe::prometheus_handle();
     let mut router = Server::builder()
         .layer(RequestObserveLayer)
         .add_service(AccountServiceServer::new(AccountSvc::new(registry.clone())))
-        .add_service(EventServiceServer::new(EventSvc::new(registry.clone())))
+        .add_service(EventServiceServer::new(
+            EventSvc::new(registry.clone()).with_shutdown(shutdown),
+        ))
         .add_service(MessagingServiceServer::new(MessagingSvc::new(
             registry.clone(),
             config.media_max_bytes,
@@ -63,4 +72,32 @@ pub fn build_router(registry: Arc<AccountRegistry>, config: &Config) -> Observed
     }
 
     router
+}
+
+/// How a shutdown ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drained {
+    /// Every connection closed on its own after `shutdown` fired.
+    Clean,
+    /// The grace elapsed first; the remaining connections were dropped.
+    GraceElapsed,
+}
+
+/// Serve on `incoming` until `shutdown` fires, then drain for at most `grace`
+/// (#35). The one serving path: `main` and the shutdown test both call it.
+pub async fn serve_until_shutdown(
+    router: ObservedRouter,
+    incoming: tokio_stream::wrappers::UnixListenerStream,
+    shutdown: Shutdown,
+    grace: std::time::Duration,
+) -> Result<Drained, tonic::transport::Error> {
+    let signal = {
+        let shutdown = shutdown.clone();
+        async move { shutdown.triggered().await }
+    };
+    let serve = router.serve_with_incoming_shutdown(incoming, signal);
+    match crate::transport::shutdown::drain_or_deadline(serve, &shutdown, grace).await {
+        Some(served) => served.map(|()| Drained::Clean),
+        None => Ok(Drained::GraceElapsed),
+    }
 }
