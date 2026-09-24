@@ -21,6 +21,8 @@ pub mod blob_migration_0_7_main;
 /// Plan / apply / CLI shared by the migration bins.
 #[cfg(any(feature = "migrate-0-7", feature = "migrate-0-7-main"))]
 pub mod blob_migration_runner;
+/// PALLIATIVE for an upstream app-state bug; goes with #36.
+pub mod bootstrapped_repair;
 pub mod engine;
 pub mod postgres;
 pub mod sqlite;
