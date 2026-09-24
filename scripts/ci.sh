@@ -108,6 +108,11 @@ cargo test --features stress --test stress_handshake
 stage "stress tests (newsletter parse vs the library)"
 must_run_tests --features stress --test stress_newsletter_parse
 
+# The channel-history IQ, core vs library over the same page (#40): where they
+# agree, and the four places the library answers differently.
+stage "stress tests (newsletter history vs the library)"
+must_run_tests --features stress --test stress_newsletter_history
+
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
   must_run_tests --test load_multi_account -- --ignored

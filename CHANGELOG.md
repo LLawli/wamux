@@ -93,6 +93,19 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **Channel history stays on the core's own IQ** (issue #40). Upstream fixed
+  both reasons `GetNewsletterMessages` built the history IQ itself (#1523, the
+  addressing; #1518, the dropped `<votes>`), so the library's
+  `get_messages` was compared against it over the same page. They agree on
+  ids, payloads, reactions, votes and forwards. The library still turns an
+  absent row `type` into `text`, drops a `<meta polltype>` it has no variant
+  for (or that sits on a non-poll row), fails the whole call on an answer
+  without `<messages>` (`Unavailable` through the core), and skips a
+  malformed `<vote>`. The first two lose what the server sent (reported as
+  upstream #1548), so the core keeps its path. Nothing changes on the wire. The mock now plays back
+  `newsletter` IQs, and `tests/stress_newsletter_history.rs` (in
+  `scripts/ci.sh`) pins both the agreement and each difference.
+
 - **`DeleteMessage` on a status answers `InvalidArgument`** (issue #41).
   With `for_everyone` on a `status@broadcast` key it used to reach the chat
   revoke, which the library refuses there, and came back `Unavailable`, which

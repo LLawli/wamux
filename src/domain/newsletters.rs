@@ -124,48 +124,35 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
     Ok(newsletter_to_proto(found))
 }
 
-// WORKAROUND (whatsapp-rust 0.7.0) — FIXED UPSTREAM, ALREADY IN THE PIN.
+// WHY THE HISTORY IQ IS STILL BUILT AND PARSED HERE (issue #40, 2026-09-24).
 //
-// Both reasons below were fixed upstream on 2026-09-22, by #1523 (the IQ goes
-// to the server and names the channel) and #1518 (every child of a
-// `<message>` is read, `<votes>` included). The pin (`f4d73ebe`, #30) carries
-// both. The hand-rolled path is still here because replacing it needs the same
-// check the MEX queries above got (#38): that the library's parsed
-// `NewsletterMessage` loses nothing this RPC relays. Until that is done, this
-// is the path production has validated.
+// It started as a workaround for two library bugs, measured live on 2026-09-21:
+// the library addressed the IQ to the channel (the server answered with
+// silence, and the keepalive watchdog then dropped the account), and its
+// parser kept only `<plaintext>` and `<reactions>`, losing `<votes>`, the
+// channel poll tally #26 went looking for. Upstream fixed both on 2026-09-22
+// (#1523, #1518), and the pin (`f4d73ebe`, #30) carries the fixes: the
+// library now sends the same IQ `history_query` builds.
 //
-// `client.newsletter().get_messages()` could not be used, for two independent
-// reasons, both measured live on 2026-09-21 against the production accounts.
+// What keeps this path is the check #38 ran on the metadata queries: the
+// library's parsed `NewsletterMessage` against what this RPC relays, over the
+// same bytes (`tests/stress_newsletter_history.rs`). It agrees on the ids, the
+// payload (both re-encode the decoded `wa.Message`, and both hand back an
+// empty one for a body that does not decode), reactions, 32-byte votes and
+// forwards. It differs in four places, and the first two lose what the
+// server sent (reported as upstream #1548):
 //
-// 1. It addresses the IQ wrong, and the server does not answer AT ALL. The
-//    library sends `to = <channel>` with `<messages count="N"/>`. WA Web (and
-//    whatsmeow) send it to the server and name the channel on the inner node:
+// 1. An absent `type` comes back as `text`. The core relays the absence.
+// 2. `<meta polltype>` survives only on a `poll` row, and only as one of the
+//    five stages the library has a variant for. Anything else becomes `None`.
+//    The core relays the token, like every other server token it relays.
+// 3. An answer without `<messages>` fails the whole call, which `client_err`
+//    maps to `Unavailable`. The core answers an empty page.
+// 4. A `<vote>` whose content is not 32 bytes, or that has no `count`, is
+//    skipped. The core relays the bytes as sent and an absent count as 0.
 //
-//      <iq to="s.whatsapp.net" xmlns="newsletter" type="get">
-//        <messages type="jid" jid="<channel>" count="N" [before="M"]/>
-//      </iq>
-//
-//    The library's spelling draws no stanza back — not an error stanza,
-//    silence — and 22-33s later the keepalive watchdog declares the socket dead
-//    and reconnects the whole account. One history read takes the connection
-//    down. The corrected spelling answers in well under a second.
-//
-// 2. Its parser reads only `<plaintext>` and `<reactions>` off each `<message>`
-//    and drops every other child, so even a working call would lose exactly
-//    what this RPC exists for. The server really sends:
-//
-//      <message server_id="777" id="AC3C..." type="poll" t="1790001172">
-//        <forwards_count count="750"/>
-//        <meta polltype="creation"/>
-//        <votes><vote count="25328">..32 bytes..</vote> ...</votes>
-//        <reactions/>
-//        <plaintext>..</plaintext>
-//      </message>
-//
-//    `<votes>` is the channel poll tally — the thing issue #26 went looking
-//    for. The library's `NewsletterMessageType` does not even have `poll`.
-//
-// So the IQ is built and parsed here, the same shape the MEX queries above use.
+// The `library_*` tests pin each one. When one fails, upstream moved: re-run
+// the comparison before deciding the swap again.
 
 /// A page of a channel's history, newest first (issue #26).
 ///
