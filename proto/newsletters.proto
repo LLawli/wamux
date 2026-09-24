@@ -106,6 +106,13 @@ message NewsletterMessage {
   // what tells a `type = "poll"` row apart from whatever else the server may
   // label `poll`. Empty when there is no `<meta>`.
   string poll_type = 7;
+  // The row's `edit` attribute, verbatim (#44). Empty when absent, which is
+  // the common case. It is what tells a revoked row, whose body the server
+  // empties, apart from a row whose body did not decode: both carry an empty
+  // `message.raw_message`, and only this says which. Per the library's
+  // `EditAttribute`: "3" admin edit, "8" admin revoke. Mapping a token to a
+  // meaning is the edge's job; an unknown one relays as sent.
+  string edit = 8;
 }
 
 // Read a page of a channel's history, newest first.
