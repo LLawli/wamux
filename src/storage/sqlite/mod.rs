@@ -7,6 +7,7 @@
 
 mod accounts;
 mod app_sync_store;
+mod bincode_upgrade;
 mod device_store;
 mod msg_secret_store;
 mod protocol_store;
@@ -71,9 +72,17 @@ pub async fn connect(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
         .await
 }
 
-/// Apply pending migrations.
-pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::migrate::MigrateError> {
-    MIGRATOR.run(pool).await
+/// Apply pending SQL migrations, then the blob-format conversion SQL cannot do
+/// (`storage::bincode_upgrade`, #31). Every path to a usable pool runs this, so
+/// no caller can reach a store whose blobs are still bincode.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
+    MIGRATOR
+        .run(pool)
+        .await
+        .map_err(|e| StoreError::Migration(Box::new(e)))?;
+    bincode_upgrade::upgrade_bincode_blobs(pool)
+        .await
+        .map_err(|e| StoreError::Migration(Box::new(e)))
 }
 
 /// The SQLite engine: one file, one connection, N `SqliteBackend`s.
@@ -89,9 +98,7 @@ impl SqliteStorage {
         let pool = connect(database_url)
             .await
             .map_err(|e| StoreError::Connection(Box::new(e)))?;
-        run_migrations(&pool)
-            .await
-            .map_err(|e| StoreError::Migration(Box::new(e)))?;
+        run_migrations(&pool).await?;
         Ok(Self::from_pool(pool))
     }
 

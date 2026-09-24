@@ -10,6 +10,7 @@
 
 mod accounts;
 mod app_sync_store;
+mod bincode_upgrade;
 mod device_store;
 mod msg_secret_store;
 mod protocol_store;
@@ -22,7 +23,7 @@ use sqlx::postgres::PgPoolOptions;
 use wacore::store::error::StoreError;
 use wacore::store::traits::Backend;
 
-use crate::storage::blob_codec::{bincode_decode, bincode_encode, now_secs};
+use crate::storage::blob_codec::now_secs;
 
 use crate::storage::engine::{AccountRow, StorageEngine};
 
@@ -58,9 +59,17 @@ pub async fn connect(database_url: &str, max_connections: u32) -> Result<PgPool,
         .await
 }
 
-/// Apply pending migrations.
-pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
-    MIGRATOR.run(pool).await
+/// Apply pending SQL migrations, then the blob-format conversion SQL cannot do
+/// (`storage::bincode_upgrade`, #31). Every path to a usable pool runs this, so
+/// no caller can reach a store whose blobs are still bincode.
+pub async fn run_migrations(pool: &PgPool) -> Result<(), StoreError> {
+    MIGRATOR
+        .run(pool)
+        .await
+        .map_err(|e| StoreError::Migration(Box::new(e)))?;
+    bincode_upgrade::upgrade_bincode_blobs(pool)
+        .await
+        .map_err(|e| StoreError::Migration(Box::new(e)))
 }
 
 /// The Postgres engine: one shared pool, the `accounts` table, and a
@@ -78,9 +87,7 @@ impl PgStorage {
         let pool = connect(database_url, max_connections)
             .await
             .map_err(|e| StoreError::Connection(Box::new(e)))?;
-        run_migrations(&pool)
-            .await
-            .map_err(|e| StoreError::Migration(Box::new(e)))?;
+        run_migrations(&pool).await?;
         Ok(Self::from_pool(pool))
     }
 

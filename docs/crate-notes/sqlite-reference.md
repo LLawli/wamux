@@ -2,6 +2,11 @@ I now have the complete picture. I have read all source files, the schema, the C
 
 # whatsapp-rust-sqlite-storage 0.6.0 — Complete Storage Reference
 
+> **Historical (0.6.0).** wamux no longer mirrors these byte formats for the
+> structured blobs: since #31 they are protobuf (`proto/store/blobs.proto`), and
+> upstream's own backend moved off bincode too (protobuf wire messages, `Device`
+> as columns). The raw-byte and serde_json formats below still apply.
+
 Crate root: `/var/home/luka/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/whatsapp-rust-sqlite-storage-0.6.0/`
 Source files: `src/lib.rs` (only re-exports `SqliteStore`), `src/schema.rs`, `src/sqlite_store.rs` (3091 lines, all stores + the store struct).
 

@@ -40,6 +40,18 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Fixed
 
+- **App-state writes work again after the main bump** (issue #36).
+  `MarkChatRead`, pin, archive, mute and star were all refused with "its
+  bootstrap has not completed" (330 `unavailable`, zero `ok`, since the #30
+  deploy). The #30 migration stored every app-state collection as not
+  bootstrapped, and whatsapp-rust never marks a collection that already has a
+  baseline and is at the server's head, so the flag stayed unset. The #31
+  conversion marks every collection with `version > 0` bootstrapped, once,
+  leaving every other field (`mac_mismatch_fatal` included) as it was. This is
+  a palliative: it goes when upstream records the flag itself, tracked in #36.
+  Cost accepted: a collection that was part way through a paged bootstrap under
+  0.7.0 is also marked complete.
+
 - **SIGTERM now stops the daemon** (issue #35). With any `SubscribeEvents`
   stream open, a stop used to hang until systemd SIGKILLed the process after
   90 s: tonic waits, with no deadline, for every connection to close, and an
@@ -52,19 +64,38 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **The store's structured blobs are protobuf, not bincode** (issue #31).
+  `Device`, app-state versions and app-state sync keys were positional
+  bincode: every field whatsapp-rust appended made every stored blob
+  unreadable until a one-shot migration, linking the old `wacore` next to the
+  new one, rewrote them. That happened on both of the last two upgrades. They
+  are now protobuf (`proto/store/blobs.proto`), field-tagged, so a field a blob
+  predates decodes as its default; a field upstream adds is a compile error in
+  `storage/blob_codec`, answered with a new field number, not an outage.
+  - **Operators: nothing to run.** The daemon converts the store on open,
+    before any account loads, in one transaction: every blob is converted and
+    decoded back against the original (for a `Device`, every persisted field
+    including the key material) before anything is written, and one that will
+    not convert stops the daemon with nothing changed, naming the row. A new
+    `blob_format` table records the result, so later starts skip it. Back up
+    the store before the first start, as with any storage change.
+  - **Removed:** the `migrate-0-7` and `migrate-0-7-main` features, their bins,
+    and the `wacore` 0.6.0 / 0.7.0 dependencies they linked. See the #30 entry
+    for a store that still needs them.
+
 - **whatsapp-rust moves from the crates.io 0.7.0 release to git main
   `f4d73ebe`** (issue #30). No new upstream feature is exposed; the gRPC
   contract is unchanged except as noted here.
-  - **Operators: migrate the store before starting the new build.** `Device`
-    and `HashState` are positional bincode and main changed both layouts, so
-    without the migration no paired account loads. Stop the daemon, back up,
-    then `cargo run --release --features migrate-0-7-main --bin migrate_0_7_main`
-    (dry run) and again with `-- --apply`. It is idempotent and writes nothing
-    unless every blob converts. A store still on 0.6 runs `migrate_0_7` first.
-    After it, each account's first connect does one full Noise XX handshake
-    (the cached server chain is re-verified) and each app-state collection
-    bootstraps once more; both are upstream's documented behaviour for records
-    written before those fields existed. Tracked for good in #31.
+  - **Operators on a store written before this bump: migrate it with commit
+    `ac4c21b` first.** `Device` and `HashState` were positional bincode and main
+    changed both layouts. The one-shot bins that bridge them
+    (`migrate_0_7_main`, and `migrate_0_7` for a store still on 0.6) were
+    deleted by #31, so check out `ac4c21b`, stop the daemon, back up, run
+    `cargo run --release --features migrate-0-7-main --bin migrate_0_7_main`
+    (dry run) and again with `-- --apply`, then start this build, which
+    converts the result to protobuf on open (see #31 below). After it, each
+    account's first connect does one full Noise XX handshake (the cached server
+    chain is re-verified).
   - **A `@c.us` recipient now echoes as `@s.whatsapp.net`.** The library parses
     the legacy spelling as a phone user (upstream #1371), which is the fix for
     #4: such sends used to be encrypted for nobody. The core still rewrites no

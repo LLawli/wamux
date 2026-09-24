@@ -84,11 +84,15 @@ src/
 - One DB, one pool; every store row scoped by integer `device_id`. `accounts`
   (UUID/external_ref ↔ `device_id`, IDENTITY) is the parent; all store tables FK to
   it `ON DELETE CASCADE`, so `DeleteAccount` is one delete.
-- **Wire format matches the sqlite reference exactly** (see
-  `docs/crate-notes/sqlite-reference.md`): raw bytes for keys/sessions/records,
-  bincode-standard for app-state keys/versions, serde_json for `device_registry`,
-  and the whole `Device` as one bincode blob (runtime-only `device_props` restored
-  from `DEVICE_PROPS` on load).
+- **Byte formats** (`storage/blob_codec.rs`, identical across both engines): raw
+  bytes for keys/sessions/records, serde_json for `device_registry`, and protobuf
+  (`proto/store/blobs.proto`, #31) for the three structured blobs: the whole
+  `Device` (runtime-only `device_props` restored from `DEVICE_PROPS` on load),
+  app-state versions and app-state sync keys. The last two keep the field numbers
+  of whatsapp-rust's own sqlite backend. Field-tagged, so a field upstream adds
+  decodes as its default instead of making every stored blob unreadable, as
+  bincode did. `blob_format` records the format; a store still on bincode is
+  converted on open (`storage/bincode_upgrade.rs`).
 
 ## Media
 - Send: `MediaService` not used for send; `MessagingService.SendMedia` client-streams

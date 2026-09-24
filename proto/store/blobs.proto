@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+// On-disk encoding of the three structured BLOB columns (#31):
+//
+//   device.data                     DeviceBlob
+//   app_state_versions.state_data   HashStateWire
+//   app_state_keys.key_data         AppStateSyncKeyWire
+//
+// NOT part of the gRPC contract: it is compiled separately and kept out of the
+// reflection descriptor. It replaces bincode-standard, which is positional, so
+// every field upstream appended to one of these types made every stored blob
+// unreadable (0.6 -> 0.7.0, then 0.7.0 -> main). Protobuf is field-tagged: a
+// field a blob predates decodes as its default.
+//
+// FIELD NUMBERS ARE THE STORED FORMAT. Never renumber or reuse one; retire a
+// field with `reserved`. Adding a field upstream shows up as a compile error in
+// src/storage/blob_codec/ (the decode builds each wacore struct field by field,
+// never through `..Default::default()`), and the answer is a new number here.
+//
+// NoiseCert, ServerCertChain, AppStateSyncKeyWire and HashStateWire keep the
+// names and field numbers of whatsapp-rust's own sqlite backend
+// (storages/sqlite-storage/proto/wire.proto), so those blobs are
+// wire-compatible with it. The upstream backend stores `Device` as columns, so
+// DeviceBlob has no upstream counterpart.
+package wamux.store;
+
+message NoiseCert {
+  bytes key = 1; // 32-byte X25519 public key
+  int64 not_before = 2;
+  int64 not_after = 3;
+}
+
+message ServerCertChain {
+  NoiseCert intermediate = 1;
+  NoiseCert leaf = 2;
+  // Absent in a chain cached before the field existed: false, so the next
+  // connect falls back to one XX, which is the safe direction.
+  bool signature_verified = 3;
+}
+
+message AppStateSyncKeyWire {
+  bytes key_data = 1; // 32-byte app-state master key
+  bytes fingerprint = 2;
+  int64 timestamp = 3;
+}
+
+message HashStateWire {
+  uint64 version = 1;
+  bytes hash = 2; // 128-byte ltHash
+  // Generated as a BTreeMap (build.rs), so an encode is deterministic and two
+  // engines holding the same state store the same bytes.
+  map<string, bytes> index_value_map = 3;
+  bool mac_mismatch_fatal = 4;
+  // Absent means "no completed bootstrap": re-bootstraps once, the safe
+  // direction (version 0 reads the same whether never synced or synced empty).
+  bool bootstrapped = 5;
+}
+
+// wacore_binary::Jid, field by field, the shape its serde derive writes. Not
+// its text form: reading text back goes through Jid::from_str and its special
+// cases (a LID user may contain dots, agent and device share separators), and
+// a stored identity should come back without being re-parsed.
+message JidWire {
+  string user = 1;
+  string server = 2; // Server::as_str()
+  uint32 agent = 3; // u8 in wacore
+  uint32 device = 4; // u16 in wacore
+  uint32 integrator = 5; // u16 in wacore
+}
+
+message ServerClientExpirationWire {
+  int64 expires_at = 1;
+  uint32 version_primary = 2;
+  uint32 version_secondary = 3;
+  uint32 version_tertiary = 4;
+}
+
+// wacore::store::Device minus its runtime-only fields (device_props,
+// client_profile, nct_salt_sync_seen: #[serde(skip)] upstream, restored on
+// load). `optional` wherever wacore has an Option, so None and Some(empty)
+// stay distinct.
+message DeviceBlob {
+  JidWire pn = 1;
+  JidWire lid = 2;
+  uint32 registration_id = 3;
+  // Key pairs as private (32) || public (32), the layout of wacore's
+  // key_pair_serde. This is the account's identity: see device_wire.rs.
+  bytes noise_key = 4;
+  bytes identity_key = 5;
+  bytes signed_pre_key = 6;
+  uint32 signed_pre_key_id = 7;
+  bytes signed_pre_key_signature = 8; // 64 bytes
+  bytes adv_secret_key = 9; // 32 bytes
+  // ADVSignedDeviceIdentity as its own protobuf bytes (wacore's account_serde).
+  optional bytes account = 10;
+  string push_name = 11;
+  uint32 app_version_primary = 12;
+  uint32 app_version_secondary = 13;
+  uint32 app_version_tertiary = 14;
+  int64 app_version_last_fetched_ms = 15;
+  optional bytes edge_routing_info = 16;
+  optional string props_hash = 17;
+  uint32 next_pre_key_id = 18;
+  uint32 first_unupload_pre_key_id = 19;
+  bool server_has_prekeys = 20;
+  optional bytes nct_salt = 21;
+  ServerCertChain server_cert_chain = 22;
+  int32 login_counter = 23;
+  bool lid_migrated = 24;
+  int64 last_signed_pre_key_rotation_ms = 25;
+  ServerClientExpirationWire server_client_expiration = 26;
+  bool read_receipts_disabled = 27;
+}

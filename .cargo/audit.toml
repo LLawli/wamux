@@ -12,11 +12,10 @@ ignore = [
     "RUSTSEC-2023-0071",
 
     # RUSTSEC-2025-0141 — bincode is unmaintained (the team stopped work).
-    # Not a vulnerability: an advisory about maintenance. bincode 2 with
-    # config::standard() IS the wire format whatsapp-rust uses for the Device,
-    # AppStateSyncKey and HashState blobs, and this project must stay
-    # byte-compatible with it (see storage/blob_codec.rs and its round-trip
-    # tests). Switching serializers would silently corrupt every existing
-    # store. Revisit if and when whatsapp-rust migrates.
+    # Not a vulnerability: an advisory about maintenance. Since #31 the store
+    # writes protobuf, and bincode is only READ, once, to convert a store
+    # written before that (storage/bincode_upgrade.rs), on data this daemon
+    # wrote itself. Revisit: delete the entry together with that module and the
+    # dependency, once every deployed store reports blob_format = 'protobuf'.
     "RUSTSEC-2025-0141",
 ]

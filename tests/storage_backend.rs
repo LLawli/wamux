@@ -135,7 +135,7 @@ async fn sqlite_account_delete_cascades_to_scoped_rows() {
 /// the SAME bytes, so a store can move between them. Saves one identical
 /// `Device` through each engine and compares the raw blob columns.
 ///
-/// A divergence here (a bincode config drift, a driver encoding a BLOB
+/// A divergence here (a codec drift, a driver encoding a BLOB
 /// differently) would not fail any other test — each engine would keep reading
 /// back what it wrote — but it would silently make the two stores
 /// non-interchangeable. Needs both engines, so it runs in the Postgres pass.
