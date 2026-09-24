@@ -15,6 +15,7 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::admin_service_client::AdminServiceClient;
 use wamux::proto::v1::contact_service_client::ContactServiceClient;
+use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage::StorageEngine;
 use wamux::{server, transport};
@@ -293,6 +294,73 @@ async fn lid_mappings_are_readable_over_socket() {
         push_name.unwrap_err().code(),
         tonic::Code::FailedPrecondition
     );
+
+    accounts
+        .delete_account(account_ref(&created.uuid))
+        .await
+        .expect("delete");
+}
+
+/// Issue #41: a status is revoked through RevokeStatus, never DeleteMessage.
+/// Both answers below are about the request's shape, so they come back as
+/// `InvalidArgument` before the account is looked up: a disconnected account
+/// is enough, and the edge hears what to fix rather than "not connected".
+#[tokio::test]
+async fn status_revoke_is_refused_on_the_wrong_shape_over_socket() {
+    let (channel, _engine) = spawn_server().await;
+    let mut accounts = AccountServiceClient::new(channel.clone());
+    let mut messaging = MessagingServiceClient::new(channel);
+    let created = accounts
+        .create_account(pb::CreateAccountRequest {
+            external_ref: Some(format!("revoke-status-{}", uuid::Uuid::new_v4())),
+        })
+        .await
+        .expect("create_account")
+        .into_inner();
+    let account = Some(account_ref(&created.uuid));
+
+    // Before #41 this reached the chat revoke, which the library refuses for
+    // status@broadcast, and the edge read `Unavailable`.
+    let delete = messaging
+        .delete_message(pb::DeleteMessageRequest {
+            account: account.clone(),
+            target: Some(pb::MessageKey {
+                remote_jid: "status@broadcast".to_string(),
+                id: "3EB0STATUS".to_string(),
+                from_me: true,
+                participant: String::new(),
+            }),
+            for_everyone: true,
+        })
+        .await
+        .expect_err("a status is not revoked through DeleteMessage");
+    assert_eq!(delete.code(), tonic::Code::InvalidArgument);
+    assert!(
+        delete.message().contains("RevokeStatus"),
+        "the refusal must name the RPC to use: {}",
+        delete.message()
+    );
+
+    let shapes = [
+        ("", vec!["5511999000111@s.whatsapp.net".to_string()]),
+        ("3EB0STATUS", vec![]),
+        ("3EB0STATUS", vec![String::new()]),
+    ];
+    for (message_id, recipients) in shapes {
+        let revoke = messaging
+            .revoke_status(pb::RevokeStatusRequest {
+                account: account.clone(),
+                message_id: message_id.to_string(),
+                recipients: recipients.clone(),
+            })
+            .await
+            .expect_err("a malformed revoke is refused");
+        assert_eq!(
+            revoke.code(),
+            tonic::Code::InvalidArgument,
+            "id {message_id:?}, recipients {recipients:?}"
+        );
+    }
 
     accounts
         .delete_account(account_ref(&created.uuid))

@@ -147,8 +147,9 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::DeleteMessageRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let target = require_field(req.target, "target")?;
+        messaging::refuse_status_revoke(&target, req.for_everyone)?;
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let revoke = messaging::delete_message(&client, &target, req.for_everyone).await?;
         if let Some(result) = revoke {
             self.echo(&handle, &client, &result).await;
@@ -372,6 +373,17 @@ impl MessagingService for MessagingSvc {
         // Same inline-only contract as SendMedia: the core fetches no URLs.
         let data = collect_status_media(&mut stream, self.media_max_bytes).await?;
         let result = status::post_status_media(&client, &header, data).await?;
+        Ok(self.echoed(&handle, &client, result).await)
+    }
+
+    async fn revoke_status(
+        &self,
+        request: Request<pb::RevokeStatusRequest>,
+    ) -> Result<Response<pb::SendResult>, Status> {
+        let req = request.into_inner();
+        let revoke = status::parse_status_revoke(&req)?;
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
+        let result = status::revoke_status(&client, revoke).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 }

@@ -39,7 +39,8 @@ src/
   issue #20 and docs/BREAKING-CHANGES-2026-09-02.md); chat actions (StarMessage, ArchiveChat, PinChat, MuteChat,
   DeleteChat); rich sends (SendContact, SendPoll); polls (SendPollVote,
   AggregatePollVotes -- the tally sends no stanza, it opens votes the edge
-  supplies, issue #13); status (PostStatusText, PostStatusMedia).
+  supplies, issue #13); status (PostStatusText, PostStatusMedia, RevokeStatus -- the edge hands
+  back the recipients it posted to, issue #41).
 - **MediaService**: DownloadMedia (server stream: meta frame + byte chunks).
 - **GroupService**, **NewsletterService**, **ContactService**,
   **AdminService** (GetMetrics).

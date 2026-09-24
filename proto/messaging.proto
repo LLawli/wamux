@@ -89,7 +89,10 @@ message EditMessageRequest {
 message DeleteMessageRequest {
   AccountRef account = 1;
   MessageKey target = 2;
-  bool for_everyone = 3; // true=revoke for all, false=delete for me
+  // true=revoke for all, false=delete for me. A status (`remote_jid` =
+  // `status@broadcast`) cannot be revoked here: that is RevokeStatus, which
+  // needs the recipient list this request has no field for (issue #41).
+  bool for_everyone = 3;
 }
 
 // On-demand history fetch (PDO HistorySyncOnDemand): asks the phone for `count`
@@ -298,6 +301,15 @@ message PostStatusMediaChunk {
   }
 }
 
+// Revoke a status this account posted (issue #41). A status revoke is encrypted
+// to the same device set as the status itself, so the edge hands back the
+// recipient list it posted with. The core keeps no record of it (relay-pure).
+message RevokeStatusRequest {
+  AccountRef account = 1;
+  string message_id = 2;          // the status's own id: PostStatus* SendResult.key.id
+  repeated string recipients = 3; // the same device set the status was posted to
+}
+
 // --- Answering a button, a list or a template (issue #28) ---
 //
 // An offer (`buttonsMessage`, `listMessage`, `templateMessage`,
@@ -434,4 +446,7 @@ service MessagingService {
   // Status / stories.
   rpc PostStatusText(PostStatusTextRequest) returns (SendResult);
   rpc PostStatusMedia(stream PostStatusMediaChunk) returns (SendResult);
+  // The answer's key is the revoke stanza's own, like EditMessage's; the
+  // status it revoked is the echo's `protocol_target`.
+  rpc RevokeStatus(RevokeStatusRequest) returns (SendResult);
 }
