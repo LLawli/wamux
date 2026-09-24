@@ -139,6 +139,20 @@ pub async fn edit_message(
         .map_err(client_err)
 }
 
+/// A status cannot be revoked through DeleteMessage (issue #41): the chat
+/// revoke is refused by the library for `status@broadcast`, and the status
+/// revoke needs recipients this request has no field for. Checked before the
+/// account is looked up, because it is about the request, not the account.
+pub fn refuse_status_revoke(target: &pb::MessageKey, for_everyone: bool) -> Result<(), WamuxError> {
+    if !for_everyone || parse_jid(&target.remote_jid)? != Jid::status_broadcast() {
+        return Ok(());
+    }
+    Err(WamuxError::InvalidArgument(format!(
+        "message {} is a status; revoke it with RevokeStatus, which takes the recipients it was posted to",
+        target.id
+    )))
+}
+
 pub async fn delete_message(
     client: &Client,
     target: &pb::MessageKey,
@@ -276,6 +290,30 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+
+    fn key_in(chat: &str) -> pb::MessageKey {
+        pb::MessageKey {
+            remote_jid: chat.to_string(),
+            id: "3EB0TARGET".to_string(),
+            from_me: true,
+            participant: String::new(),
+        }
+    }
+
+    /// Issue #41: only a revoke of a status is refused; deleting a status for
+    /// me, and revoking anything in a real chat, still go through.
+    #[test]
+    fn only_a_status_revoke_is_refused() {
+        let status = key_in("status@broadcast");
+        assert!(matches!(
+            refuse_status_revoke(&status, true),
+            Err(WamuxError::InvalidArgument(_))
+        ));
+        assert!(refuse_status_revoke(&status, false).is_ok());
+        for chat in ["5511999000111@s.whatsapp.net", "120363041234567890@g.us"] {
+            assert!(refuse_status_revoke(&key_in(chat), true).is_ok(), "{chat}");
+        }
+    }
 
     #[test]
     fn send_result_maps_to_proto_key_with_from_me() {

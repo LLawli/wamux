@@ -13,6 +13,14 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **`RevokeStatus`: a posted status can be taken down** (issue #41). A status
+  revoke is encrypted to the status's own recipients, so the request carries
+  them: `message_id` (the `PostStatus*` answer's `key.id`) and `recipients`,
+  the same list the status was posted with. The core keeps no record of it.
+  The answer's key is the revoke stanza's own, like `EditMessage`; the revoke
+  echoes in `status@broadcast` as a delete whose `protocol_target` is the
+  status.
+
 - **The six library-built sends echo too** (issue #38, upstream #1406, the
   #15 queue). `SendPoll`, `SendPollVote`, `EditMessage`, `DeleteMessage` (for
   everyone) and `PostStatusText`/`PostStatusMedia` now publish the same
@@ -84,6 +92,13 @@ migration note, since the edge that consumes this socket has to follow them.
   their graceful stop, the socket is unlinked and `wamux stopped` is logged.
 
 ### Changed
+
+- **`DeleteMessage` on a status answers `InvalidArgument`** (issue #41).
+  With `for_everyone` on a `status@broadcast` key it used to reach the chat
+  revoke, which the library refuses there, and came back `Unavailable`, which
+  reads as the core being down. It now names `RevokeStatus`, and is checked
+  before the account is, so it answers the same whether or not the account is
+  connected. Delete-for-me on a status is unchanged.
 
 - **Channel metadata stays on the core's own projection** (issue #38, the
   #15 queue). `ListSubscribedNewsletters` / `GetNewsletterMetadata` were

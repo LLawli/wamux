@@ -255,6 +255,44 @@ fn a_sent_revoke_echoes_as_a_delete_of_its_target() {
     assert_eq!(out.key.expect("key").id, "3EB0REVOKESTANZA");
 }
 
+/// Issue #41: a status revoke is the library's `status().revoke`, a REVOKE
+/// protocol message keyed on `status@broadcast`. It echoes as a delete of the
+/// status, in the status chat, like the chat revoke above.
+#[test]
+fn a_sent_status_revoke_echoes_as_a_delete_of_the_status() {
+    use wa::message::protocol_message::Type;
+    let chat = "status@broadcast";
+    let msg = wa::Message {
+        protocol_message: MessageField::some(wa::message::ProtocolMessage {
+            key: MessageField::some(wa::MessageKey {
+                remote_jid: Some(chat.to_string()),
+                from_me: Some(true),
+                id: Some("3EB0STATUS".to_string()),
+                participant: None,
+            }),
+            r#type: Some(Type::REVOKE),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let out = crate::domain::event_mapping::map_sent(
+        sent_key(chat, "3EB0STATUSREVOKE"),
+        chat,
+        "5511888888888@s.whatsapp.net",
+        0,
+        &msg,
+    );
+    assert!(out.is_delete);
+    let target = out
+        .protocol_target
+        .expect("a status revoke names the status");
+    assert_eq!(target.id, "3EB0STATUS");
+    assert_eq!(target.remote_jid, chat);
+    let key = out.key.expect("key");
+    assert_eq!(key.id, "3EB0STATUSREVOKE");
+    assert_eq!(key.remote_jid, chat);
+}
+
 fn sent_key(chat: &str, id: &str) -> pb::MessageKey {
     pb::MessageKey {
         remote_jid: chat.to_string(),

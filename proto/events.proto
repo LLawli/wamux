@@ -47,8 +47,8 @@ message SubscribeRequest {
 //
 // WHICH SENDS ECHO: every one that puts a message in a chat. SendText,
 // SendMedia, SendReaction, SendContact, SendInteractiveReply, SendPoll,
-// SendPollVote, EditMessage, DeleteMessage with `for_everyone`, PostStatusText
-// and PostStatusMedia. DeleteMessage for-me sends nothing to the chat (it is an
+// SendPollVote, EditMessage, DeleteMessage with `for_everyone`, PostStatusText,
+// PostStatusMedia and RevokeStatus. DeleteMessage for-me sends nothing to the chat (it is an
 // app-state mutation), so it has nothing to echo. The payload is always the
 // message the send encoded, handed back by the library (upstream #1406), never
 // a reconstruction -- including the half the library builds itself (issue #38):
@@ -60,7 +60,9 @@ message SubscribeRequest {
 //   - SendPollVote echoes the encrypted vote (`pollUpdateMessage`), so `text`
 //     is empty and the vote is read from `raw_message` with the poll's secret,
 //     like any vote that arrives.
-//   - PostStatus* echo with `chat` = `status@broadcast`.
+//   - PostStatus* echo with `chat` = `status@broadcast`, and so does
+//     RevokeStatus, as a delete (`is_delete`) whose `protocol_target` is the
+//     status.
 //
 // One caveat on SendInteractiveReply (issue #28). An interactive reply echoes
 // with its `raw_message` whole — every id, label and the quoted offer — but
