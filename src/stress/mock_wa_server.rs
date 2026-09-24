@@ -40,15 +40,23 @@ pub struct MockWaServer {
     post_login_frames: Arc<AtomicUsize>,
     parsed_nodes: Arc<AtomicUsize>,
     keepalive_pings: Arc<AtomicUsize>,
-    mex_answer: MexAnswer,
+    iq_answers: SharedIqAnswers,
     accept_task: tokio::task::JoinHandle<()>,
 }
 
-/// The JSON body the mock answers every `<iq xmlns="w:mex">` with, standing in
-/// for the server's GraphQL answer. `None` answers a bare `<iq type=result>`
-/// like any other IQ. Shared with every connection, so a test sets it before
-/// the call it wants answered.
-type MexAnswer = Arc<std::sync::Mutex<Option<String>>>;
+/// What the mock answers an IQ with, by namespace, standing in for the server.
+/// An unset slot answers a bare `<iq type=result>` like any other IQ. Shared
+/// with every connection, so a test sets it before the call it wants answered.
+#[derive(Default)]
+struct IqAnswers {
+    /// The `{"data":...}` JSON for every `<iq xmlns="w:mex">` (the GraphQL answer).
+    mex: Option<String>,
+    /// The children of the result for every `<iq xmlns="newsletter">`, e.g. the
+    /// `<messages>` page a channel-history query gets back (#40).
+    newsletter: Option<wacore_binary::Node>,
+}
+
+type SharedIqAnswers = Arc<std::sync::Mutex<IqAnswers>>;
 
 impl Drop for MockWaServer {
     fn drop(&mut self) {
@@ -67,9 +75,9 @@ impl MockWaServer {
         let post_login_frames = Arc::new(AtomicUsize::new(0));
         let parsed_nodes = Arc::new(AtomicUsize::new(0));
         let keepalive_pings = Arc::new(AtomicUsize::new(0));
-        let mex_answer: MexAnswer = Arc::new(std::sync::Mutex::new(None));
+        let iq_answers: SharedIqAnswers = Arc::default();
 
-        let mex = mex_answer.clone();
+        let answers = iq_answers.clone();
         let hs = handshakes.clone();
         let plf = post_login_frames.clone();
         let pn = parsed_nodes.clone();
@@ -83,7 +91,7 @@ impl MockWaServer {
                             post_login_frames: plf.clone(),
                             parsed_nodes: pn.clone(),
                             keepalive_pings: kap.clone(),
-                            mex_answer: mex.clone(),
+                            iq_answers: answers.clone(),
                         };
                         tokio::spawn(async move {
                             if let Err(e) = serve_connection(stream, counters).await {
@@ -105,7 +113,7 @@ impl MockWaServer {
             post_login_frames,
             parsed_nodes,
             keepalive_pings,
-            mex_answer,
+            iq_answers,
             accept_task,
         })
     }
@@ -115,8 +123,18 @@ impl MockWaServer {
     /// server answer of its choosing.
     pub fn answer_mex_with(&self, json: &str) {
         // Poisoning needs a panic while the lock is held; nothing here panics.
-        if let Ok(mut slot) = self.mex_answer.lock() {
-            *slot = Some(json.to_string());
+        if let Ok(mut answers) = self.iq_answers.lock() {
+            answers.mex = Some(json.to_string());
+        }
+    }
+
+    /// Answer every later `<iq xmlns="newsletter">` with `<iq type=result>`
+    /// wrapping this node, as the server would. Lets a test feed the library's
+    /// channel-history parser the page of its choosing (#40).
+    pub fn answer_newsletter_iq_with(&self, body: wacore_binary::Node) {
+        // Poisoning needs a panic while the lock is held; nothing here panics.
+        if let Ok(mut answers) = self.iq_answers.lock() {
+            answers.newsletter = Some(body);
         }
     }
 
@@ -160,7 +178,7 @@ struct ConnCounters {
     post_login_frames: Arc<AtomicUsize>,
     parsed_nodes: Arc<AtomicUsize>,
     keepalive_pings: Arc<AtomicUsize>,
-    mex_answer: MexAnswer,
+    iq_answers: SharedIqAnswers,
 }
 
 /// Unix seconds (server time) for the `<success t=...>` attribute.
@@ -180,7 +198,7 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
         post_login_frames: post_login,
         parsed_nodes,
         keepalive_pings,
-        mex_answer,
+        iq_answers,
     } = counters;
     let (_req, mut ws) = ServerBuilder::new()
         .accept(stream)
@@ -356,9 +374,8 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
             if tag == "iq"
                 && let Some(id) = node.get_attr("id").map(|v| v.to_string())
             {
-                let is_mex =
-                    node.get_attr("xmlns").map(|v| v.to_string()).as_deref() == Some("w:mex");
-                let reply = iq_reply(id, is_mex, &mex_answer);
+                let xmlns = node.get_attr("xmlns").map(|v| v.to_string());
+                let reply = iq_reply(id, xmlns.as_deref(), &iq_answers);
                 if let Ok(plain) = marshal(&reply)
                     && let Ok(ct) = send_cipher.encrypt_with_counter(send_ctr, &plain)
                 {
@@ -371,16 +388,25 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
     Ok(())
 }
 
-/// A minimal `<iq type=result>`, carrying the configured `<result>` JSON when
-/// the query is MEX and a test set one (`MockWaServer::answer_mex_with`).
-fn iq_reply(id: String, is_mex: bool, mex_answer: &MexAnswer) -> wacore_binary::Node {
+/// A minimal `<iq type=result>`, carrying the answer a test set for the
+/// query's namespace (`MockWaServer::answer_mex_with`,
+/// `MockWaServer::answer_newsletter_iq_with`), if any.
+fn iq_reply(id: String, xmlns: Option<&str>, answers: &SharedIqAnswers) -> wacore_binary::Node {
     let reply = NodeBuilder::new("iq").attr("type", "result").attr("id", id);
-    let body = mex_answer.lock().ok().and_then(|slot| slot.clone());
+    let Ok(answers) = answers.lock() else {
+        return reply.build();
+    };
+    let body = match xmlns {
+        Some("w:mex") => answers
+            .mex
+            .clone()
+            .map(|json| NodeBuilder::new("result").bytes(json.into_bytes()).build()),
+        Some("newsletter") => answers.newsletter.clone(),
+        _ => None,
+    };
     match body {
-        Some(json) if is_mex => reply
-            .children([NodeBuilder::new("result").bytes(json.into_bytes()).build()])
-            .build(),
-        _ => reply.build(),
+        Some(child) => reply.children([child]).build(),
+        None => reply.build(),
     }
 }
 
