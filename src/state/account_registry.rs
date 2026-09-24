@@ -253,6 +253,13 @@ impl AccountRegistry {
         handle.stop().await;
     }
 
+    /// Stop every account at shutdown (#35), concurrently, each through the
+    /// same bounded graceful stop `disconnect` uses: the library flushes and
+    /// closes its transport instead of dying mid-write with the process.
+    pub async fn stop_all(&self) {
+        futures::future::join_all(self.list().iter().map(|handle| handle.stop())).await;
+    }
+
     /// Real device unlink: send the server-side RemoveCompanionDevice IQ, then
     /// stop the bot. Keeps the `accounts` row + local keys so the account can be
     /// re-paired (use `delete` to wipe state). The library only emits the IQ

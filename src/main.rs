@@ -43,14 +43,32 @@ async fn main() -> anyhow::Result<()> {
     )
     .context("binding unix socket")?;
 
-    let router = server::build_router(registry, &config);
+    let shutdown = transport::shutdown::Shutdown::new();
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            transport::shutdown::signal_future().await;
+            shutdown.trigger();
+        }
+    });
+
+    let router = server::build_router(registry.clone(), &config, shutdown.clone());
     tracing::info!(socket = %config.socket_path, "wamux listening");
 
-    router
-        .serve_with_incoming_shutdown(stream, transport::shutdown::signal_future())
+    let grace = Duration::from_millis(config.shutdown_grace_ms);
+    let drained = server::serve_until_shutdown(router, stream, shutdown, grace)
         .await
         .context("serving")?;
+    if drained == server::Drained::GraceElapsed {
+        tracing::warn!(
+            ?grace,
+            "shutdown grace elapsed; closed the connections still open"
+        );
+    }
 
+    // Stop the accounts before the socket goes (#35): the library flushes and
+    // closes its transport instead of dying mid-write with the process.
+    registry.stop_all().await;
     transport::uds_listener::unlink(&config.socket_path);
     tracing::info!("wamux stopped");
     Ok(())

@@ -14,14 +14,49 @@ use uuid::Uuid;
 use crate::proto::v1 as pb;
 use crate::proto::v1::event_service_server::EventService;
 use crate::state::{AccountHandle, AccountRegistry};
+use crate::transport::shutdown::Shutdown;
 
 pub struct EventSvc {
     registry: Arc<AccountRegistry>,
+    shutdown: Shutdown,
 }
 
 impl EventSvc {
+    /// A service whose streams end only when their client hangs up. What the
+    /// in-process tests want; the daemon wires `with_shutdown`.
     pub fn new(registry: Arc<AccountRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            shutdown: Shutdown::new(),
+        }
+    }
+
+    /// End every subscription when `shutdown` fires (#35): an event stream
+    /// never ends on its own, and tonic waits for it before `serve` returns.
+    pub fn with_shutdown(mut self, shutdown: Shutdown) -> Self {
+        self.shutdown = shutdown;
+        self
+    }
+}
+
+type EventTx = mpsc::Sender<Result<pb::EventEnvelope, Status>>;
+
+/// One subscription's outlet: where its events go, and what ends it.
+#[derive(Clone)]
+struct Outlet {
+    tx: EventTx,
+    shutdown: Shutdown,
+}
+
+impl Outlet {
+    /// The client hung up, or the daemon is shutting down. Either way the
+    /// forwarder drops its sender; once every forwarder of a stream has, the
+    /// client sees a clean end of stream, not a torn connection.
+    async fn ended(&self) {
+        tokio::select! {
+            () = self.tx.closed() => {}
+            () = self.shutdown.triggered() => {}
+        }
     }
 }
 
@@ -74,12 +109,9 @@ fn created_gap_marker(lagged: u64) -> pb::EventEnvelope {
 }
 
 /// Forward one account's events (with optional ring replay) into `tx`.
-fn forward(
-    handle: Arc<AccountHandle>,
-    replay: usize,
-    tx: mpsc::Sender<Result<pb::EventEnvelope, Status>>,
-) {
+fn forward(handle: Arc<AccountHandle>, replay: usize, outlet: Outlet) {
     tokio::spawn(async move {
+        let tx = &outlet.tx;
         let mut rx = handle.subscribe();
         // Subscribe-before-snapshot means an event published in between lands
         // in BOTH the ring snapshot and the live receiver (at-least-once by
@@ -102,7 +134,7 @@ fn forward(
             // idle (or deleted) account would otherwise park this task — and
             // pin the AccountHandle — until the next event, i.e. forever.
             let received = tokio::select! {
-                () = tx.closed() => break,
+                () = outlet.ended() => break,
                 received = rx.recv() => received,
             };
             match received {
@@ -131,11 +163,7 @@ fn forward(
 /// change: the created-follower task owns `tx`, so this stream now stays OPEN
 /// indefinitely (before, it ended once the snapshot's forwarders ended). Also
 /// documented on `SubscribeRequest.all_accounts` in proto/events.proto.
-fn forward_all_accounts(
-    registry: &AccountRegistry,
-    replay: usize,
-    tx: mpsc::Sender<Result<pb::EventEnvelope, Status>>,
-) {
+fn forward_all_accounts(registry: &AccountRegistry, replay: usize, outlet: Outlet) {
     // Order matters: subscribe to creations BEFORE snapshotting. An account
     // created between the two calls then shows up in both, and the snapshot set
     // dedupes it (two forwarders would duplicate its every event); the opposite
@@ -147,9 +175,9 @@ fn forward_all_accounts(
     let snapshot = registry.list();
     let snapshot_uuids: HashSet<Uuid> = snapshot.iter().map(|a| a.uuid).collect();
     for account in snapshot {
-        forward(account, replay, tx.clone());
+        forward(account, replay, outlet.clone());
     }
-    follow_created_accounts(created_rx, snapshot_uuids, tx);
+    follow_created_accounts(created_rx, snapshot_uuids, outlet);
 }
 
 /// Attach a forwarder for each account created after the subscribe. The
@@ -158,10 +186,10 @@ fn forward_all_accounts(
 fn follow_created_accounts(
     mut created_rx: broadcast::Receiver<Arc<AccountHandle>>,
     snapshot_uuids: HashSet<Uuid>,
-    tx: mpsc::Sender<Result<pb::EventEnvelope, Status>>,
+    outlet: Outlet,
 ) {
     tokio::spawn(async move {
-        while follow_created_step(&mut created_rx, &snapshot_uuids, &tx).await {}
+        while follow_created_step(&mut created_rx, &snapshot_uuids, &outlet).await {}
     });
 }
 
@@ -170,13 +198,14 @@ fn follow_created_accounts(
 async fn follow_created_step(
     created_rx: &mut broadcast::Receiver<Arc<AccountHandle>>,
     snapshot_uuids: &HashSet<Uuid>,
-    tx: &mpsc::Sender<Result<pb::EventEnvelope, Status>>,
+    outlet: &Outlet,
 ) -> bool {
     let received = tokio::select! {
         // Without this, an abandoned all-accounts stream would leak this task
         // (and `tx`) for the registry's whole lifetime: creates are rare, so
-        // `recv()` alone might never wake up to notice the closed client.
-        () = tx.closed() => return false,
+        // `recv()` alone might never wake up to notice the closed client. It
+        // is also what lets shutdown end the stream (#35).
+        () = outlet.ended() => return false,
         received = created_rx.recv() => received,
     };
     match received {
@@ -192,11 +221,13 @@ async fn follow_created_step(
             // ring_capacity 0 the ring stores nothing and the window remains;
             // replay is config-disabled then.)
             if !snapshot_uuids.contains(&account.uuid) {
-                forward(account, usize::MAX, tx.clone());
+                forward(account, usize::MAX, outlet.clone());
             }
             true
         }
-        Err(RecvError::Lagged(missed)) => tx.send(Ok(created_gap_marker(missed))).await.is_ok(),
+        Err(RecvError::Lagged(missed)) => {
+            outlet.tx.send(Ok(created_gap_marker(missed))).await.is_ok()
+        }
         Err(RecvError::Closed) => false,
     }
 }
@@ -212,18 +243,22 @@ impl EventService for EventSvc {
         let req = request.into_inner();
         let replay = req.replay_from_ring as usize;
         let (tx, rx) = mpsc::channel(256);
+        let outlet = Outlet {
+            tx,
+            shutdown: self.shutdown.clone(),
+        };
 
         match req.selector {
             Some(pb::subscribe_request::Selector::Account(account_ref)) => {
                 let handle = self.registry.resolve(Some(&account_ref))?;
-                forward(handle, replay, tx);
+                forward(handle, replay, outlet);
             }
             Some(pb::subscribe_request::Selector::AllAccounts(_)) => {
-                forward_all_accounts(&self.registry, replay, tx);
+                forward_all_accounts(&self.registry, replay, outlet);
             }
             None => {
                 // No selector => send-only client; empty (immediately-closed) stream.
-                drop(tx);
+                drop(outlet);
             }
         }
 
