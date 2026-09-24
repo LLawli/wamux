@@ -8,7 +8,6 @@
 pub mod bincode_upgrade;
 pub mod blob_codec;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
-pub mod bootstrapped_repair;
 pub mod engine;
 pub mod postgres;
 pub mod sqlite;

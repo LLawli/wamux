@@ -72,33 +72,24 @@ fn a_legacy_blob_with_trailing_bytes_is_refused() {
     assert!(err.to_string().contains("trailing"), "{err}");
 }
 
+/// Every field is carried over as it was, `bootstrapped` included: the
+/// conversion no longer marks an unmarked synced collection (#36), the
+/// library's first sync at the head does. `mac_mismatch_fatal` is a real latch.
 #[test]
-fn a_legacy_hash_state_converts_and_an_unmarked_synced_one_is_repaired() {
-    let old = hash_state(1399, false, true);
-    let (new, repaired) = upgrade_hash_state_blob(&bincode_of(&old), "probe".into()).unwrap();
-    let back = decode_hash_state(&new).unwrap();
-    assert!(repaired);
-    assert!(
-        back.bootstrapped,
-        "the palliative marks it (bootstrapped_repair)"
-    );
-    assert!(
-        back.mac_mismatch_fatal,
-        "the latch is carried over untouched"
-    );
-    assert_eq!(back.version, 1399);
-    assert_eq!(back.hash, old.hash);
-    assert_eq!(back.index_value_map, old.index_value_map);
-}
-
-#[test]
-fn a_hash_state_the_repair_does_not_apply_to_converts_unchanged() {
-    for old in [hash_state(0, false, false), hash_state(339, true, false)] {
-        let (new, repaired) = upgrade_hash_state_blob(&bincode_of(&old), "probe".into()).unwrap();
+fn a_legacy_hash_state_converts_field_for_field() {
+    let shapes = [
+        hash_state(1399, false, true),
+        hash_state(0, false, false),
+        hash_state(339, true, false),
+    ];
+    for old in shapes {
+        let new = upgrade_hash_state_blob(&bincode_of(&old), "probe".into()).unwrap();
         let back = decode_hash_state(&new).unwrap();
-        assert!(!repaired);
-        assert_eq!(back.bootstrapped, old.bootstrapped);
         assert_eq!(back.version, old.version);
+        assert_eq!(back.bootstrapped, old.bootstrapped, "v{}", old.version);
+        assert_eq!(back.mac_mismatch_fatal, old.mac_mismatch_fatal);
+        assert_eq!(back.hash, old.hash);
+        assert_eq!(back.index_value_map, old.index_value_map);
     }
 }
 
@@ -123,7 +114,7 @@ fn one_bad_row_fails_the_whole_plan() {
 }
 
 #[test]
-fn the_plan_lists_every_row_and_every_repair() {
+fn the_plan_lists_every_row() {
     let rows = LegacyBlobRows {
         devices: vec![(1, bincode_of(&every_field_device()))],
         versions: vec![
@@ -149,10 +140,6 @@ fn the_plan_lists_every_row_and_every_repair() {
     assert_eq!(plan.devices.len(), 1);
     assert_eq!(plan.versions.len(), 3);
     assert_eq!(plan.sync_keys.len(), 1);
-    assert_eq!(
-        plan.repaired_bootstrap,
-        vec![(1, "regular_low".to_string())]
-    );
 }
 
 #[test]

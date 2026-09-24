@@ -35,7 +35,6 @@ use super::blob_codec::{
     decode_app_state_sync_key, decode_device, decode_hash_state, encode_app_state_sync_key,
     encode_device, encode_hash_state,
 };
-use super::bootstrapped_repair::repair_inherited_bootstrap;
 
 /// `blob_format.format` before and after the conversion.
 pub const BLOB_FORMAT_BINCODE: &str = "bincode";
@@ -74,9 +73,6 @@ pub struct BincodeUpgradePlan {
     pub versions: Vec<(i32, String, Vec<u8>)>,
     /// `(device_id, key_id, new key_data)`.
     pub sync_keys: Vec<(i32, Vec<u8>, Vec<u8>)>,
-    /// `(device_id, name)` of every collection `repair_inherited_bootstrap`
-    /// marked. Names only: they are WhatsApp's fixed collection names.
-    pub repaired_bootstrap: Vec<(i32, String)>,
 }
 
 /// The rows as read, one tuple per row, in the shape of each table's key.
@@ -98,11 +94,8 @@ pub fn plan_bincode_upgrade(
     }
     for (device_id, name, blob) in rows.versions {
         let row = format!("app_state_versions '{name}' of device {device_id}");
-        let (new, repaired) = upgrade_hash_state_blob(&blob, row)?;
-        if repaired {
-            plan.repaired_bootstrap.push((device_id, name.clone()));
-        }
-        plan.versions.push((device_id, name, new));
+        plan.versions
+            .push((device_id, name, upgrade_hash_state_blob(&blob, row)?));
     }
     for (device_id, key_id, blob) in rows.sync_keys {
         let row = format!("an app_state_keys row of device {device_id}");
@@ -125,18 +118,16 @@ pub fn upgrade_device_blob(blob: &[u8], row: String) -> Result<Vec<u8>, BincodeU
     Ok(new)
 }
 
-/// One `app_state_versions.state_data`, plus the bootstrapped repair (see
-/// `bootstrapped_repair`); the bool says whether the repair marked it.
+/// One `app_state_versions.state_data`. Compared field by field (`HashState`
+/// holds a HashMap, so its bincode depends on iteration order): any difference
+/// is a codec bug.
 ///
-/// Compared field by field (`HashState` holds a HashMap, so its bincode depends
-/// on iteration order), against the old value with only the repair applied:
-/// any other difference is a codec bug.
-pub fn upgrade_hash_state_blob(
-    blob: &[u8],
-    row: String,
-) -> Result<(Vec<u8>, bool), BincodeUpgradeError> {
-    let mut expected: HashState = decode_whole(blob, &row)?;
-    let repaired = repair_inherited_bootstrap(&mut expected);
+/// `bootstrapped` is carried over as it was. Until #36 this step also marked a
+/// synced-but-unmarked collection, because the library never did; since
+/// upstream #1545 its first sync at the head marks it
+/// (`tests/appstate_bootstrap.rs`).
+pub fn upgrade_hash_state_blob(blob: &[u8], row: String) -> Result<Vec<u8>, BincodeUpgradeError> {
+    let expected: HashState = decode_whole(blob, &row)?;
     let new = encode_hash_state(&expected);
     let back = decode_hash_state(&new).map_err(|e| round_trip(&row, e.to_string()))?;
     let same = back.version == expected.version
@@ -147,7 +138,7 @@ pub fn upgrade_hash_state_blob(
     if !same {
         return Err(round_trip(&row, "a field changed".into()));
     }
-    Ok((new, repaired))
+    Ok(new)
 }
 
 /// One `app_state_keys.key_data`. A key that is not 32 bytes fails here, since
@@ -216,17 +207,12 @@ pub fn upgrade_db_error(context: &'static str) -> impl FnOnce(sqlx::Error) -> Bi
     move |source| BincodeUpgradeError::Database { context, source }
 }
 
-/// One line per conversion, counts and collection names only. The repaired list
-/// is what the deploy is checked against (see `bootstrapped_repair`).
+/// One line per conversion, counts only.
 pub fn log_upgrade(plan: &BincodeUpgradePlan) {
     tracing::info!(
         devices = plan.devices.len(),
         app_state_versions = plan.versions.len(),
         app_state_keys = plan.sync_keys.len(),
-        repaired_bootstrap = plan.repaired_bootstrap.len(),
         "store blobs converted from bincode to protobuf (#31)"
     );
-    for (device_id, name) in &plan.repaired_bootstrap {
-        tracing::info!(device_id, collection = %name, "app-state collection marked bootstrapped");
-    }
 }
