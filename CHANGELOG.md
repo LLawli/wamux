@@ -38,6 +38,18 @@ migration note, since the edge that consumes this socket has to follow them.
   The core still never rewrites a JID onto the other namespace and never
   invents a pair: an unknown jid answers `found=false`.
 
+### Fixed
+
+- **SIGTERM now stops the daemon** (issue #35). With any `SubscribeEvents`
+  stream open, a stop used to hang until systemd SIGKILLed the process after
+  90 s: tonic waits, with no deadline, for every connection to close, and an
+  event subscription never ends on its own. The socket file was left behind and
+  the WhatsApp clients died mid-write. Now every subscription ends with a clean
+  end of stream when shutdown starts (a subscriber sees status OK, not a torn
+  connection, and should reconnect when the socket is back), anything else gets
+  at most `shutdown_grace_ms` (default 10 s), then the accounts stop through
+  their graceful stop, the socket is unlinked and `wamux stopped` is logged.
+
 ### Changed
 
 - **whatsapp-rust moves from the crates.io 0.7.0 release to git main
