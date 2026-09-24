@@ -45,12 +45,24 @@ message SubscribeRequest {
 // identity. Drop the duplicate on `key.id`, which a consumer must handle
 // anyway, since a replayed event has to land on the same row.
 //
-// WHICH SENDS ECHO, and this list is the contract: SendText, SendMedia,
-// SendReaction, SendContact and SendInteractiveReply. Those are the five whose
-// `wa::Message` the core builds itself, so the echo carries the real payload
-// rather than a reconstruction.
+// WHICH SENDS ECHO: every one that puts a message in a chat. SendText,
+// SendMedia, SendReaction, SendContact, SendInteractiveReply, SendPoll,
+// SendPollVote, EditMessage, DeleteMessage with `for_everyone`, PostStatusText
+// and PostStatusMedia. DeleteMessage for-me sends nothing to the chat (it is an
+// app-state mutation), so it has nothing to echo. The payload is always the
+// message the send encoded, handed back by the library (upstream #1406), never
+// a reconstruction -- including the half the library builds itself (issue #38):
 //
-// One caveat on the newest of them (issue #28). An interactive reply echoes
+//   - EditMessage / DeleteMessage echo their protocol message: `is_edit` or
+//     `is_delete`, `protocol_target` naming the edited/revoked message, and
+//     `key.id` the edit/revoke stanza's own id, same as the edit another device
+//     of the account receives.
+//   - SendPollVote echoes the encrypted vote (`pollUpdateMessage`), so `text`
+//     is empty and the vote is read from `raw_message` with the poll's secret,
+//     like any vote that arrives.
+//   - PostStatus* echo with `chat` = `status@broadcast`.
+//
+// One caveat on SendInteractiveReply (issue #28). An interactive reply echoes
 // with its `raw_message` whole — every id, label and the quoted offer — but
 // `text` comes back EMPTY, because `project_content` has no case for
 // `buttonsResponseMessage` / `listResponseMessage` /
@@ -61,7 +73,7 @@ message SubscribeRequest {
 // Written down rather than papered over, because the display text IS in the
 // payload and looking blank is the kind of gap that reads as a delivery bug.
 //
-// The echo's `raw_message` is that payload AS THE CORE BUILT IT, which is not
+// The echo's `raw_message` is that payload AS THE SEND ENCODED IT, which is not
 // byte-identical to what the recipient decrypts. The library's send path hoists
 // a `messageContextInfo` (device-list metadata) into the encoded message when
 // the message carries none, so the recipient's copy is larger. Measured
@@ -73,14 +85,6 @@ message SubscribeRequest {
 // `chat` likewise names the conversation from THIS account's side: the echo
 // carries the jid the send was addressed to, while the recipient's own event
 // may name the same conversation by its `@lid` form. Neither is rewritten.
-//
-// WHICH DO NOT: SendPoll, SendPollVote, EditMessage, DeleteMessage,
-// PostStatusText, PostStatusMedia. whatsapp-rust builds those messages inside
-// the library and hands back only a SendResult, so there is nothing to echo and
-// nothing was invented. A partial event would have looked complete while
-// `raw_message` came back empty -- the failure mode this project has paid for
-// twice. The gap closes without a contract change if upstream returns the built
-// message; until then it is written down here rather than discovered.
 message InboundMessage {
   MessageKey key = 1;
   string chat = 2;

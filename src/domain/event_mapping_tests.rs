@@ -183,6 +183,87 @@ fn a_sent_image_echoes_its_descriptor_and_caption() {
     assert_eq!(out.caption, "a cat");
 }
 
+/// Issue #38: an edit is built inside the library (upstream `build_edit_message`,
+/// a top-level MESSAGE_EDIT protocol message) and handed back on
+/// `SendResult::message`. Its echo must read as an edit of the target, with the
+/// new text, exactly like the edit another device of the account would see.
+#[test]
+fn a_sent_edit_echoes_as_an_edit_of_its_target() {
+    use wa::message::protocol_message::Type;
+    let chat = "5511999999999@s.whatsapp.net";
+    let msg = wa::Message {
+        protocol_message: MessageField::some(wa::message::ProtocolMessage {
+            key: MessageField::some(wa::MessageKey {
+                remote_jid: Some(chat.to_string()),
+                from_me: Some(true),
+                id: Some("3EB0ORIGINAL".to_string()),
+                participant: None,
+            }),
+            r#type: Some(Type::MESSAGE_EDIT),
+            edited_message: MessageField::some(wa::Message {
+                conversation: Some("fixed typo".to_string()),
+                ..Default::default()
+            }),
+            timestamp_ms: Some(1_756_800_000_000),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let out = crate::domain::event_mapping::map_sent(
+        sent_key(chat, "3EB0EDITSTANZA"),
+        chat,
+        "5511888888888@s.whatsapp.net",
+        0,
+        &msg,
+    );
+    assert!(out.is_edit);
+    assert_eq!(out.text, "fixed typo");
+    let target = out.protocol_target.expect("an edit names its target");
+    assert_eq!(target.id, "3EB0ORIGINAL");
+    // The echo's own key is the edit stanza, never the message it edits.
+    assert_eq!(out.key.expect("key").id, "3EB0EDITSTANZA");
+}
+
+/// Issue #38: same for a revoke (upstream `build_revoke_message`).
+#[test]
+fn a_sent_revoke_echoes_as_a_delete_of_its_target() {
+    use wa::message::protocol_message::Type;
+    let chat = "120363041234567890@g.us";
+    let msg = wa::Message {
+        protocol_message: MessageField::some(wa::message::ProtocolMessage {
+            key: MessageField::some(wa::MessageKey {
+                remote_jid: Some(chat.to_string()),
+                from_me: Some(true),
+                id: Some("3EB0GONE".to_string()),
+                participant: None,
+            }),
+            r#type: Some(Type::REVOKE),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let out = crate::domain::event_mapping::map_sent(
+        sent_key(chat, "3EB0REVOKESTANZA"),
+        chat,
+        "5511888888888@s.whatsapp.net",
+        0,
+        &msg,
+    );
+    assert!(out.is_delete);
+    assert!(!out.is_edit);
+    assert_eq!(out.protocol_target.expect("target").id, "3EB0GONE");
+    assert_eq!(out.key.expect("key").id, "3EB0REVOKESTANZA");
+}
+
+fn sent_key(chat: &str, id: &str) -> pb::MessageKey {
+    pb::MessageKey {
+        remote_jid: chat.to_string(),
+        id: id.to_string(),
+        from_me: true,
+        participant: String::new(),
+    }
+}
+
 fn mapped_connection(event: &Event) -> pb::ConnectionStateChanged {
     match map_one(event) {
         Some(PbEvent::Connection(c)) => c,

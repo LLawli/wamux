@@ -62,18 +62,14 @@ pub async fn send_media(
     to: Jid,
     header: &pb::SendMediaHeader,
     data: Vec<u8>,
-) -> Result<(SendResult, wa::Message), WamuxError> {
+) -> Result<SendResult, WamuxError> {
     let kind = MediaKind::parse(&header.media_type)?;
     let upload = client
         .upload(data, kind.upload_type(), UploadOptions::new())
         .await
         .map_err(client_err)?;
     let message = build_media_message(kind, header, upload.into());
-    let result = client
-        .send_message(to, message.clone())
-        .await
-        .map_err(client_err)?;
-    Ok((result, message))
+    client.send_message(to, message).await.map_err(client_err)
 }
 
 /// The upload fields the outgoing sub-messages need, owned by wamux.

@@ -13,6 +13,17 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **The six library-built sends echo too** (issue #38, upstream #1406, the
+  #15 queue). `SendPoll`, `SendPollVote`, `EditMessage`, `DeleteMessage` (for
+  everyone) and `PostStatusText`/`PostStatusMedia` now publish the same
+  from-me `InboundMessage` the other five sends do, so every consumer of the
+  socket sees them, not only the caller. The library now hands back the message
+  it built, which is what these lacked. An edit or revoke echoes as its
+  protocol message (`is_edit`/`is_delete`, `protocol_target`, `key.id` the
+  stanza's own id); a vote echoes encrypted, read from `raw_message` like any
+  vote; a status echoes in `status@broadcast`. Delete-for-me sends nothing to
+  the chat and still echoes nothing. No RPC response changed.
+
 - **`OfflineSyncInterrupted`: a resume that was cut says so** (issue #38,
   upstream #1380, the #15 queue). When the connection ends mid-drain, the
   library now emits `total` (what the preview announced) and `delivered` (what

@@ -5,10 +5,11 @@
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status, Streaming};
+use whatsapp_rust::SendResult;
 
 use super::{account_of, client_of, own_jid, require_field, require_jid};
 use crate::domain::jid_parse::{parse_jid, parse_optional_jid};
-use crate::domain::messaging::{self, send_result_to_proto};
+use crate::domain::messaging::{self, send_result_to_proto, sent_message_key};
 use crate::domain::{chat_actions, interactive_reply, media_transfer, polls, send_rich, status};
 use crate::proto::v1 as pb;
 use crate::proto::v1::messaging_service_server::MessagingService;
@@ -32,32 +33,39 @@ impl MessagingSvc {
 impl MessagingSvc {
     /// Put a message this relay just sent on the event bus (issue #22).
     ///
-    /// Only the four sends whose `wa::Message` the core builds itself reach
-    /// here. The rest -- SendPoll, SendPollVote, EditMessage, DeleteMessage,
-    /// PostStatusText, PostStatusMedia -- are built inside the library and it
-    /// hands back only a `SendResult`, so there are no bytes to echo. That hole
-    /// is listed in `proto/events.proto` rather than filled with a partial
-    /// event that would look complete.
+    /// Every send reaches here, the ones the library builds itself (poll, vote,
+    /// edit, revoke, status) included: since upstream #1406 `SendResult`
+    /// carries the message the send encoded, so there is always a real payload
+    /// to echo and never a reconstruction (#38).
     async fn echo(
         &self,
         handle: &Arc<crate::state::AccountHandle>,
         client: &whatsapp_rust::Client,
-        sent: &pb::SendResult,
-        message: &whatsapp_rust::waproto::whatsapp::Message,
+        result: &SendResult,
     ) {
-        let Some(key) = sent.key.clone() else {
-            return;
-        };
+        let key = sent_message_key(result.message_id.clone(), &result.to);
         let chat = key.remote_jid.clone();
         publish_sent(
             handle,
             &chat,
             &own_jid(client),
             key,
-            message,
+            &result.message,
             self.registry.replay_max_event_bytes(),
         )
         .await;
+    }
+
+    /// Echo the send, then answer with its key. The shape of every send RPC
+    /// whose response is the plain `SendResult`.
+    async fn echoed(
+        &self,
+        handle: &Arc<crate::state::AccountHandle>,
+        client: &whatsapp_rust::Client,
+        result: SendResult,
+    ) -> Response<pb::SendResult> {
+        self.echo(handle, client, &result).await;
+        Response::new(send_result_to_proto(result.message_id, &result.to))
     }
 }
 
@@ -72,10 +80,8 @@ impl MessagingService for MessagingSvc {
         // Routing resolved here; the whole request passes wire-shaped to the
         // domain (same pattern as send_media's header).
         let to = parse_jid(&require_jid(req.to.clone())?)?;
-        let (result, message) = messaging::send_text(&client, to, &req).await?;
-        let sent = send_result_to_proto(result.message_id, &result.to);
-        self.echo(&handle, &client, &sent, &message).await;
-        Ok(Response::new(sent))
+        let result = messaging::send_text(&client, to, &req).await?;
+        Ok(self.echoed(&handle, &client, result).await)
     }
 
     async fn send_media(
@@ -99,10 +105,8 @@ impl MessagingService for MessagingSvc {
         // policy + SSRF surface is the edge's job).
         let data = collect_inline(&mut stream, self.media_max_bytes).await?;
 
-        let (result, message) = media_transfer::send_media(&client, to, &header, data).await?;
-        let sent = send_result_to_proto(result.message_id, &result.to);
-        self.echo(&handle, &client, &sent, &message).await;
-        Ok(Response::new(sent))
+        let result = media_transfer::send_media(&client, to, &header, data).await?;
+        Ok(self.echoed(&handle, &client, result).await)
     }
 
     async fn send_reaction(
@@ -112,10 +116,8 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let target = require_field(req.target, "target")?;
-        let (result, message) = messaging::send_reaction(&client, &target, &req.emoji).await?;
-        let sent = send_result_to_proto(result.message_id, &result.to);
-        self.echo(&handle, &client, &sent, &message).await;
-        Ok(Response::new(sent))
+        let result = messaging::send_reaction(&client, &target, &req.emoji).await?;
+        Ok(self.echoed(&handle, &client, result).await)
     }
 
     async fn edit_message(
@@ -123,13 +125,16 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::EditMessageRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let target = require_field(req.target, "target")?;
-        let new_id = messaging::edit_message(&client, &target, &req.new_text).await?;
+        let result = messaging::edit_message(&client, &target, &req.new_text).await?;
+        self.echo(&handle, &client, &result).await;
+        // The response keeps naming the chat verbatim as the caller wrote it,
+        // as before #38; the echo names the chat the library addressed.
         Ok(Response::new(pb::SendResult {
             key: Some(pb::MessageKey {
                 remote_jid: target.remote_jid,
-                id: new_id,
+                id: result.message_id,
                 from_me: true,
                 participant: String::new(),
             }),
@@ -142,9 +147,12 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::DeleteMessageRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let target = require_field(req.target, "target")?;
-        messaging::delete_message(&client, &target, req.for_everyone).await?;
+        let revoke = messaging::delete_message(&client, &target, req.for_everyone).await?;
+        if let Some(result) = revoke {
+            self.echo(&handle, &client, &result).await;
+        }
         Ok(Response::new(pb::SendResult {
             key: Some(target),
             server_timestamp: 0,
@@ -282,10 +290,8 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let to = parse_jid(&require_jid(req.to.clone())?)?;
-        let (result, message) = send_rich::send_contact(&client, to, &req).await?;
-        let sent = send_result_to_proto(result.message_id, &result.to);
-        self.echo(&handle, &client, &sent, &message).await;
-        Ok(Response::new(sent))
+        let result = send_rich::send_contact(&client, to, &req).await?;
+        Ok(self.echoed(&handle, &client, result).await)
     }
 
     async fn send_interactive_reply(
@@ -295,11 +301,8 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let to = parse_jid(&require_jid(req.to.clone())?)?;
-        let (result, message) =
-            interactive_reply::send_interactive_reply(&client, to, &req).await?;
-        let sent = send_result_to_proto(result.message_id, &result.to);
-        self.echo(&handle, &client, &sent, &message).await;
-        Ok(Response::new(sent))
+        let result = interactive_reply::send_interactive_reply(&client, to, &req).await?;
+        Ok(self.echoed(&handle, &client, result).await)
     }
 
     async fn send_poll(
@@ -307,9 +310,10 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::SendPollRequest>,
     ) -> Result<Response<pb::SendPollResult>, Status> {
         let req = request.into_inner();
-        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let to = parse_jid(&require_jid(req.to.clone())?)?;
         let (result, message_secret) = send_rich::send_poll(&client, to, &req).await?;
+        self.echo(&handle, &client, &result).await;
         // The poll key reuses send_result_to_proto's shape; the message_secret
         // rides alongside so the edge can decrypt incoming votes.
         Ok(Response::new(pb::SendPollResult {
@@ -323,13 +327,10 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::SendPollVoteRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let chat = parse_jid(&require_jid(req.chat.clone())?)?;
         let result = polls::send_vote(&client, chat, &req).await?;
-        Ok(Response::new(send_result_to_proto(
-            result.message_id,
-            &result.to,
-        )))
+        Ok(self.echoed(&handle, &client, result).await)
     }
 
     // The one RPC on this service that sends nothing: it opens votes the edge
@@ -349,12 +350,9 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::PostStatusTextRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let result = status::post_status_text(&client, &req).await?;
-        Ok(Response::new(send_result_to_proto(
-            result.message_id,
-            &result.to,
-        )))
+        Ok(self.echoed(&handle, &client, result).await)
     }
 
     async fn post_status_media(
@@ -370,14 +368,11 @@ impl MessagingService for MessagingSvc {
             Some(pb::post_status_media_chunk::Part::Header(h)) => h,
             _ => return Err(Status::invalid_argument("first chunk must be the header")),
         };
-        let client = client_of(&self.registry, header.account.as_ref()).await?;
+        let (handle, client) = account_of(&self.registry, header.account.as_ref()).await?;
         // Same inline-only contract as SendMedia: the core fetches no URLs.
         let data = collect_status_media(&mut stream, self.media_max_bytes).await?;
         let result = status::post_status_media(&client, &header, data).await?;
-        Ok(Response::new(send_result_to_proto(
-            result.message_id,
-            &result.to,
-        )))
+        Ok(self.echoed(&handle, &client, result).await)
     }
 }
 

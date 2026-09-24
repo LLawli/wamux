@@ -229,7 +229,7 @@ fn spawn_self_message(handle: Arc<AccountHandle>, target: String) {
             )
             .await
             {
-                Ok((result, _message)) => {
+                Ok(result) => {
                     println!("[send] self-message sent, id={}", result.message_id)
                 }
                 Err(e) => println!("[send] self-message failed: {e}"),
