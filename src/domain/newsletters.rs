@@ -138,8 +138,8 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
 // library's parsed `NewsletterMessage` against what this RPC relays, over the
 // same bytes (`tests/stress_newsletter_history.rs`). It agrees on the ids, the
 // payload (both re-encode the decoded `wa.Message`, and both hand back an
-// empty one for a body that does not decode), reactions, votes and forwards.
-// It differs in three places, and the first two lose what the server sent
+// empty one for a body that does not decode), reactions, votes, forwards and
+// the `edit` token (#44). It differs in three places, and the first two lose what the server sent
 // (reported as upstream #1548):
 //
 // 1. An absent `type` comes back as `text`. The core relays the absence.
@@ -250,6 +250,7 @@ fn message_node_to_proto(node: &NodeRef<'_>, chat: &str) -> Option<pb::Newslette
             .get_optional_child("meta")
             .and_then(|meta| attr_str(meta, "polltype"))
             .unwrap_or_default(),
+        edit: attr_str(node, "edit").unwrap_or_default(),
     })
 }
 
@@ -679,6 +680,30 @@ mod history_tests {
         assert_eq!(poll.votes[0].count, 25328);
         assert_eq!(poll.votes[0].option_hash, option_hash(POLL_OPTION));
         assert_eq!(poll.votes[0].option_hash.len(), 32);
+    }
+
+    // Issue #44: a revoked row is an empty body PLUS `edit="8"`; without the
+    // token it reads the same as a body that failed to decode. Relayed as sent.
+    #[test]
+    fn a_row_relays_its_edit_token_verbatim() {
+        let row = |edit: Option<&str>| {
+            let builder = NodeBuilder::new("message").attr("server_id", "780");
+            let builder = match edit {
+                Some(edit) => builder.attr("edit", edit),
+                None => builder,
+            };
+            builder
+                .children([NodeBuilder::new("plaintext").build()])
+                .build()
+        };
+        let edit_of = |node: Node| {
+            message_node_to_proto(&node.as_node_ref(), CHANNEL)
+                .expect("row")
+                .edit
+        };
+        assert_eq!(edit_of(row(Some("8"))), "8");
+        assert_eq!(edit_of(row(Some("42"))), "42", "unknown tokens relay too");
+        assert_eq!(edit_of(row(None)), "");
     }
 
     // Issue #43: an absent count is not a count of zero, and 31 bytes name no

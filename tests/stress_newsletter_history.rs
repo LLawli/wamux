@@ -183,8 +183,11 @@ async fn read_both(
     (core, library)
 }
 
+/// server_id, type, payload, forwards_count, poll_type, edit.
+type WireRow = (u64, String, Vec<u8>, u64, String, String);
+
 /// The library's row in the core's wire terms, for the fields both carry.
-fn library_row_as_wire(row: &NewsletterMessage) -> (u64, String, Vec<u8>, u64, String) {
+fn library_row_as_wire(row: &NewsletterMessage) -> WireRow {
     (
         row.server_id,
         row.message_type.as_str().to_string(),
@@ -196,10 +199,11 @@ fn library_row_as_wire(row: &NewsletterMessage) -> (u64, String, Vec<u8>, u64, S
         row.poll_type
             .map(|kind| kind.as_str().to_string())
             .unwrap_or_default(),
+        row.edit.as_str().to_string(),
     )
 }
 
-fn core_row_as_wire(row: &pb::NewsletterMessage) -> (u64, String, Vec<u8>, u64, String) {
+fn core_row_as_wire(row: &pb::NewsletterMessage) -> WireRow {
     let raw = row
         .message
         .as_ref()
@@ -211,6 +215,7 @@ fn core_row_as_wire(row: &pb::NewsletterMessage) -> (u64, String, Vec<u8>, u64, 
         raw,
         row.forwards_count,
         row.poll_type.clone(),
+        row.edit.clone(),
     )
 }
 
@@ -251,6 +256,9 @@ async fn both_read_the_captured_page_the_same() {
     assert_eq!(core[0].forwards_count, 8329);
     assert_eq!(core[1].votes[0].count, 25328);
     assert_eq!(core[1].votes[0].option_hash.len(), 32);
+    // #44: the revoked rows say so, instead of reading as an undecodable body.
+    assert_eq!((core[2].edit.as_str(), core[3].edit.as_str()), ("8", "8"));
+    assert_eq!(core[4].edit, "");
     // An undecodable body is an empty payload on BOTH sides, with nothing
     // saying so: a swap would not fix that, and would not make it worse.
     assert!(library[4].message.is_none());
