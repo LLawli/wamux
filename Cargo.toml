@@ -115,16 +115,16 @@ http = "1"
 # so that reason is gone.)
 #
 # `simd` is gone: upstream removed it after measuring what it was worth (#1262).
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", default-features = false, features = [
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c", default-features = false, features = [
     "tokio-transport",
     "tokio-runtime",
     "ureq-client",
     "tokio-native",
     "signal",
 ] }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c" }
 
 # --- stress harness only (optional; enabled by the `stress` feature) ---
 # Server side of the WhatsApp WS endpoint for the mock.
@@ -134,8 +134,8 @@ tokio-websockets = { version = "0.13", optional = true, default-features = false
     "rand",
 ] }
 # Noise XX primitives + the e2e cert-chain test fixture (server mirror).
-wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", optional = true, default-features = false }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306", optional = true, default-features = false }
+wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c", optional = true, default-features = false }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c", optional = true, default-features = false }
 
 [build-dependencies]
 tonic-build = "0.12"
@@ -153,7 +153,7 @@ sqlx = { version = "0.8", default-features = false, features = [
     "postgres",
     "runtime-tokio",
 ] }
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f4d73ebe6b19231993a58b5a151b4920dfad1306" }
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c" }
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 tower = "0.5"

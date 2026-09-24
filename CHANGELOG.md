@@ -93,6 +93,14 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **whatsapp-rust moves to git main `f7468ae2`** (issue #36), same nightly.
+  Brings upstream #1545 (see **Fixed**), two keepalive fixes (#1543: pending
+  IQs are probed before the watchdog reconnects; #1547: an IQ's write is
+  bounded by its deadline), #1542 (a call offer teaches the caller's LID-PN
+  pair) and #1544, a new `FavoritesUpdate` event for the favorite-chats sync.
+  That event is not typed by the core yet and reaches subscribers as a
+  `RawEvent`. The gRPC contract is unchanged.
+
 - **Channel history stays on the core's own IQ** (issue #40). Upstream fixed
   both reasons `GetNewsletterMessages` built the history IQ itself (#1523, the
   addressing; #1518, the dropped `<votes>`), so the library's
