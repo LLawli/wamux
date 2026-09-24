@@ -73,13 +73,14 @@ migration note, since the edge that consumes this socket has to follow them.
   `MarkChatRead`, pin, archive, mute and star were all refused with "its
   bootstrap has not completed" (330 `unavailable`, zero `ok`, since the #30
   deploy). The #30 migration stored every app-state collection as not
-  bootstrapped, and whatsapp-rust never marks a collection that already has a
-  baseline and is at the server's head, so the flag stayed unset. The #31
-  conversion marks every collection with `version > 0` bootstrapped, once,
-  leaving every other field (`mac_mismatch_fatal` included) as it was. This is
-  a palliative: it goes when upstream records the flag itself, tracked in #36.
-  Cost accepted: a collection that was part way through a paged bootstrap under
-  0.7.0 is also marked complete.
+  bootstrapped, and whatsapp-rust never marked a collection that already has a
+  baseline and is at the server's head, so the flag stayed unset. Fixed
+  upstream in #1545, which the pin now includes: the first sync of such a
+  collection marks it, leaving its version and ltHash alone. The palliative
+  that bridged the gap (the #31 conversion marking every collection with
+  `version > 0`) is gone, so the conversion carries `bootstrapped` over as it
+  was. `tests/appstate_bootstrap.rs` runs the library's processor over both
+  engines and fails if the pin ever loses the fix.
 
 - **SIGTERM now stops the daemon** (issue #35). With any `SubscribeEvents`
   stream open, a stop used to hang until systemd SIGKILLed the process after

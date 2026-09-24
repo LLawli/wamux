@@ -1,7 +1,8 @@
 //! The bincode -> protobuf conversion end to end (#31), on both engines: a store
 //! as a pre-#31 daemon left it (SQL migrations applied, blobs in bincode, marker
 //! at 'bincode') is opened the way the daemon opens it, and must come out
-//! converted, loadable, and with the bootstrapped repair applied.
+//! converted and loadable, every field carried over as it was (`bootstrapped`
+//! included: since #36 the library marks a collection at the head itself).
 //!
 //! The Postgres cases run in a throwaway database of their own: the conversion
 //! is store-wide, so the shared test database cannot hold a legacy store.
@@ -31,7 +32,8 @@ fn bincode_of<T: serde::Serialize>(value: &T) -> Vec<u8> {
 /// What a pre-#31 daemon had written for one account.
 struct LegacyAccount {
     device: Device,
-    /// `(collection, state)`: one the repair marks, one it must leave alone.
+    /// `(collection, state)`: one synced but unmarked, one marked. Both must
+    /// come out exactly as they went in.
     versions: Vec<(&'static str, HashState)>,
     sync_key: AppStateSyncKey,
 }
@@ -85,16 +87,16 @@ async fn assert_converted(engine: Arc<dyn StorageEngine>, device_id: i32, legacy
         "every persisted Device field, keys included, must survive the conversion"
     );
 
-    let repaired = backend.get_version("regular_low").await.unwrap().unwrap();
+    let unmarked = backend.get_version("regular_low").await.unwrap().unwrap();
     assert!(
-        repaired.bootstrapped,
-        "synced but unmarked: the repair marks it"
+        !unmarked.bootstrapped,
+        "synced but unmarked stays unmarked: the first sync at the head marks it (#36)"
     );
     assert!(
-        repaired.mac_mismatch_fatal,
+        unmarked.mac_mismatch_fatal,
         "the latch is carried over untouched"
     );
-    assert_eq!(repaired.version, 1399);
+    assert_eq!(unmarked.version, 1399);
     let untouched = backend
         .get_version("critical_unblock_low")
         .await
@@ -391,9 +393,12 @@ fn refuse_a_live_store(url: &str) {
     );
 }
 
-/// Counts only on stdout: the store holds Signal key material.
-async fn check_versions(engine: &SqliteStorage, before: &RealStoreBefore) -> Vec<String> {
-    let mut repaired = Vec::new();
+/// Every field carried over as it was, `bootstrapped` included (#36). Returns
+/// how many rows are still unmarked with a baseline: the library's first sync
+/// at the head marks each of them. Counts only on stdout: the store holds
+/// Signal key material.
+async fn check_versions(engine: &SqliteStorage, before: &RealStoreBefore) -> usize {
+    let mut unmarked = 0;
     for (device_id, name, old) in &before.versions {
         let new = engine
             .device_backend(*device_id)
@@ -405,13 +410,12 @@ async fn check_versions(engine: &SqliteStorage, before: &RealStoreBefore) -> Vec
         assert_eq!(new.hash, old.hash, "{name}");
         assert_eq!(new.index_value_map, old.index_value_map, "{name}");
         assert_eq!(new.mac_mismatch_fatal, old.mac_mismatch_fatal, "{name}");
-        let expected = old.bootstrapped || old.version > 0;
-        assert_eq!(new.bootstrapped, expected, "{name}");
-        if new.bootstrapped != old.bootstrapped {
-            repaired.push(format!("device {device_id} {name}"));
+        assert_eq!(new.bootstrapped, old.bootstrapped, "{name}");
+        if !new.bootstrapped && new.version > 0 {
+            unmarked += 1;
         }
     }
-    repaired
+    unmarked
 }
 
 /// `WAMUX_REHEARSAL_DB=sqlite:///path/to/copy.db cargo test --test bincode_upgrade
@@ -449,9 +453,9 @@ async fn rehearse_the_conversion_on_a_copy_of_a_real_store() {
             (&old.key_data, &old.fingerprint, old.timestamp)
         );
     }
-    let repaired = check_versions(&engine, &before).await;
+    let unmarked = check_versions(&engine, &before).await;
     println!(
-        "rehearsal ok: {} devices, {} app-state versions, {} sync keys; marked bootstrapped: {repaired:?}",
+        "rehearsal ok: {} devices, {} app-state versions, {} sync keys; {unmarked} synced but unmarked, left to the first sync",
         before.devices.len(),
         before.versions.len(),
         before.sync_keys.len()
