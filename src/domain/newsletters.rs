@@ -138,9 +138,9 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
 // library's parsed `NewsletterMessage` against what this RPC relays, over the
 // same bytes (`tests/stress_newsletter_history.rs`). It agrees on the ids, the
 // payload (both re-encode the decoded `wa.Message`, and both hand back an
-// empty one for a body that does not decode), reactions, 32-byte votes and
-// forwards. It differs in four places, and the first two lose what the
-// server sent (reported as upstream #1548):
+// empty one for a body that does not decode), reactions, votes and forwards.
+// It differs in three places, and the first two lose what the server sent
+// (reported as upstream #1548):
 //
 // 1. An absent `type` comes back as `text`. The core relays the absence.
 // 2. `<meta polltype>` survives only on a `poll` row, and only as one of the
@@ -148,10 +148,11 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
 //    The core relays the token, like every other server token it relays.
 // 3. An answer without `<messages>` fails the whole call, which `client_err`
 //    maps to `Unavailable`. The core answers an empty page.
-// 4. A `<vote>` whose content is not 32 bytes, or that has no `count`, is
-//    skipped. The core relays the bytes as sent and an absent count as 0.
 //
-// The `library_*` tests pin each one. When one fails, upstream moved: re-run
+// A fourth, a `<vote>` whose content is not 32 bytes or that has no `count`,
+// was the core's mistake, not the library's: both skip it now (#43).
+//
+// The `library_*` tests pin each difference. When one fails, upstream moved: re-run
 // the comparison before deciding the swap again.
 
 /// A page of a channel's history, newest first (issue #26).
@@ -312,21 +313,32 @@ fn reaction_counts(node: &NodeRef<'_>) -> Vec<pb::NewsletterReactionCount> {
 }
 
 /// `<votes><vote count="N">..32 bytes..</vote></votes>`. The bytes ARE the
-/// option, hashed; a vote whose content is not bytes names no option and is
+/// option, hashed; a vote whose content is not 32 bytes names no option and is
 /// dropped rather than relayed as a count attached to nothing.
+///
+/// A vote with no `count`, or one that does not parse, is dropped too (#43):
+/// "the server sent no count" is not "nobody picked this", and proto3 cannot
+/// say absent on a `uint64`. The library's `parse_poll_votes` skips the same
+/// two cases.
 fn vote_counts(node: &NodeRef<'_>) -> Vec<pb::NewsletterPollVote> {
     children_named(node, "votes", "vote")
         .filter_map(|vote| {
             let NodeContentRef::Bytes(hash) = vote.content.as_ref()? else {
                 return None;
             };
+            if hash.len() != OPTION_HASH_LEN {
+                return None;
+            }
             Some(pb::NewsletterPollVote {
                 option_hash: hash.to_vec(),
-                count: attr_u64(&vote, "count").unwrap_or(0),
+                count: attr_u64(&vote, "count")?,
             })
         })
         .collect()
 }
+
+/// SHA-256 of the option name: the only length that can name a poll option.
+const OPTION_HASH_LEN: usize = 32;
 
 /// The `count` attribute of a single optional child, e.g. `<forwards_count/>`.
 fn child_count(node: &NodeRef<'_>, tag: &str) -> u64 {
@@ -667,6 +679,32 @@ mod history_tests {
         assert_eq!(poll.votes[0].count, 25328);
         assert_eq!(poll.votes[0].option_hash, option_hash(POLL_OPTION));
         assert_eq!(poll.votes[0].option_hash.len(), 32);
+    }
+
+    // Issue #43: an absent count is not a count of zero, and 31 bytes name no
+    // option. Both used to cross as a tally; neither does now.
+    #[test]
+    fn a_vote_without_a_count_or_a_32_byte_hash_is_skipped() {
+        let vote = |count: Option<&str>, hash: Vec<u8>| {
+            let builder = NodeBuilder::new("vote").bytes(hash);
+            match count {
+                Some(count) => builder.attr("count", count).build(),
+                None => builder.build(),
+            }
+        };
+        let row = NodeBuilder::new("message")
+            .children([NodeBuilder::new("votes")
+                .children([
+                    vote(Some("5"), vec![7; 31]),
+                    vote(None, option_hash(POLL_OPTION)),
+                    vote(Some("x"), option_hash(POLL_OPTION)),
+                    vote(Some("9"), option_hash(POLL_OPTION)),
+                ])
+                .build()])
+            .build();
+        let votes = vote_counts(&row.as_node_ref());
+        assert_eq!(votes.len(), 1, "only the well-formed vote crosses");
+        assert_eq!(votes[0].count, 9);
     }
 
     // `poll` is not in the library's own enum. Relaying the attribute verbatim

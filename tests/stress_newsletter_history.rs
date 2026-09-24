@@ -299,8 +299,10 @@ async fn library_drops_a_polltype_it_has_no_variant_for() {
     assert_eq!(library[1].poll_type, None);
 }
 
+// Issue #43: this was `library_skips_a_vote_the_core_relays` until the core
+// stopped relaying a 31-byte hash and an absent count as a tally.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn library_skips_a_vote_the_core_relays() {
+async fn both_skip_a_vote_without_a_count_or_a_32_byte_hash() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
     let hash = wacore::poll::compute_option_hash(POLL_OPTION).to_vec();
@@ -309,7 +311,11 @@ async fn library_skips_a_vote_the_core_relays() {
             .children([
                 meta_polltype("creation"),
                 NodeBuilder::new("votes")
-                    .children([vote(Some("5"), vec![7; 31]), vote(None, hash)])
+                    .children([
+                        vote(Some("5"), vec![7; 31]),
+                        vote(None, hash.clone()),
+                        vote(Some("9"), hash),
+                    ])
                     .build(),
                 plaintext(text_payload("?")),
             ])
@@ -321,9 +327,13 @@ async fn library_skips_a_vote_the_core_relays() {
         .iter()
         .map(|v| (v.option_hash.len(), v.count))
         .collect();
-    // The core relays the 31-byte hash as sent, and an absent count as 0.
-    assert_eq!(ours, vec![(31, 5), (32, 0)]);
-    assert!(library[0].votes.is_empty(), "the library skips both");
+    let theirs: Vec<(usize, u64)> = library[0]
+        .votes
+        .iter()
+        .map(|v| (v.option_hash.len(), v.count))
+        .collect();
+    assert_eq!(ours, vec![(32, 9)], "only the well-formed vote crosses");
+    assert_eq!(ours, theirs);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

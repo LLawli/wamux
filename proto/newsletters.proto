@@ -55,6 +55,12 @@ message NewsletterReactionCount {
 // does not fit `SendPollVote` (issue #26): the vote is by hash, in the clear,
 // and the server does the counting. Measured live 2026-09-21: 4 `<vote>` nodes
 // for a 4-option channel poll, 32 bytes of content each.
+//
+// A `<vote>` that could not fill both fields is skipped, not relayed (#43):
+// content that is not 32 bytes names no option, and a vote with no `count`
+// (or one that is not a number) is not a vote for nobody. So an option absent
+// from `votes` means the server gave no tally for it that the core could read,
+// NOT that its count is zero.
 message NewsletterPollVote {
   bytes option_hash = 1;   // 32 bytes, SHA-256 of the option name
   uint64 count = 2;
