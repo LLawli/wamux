@@ -26,8 +26,10 @@ separada** (fora de escopo).
   → `Backend` por blanket impl. ~57 métodos.
 - **16 tabelas** (15 da lib + `accounts`), todas escopadas por `device_id`; `accounts`
   mapeia UUID/`external_ref` → `device_id` (IDENTITY), FK cascade.
-- Formatos de bytes **idênticos** à referência SQLite (raw / bincode-standard /
-  serde_json) e o `Device` inteiro como 1 blob bincode (restaura `device_props` no load).
+- Formatos de bytes idênticos entre os dois engines (raw / serde_json / protobuf) e o
+  `Device` inteiro como 1 blob protobuf (restaura `device_props` no load). Desde o #31
+  os blobs estruturados são protobuf (`proto/store/blobs.proto`), não bincode; uma
+  store antiga é convertida ao abrir (`storage/bincode_upgrade.rs`).
 - `error_map` (sqlx→StoreError), migrations embutidas (`sqlx::migrate!`).
 
 ### Runtime multi-conta (`state/`, `domain/bot_factory`)
