@@ -31,19 +31,15 @@ use crate::domain::wire_defaults::{nonempty_string, nonzero_i32};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
-/// Answer an offer. Returns the built message alongside the result so the
-/// service can echo it (issue #22), same as every other send the core builds.
+/// Answer an offer. The built message comes back on `SendResult::message`
+/// (upstream #1406) for the service to echo (issue #22), like every send.
 pub async fn send_interactive_reply(
     client: &Client,
     to: Jid,
     req: &pb::SendInteractiveReplyRequest,
-) -> Result<(SendResult, wa::Message), WamuxError> {
+) -> Result<SendResult, WamuxError> {
     let message = build_interactive_reply(req)?;
-    let result = client
-        .send_message(to, message.clone())
-        .await
-        .map_err(client_err)?;
-    Ok((result, message))
+    client.send_message(to, message).await.map_err(client_err)
 }
 
 /// Pure construction of the outgoing reply.

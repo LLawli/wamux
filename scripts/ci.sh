@@ -103,6 +103,11 @@ WAMUX_TEST_ENGINE=sqlite cargo test
 stage "stress tests (fast: M1/M2a/M2b)"
 cargo test --features stress --test stress_handshake
 
+# The real library's newsletter parse against answers the mock plays back
+# (#38): the core's relay-verbatim promise, plus the upstream #1546 canary.
+stage "stress tests (newsletter parse vs the library)"
+must_run_tests --features stress --test stress_newsletter_parse
+
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
   must_run_tests --test load_multi_account -- --ignored

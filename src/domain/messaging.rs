@@ -28,16 +28,13 @@ pub async fn send_text(
     client: &Client,
     to: Jid,
     req: &pb::SendTextRequest,
-) -> Result<(SendResult, wa::Message), WamuxError> {
+) -> Result<SendResult, WamuxError> {
     let message = build_text_message(req)?;
-    // The built message rides back out so the service can echo it (issue #22):
-    // WhatsApp never echoes a send back to the device that made it, and the
-    // echo must carry the bytes that actually went, not a reconstruction.
-    let result = client
-        .send_message(to, message.clone())
-        .await
-        .map_err(client_err)?;
-    Ok((result, message))
+    // The built message rides back out on `SendResult::message` (upstream
+    // #1406) so the service can echo it (issue #22): WhatsApp never echoes a
+    // send back to the device that made it, and the echo must carry the message
+    // that actually went, not a reconstruction.
+    client.send_message(to, message).await.map_err(client_err)
 }
 
 /// Pure construction of the outgoing text `wa::Message`. Plain `conversation`
@@ -108,7 +105,7 @@ pub async fn send_reaction(
     client: &Client,
     target: &pb::MessageKey,
     emoji: &str,
-) -> Result<(SendResult, wa::Message), WamuxError> {
+) -> Result<SendResult, WamuxError> {
     let to = parse_jid(&target.remote_jid)?;
     let key = proto_key_to_wa(target);
     let message = wa::Message {
@@ -119,56 +116,52 @@ pub async fn send_reaction(
         }),
         ..Default::default()
     };
-    let result = client
-        .send_message(to, message.clone())
-        .await
-        .map_err(client_err)?;
-    Ok((result, message))
+    client.send_message(to, message).await.map_err(client_err)
 }
 
 pub async fn edit_message(
     client: &Client,
     target: &pb::MessageKey,
     new_text: &str,
-) -> Result<String, WamuxError> {
+) -> Result<SendResult, WamuxError> {
     let to = parse_jid(&target.remote_jid)?;
     let new = wa::Message {
         conversation: Some(new_text.to_string()),
         ..Default::default()
     };
-    // main's edit_message/revoke_message return a full SendResult (upstream
-    // #1406); 0.7.0 returned only the id. `message_id` is the edit stanza's own
-    // fresh id (the library's doc on the field), the same value 0.7.0 handed
-    // back, so the signature here stays unchanged (#30). Echoing the rest of
-    // SendResult is a new feature, tracked separately (#15).
-    let result = client
+    // The library builds the edit container itself; since upstream #1406 it
+    // hands it back on `SendResult::message`, which is what lets the service
+    // echo an edit at all (#38). `message_id` is the edit stanza's own fresh
+    // id, not the target's.
+    client
         .edit_message(to, target.id.clone(), new)
         .await
-        .map_err(client_err)?;
-    Ok(result.message_id)
+        .map_err(client_err)
 }
 
 pub async fn delete_message(
     client: &Client,
     target: &pb::MessageKey,
     for_everyone: bool,
-) -> Result<(), WamuxError> {
+) -> Result<Option<SendResult>, WamuxError> {
     let to = parse_jid(&target.remote_jid)?;
     if for_everyone {
-        // See edit_message: SendResult's other fields (message/timestamp) are
-        // not relayed here either, on purpose (#30, echo tracked in #15).
-        client
+        // A revoke is a message the library builds and sends, so it comes back
+        // to be echoed like an edit (#38).
+        let result = client
             .revoke_message(to, target.id.clone(), RevokeType::Sender)
             .await
             .map_err(client_err)?;
-        Ok(())
-    } else {
-        client
-            .chat_actions()
-            .delete_message_for_me(&to, None, &target.id, target.from_me, false, None)
-            .await
-            .map_err(client_err)
+        return Ok(Some(result));
     }
+    // Delete-for-me is an app-state mutation: nothing goes to the chat, so
+    // there is no message to echo.
+    client
+        .chat_actions()
+        .delete_message_for_me(&to, None, &target.id, target.from_me, false, None)
+        .await
+        .map_err(client_err)?;
+    Ok(None)
 }
 
 /// Request on-demand message history (PDO HistorySyncOnDemand): the phone returns
@@ -262,13 +255,19 @@ fn proto_key_to_wa(key: &pb::MessageKey) -> wa::MessageKey {
 /// consumed it could not be exercised from a test at all.
 pub fn send_result_to_proto(message_id: String, to: &Jid) -> pb::SendResult {
     pb::SendResult {
-        key: Some(pb::MessageKey {
-            remote_jid: to.to_string(),
-            id: message_id,
-            from_me: true,
-            participant: String::new(),
-        }),
+        key: Some(sent_message_key(message_id, to)),
         server_timestamp: 0,
+    }
+}
+
+/// The key of a message this account just sent: the one the RPC answers with
+/// and the one its echo carries, so the two can never disagree.
+pub fn sent_message_key(message_id: String, to: &Jid) -> pb::MessageKey {
+    pb::MessageKey {
+        remote_jid: to.to_string(),
+        id: message_id,
+        from_me: true,
+        participant: String::new(),
     }
 }
 

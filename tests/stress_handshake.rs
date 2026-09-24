@@ -26,45 +26,6 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
-/// Build a registry pointed at the mock and create an account whose device is
-/// already *registered* (pn set + persisted), so `connect` makes the client
-/// send a LOGIN payload and treat the mock's `<success>` as auth success.
-/// Returns the registry and the (not-yet-connected) account handle.
-async fn registered_account(
-    mock: &MockWaServer,
-    tag_prefix: &str,
-) -> (Arc<AccountRegistry>, Arc<wamux::state::AccountHandle>) {
-    let engine = common::pg_engine(4).await;
-
-    let tuning = RegistryTuning {
-        ws_url_override: Some(mock.ws_url()),
-        ..RegistryTuning::default()
-    };
-    let registry = Arc::new(AccountRegistry::new(engine.clone(), tuning));
-
-    let tag = uuid::Uuid::new_v4();
-    let handle = registry
-        .create_account(Some(&format!("{tag_prefix}-{tag}")))
-        .await
-        .expect("create account");
-
-    let mut device = Device::new();
-    device.pn = Some(
-        "5511999999999@s.whatsapp.net"
-            .parse()
-            .expect("parse pn jid"),
-    );
-    device.push_name = "Stress".to_string();
-    registry
-        .storage()
-        .device_backend(handle.device_id)
-        .save(&device)
-        .await
-        .expect("save registered device");
-
-    (registry, handle)
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_client_completes_handshake_against_mock() {
     init_tracing();
@@ -116,7 +77,7 @@ async fn registered_client_logs_in_and_talks_over_transport() {
     init_tracing();
 
     let mock = MockWaServer::start().await.expect("start mock");
-    let (registry, handle) = registered_account(&mock, "stress-m2").await;
+    let (registry, handle) = common::registered_account(mock.ws_url(), "stress-m2").await;
 
     registry
         .connect(&handle, None, true)
@@ -158,7 +119,7 @@ async fn pushed_receipt_surfaces_as_event() {
     init_tracing();
 
     let mock = MockWaServer::start().await.expect("start mock");
-    let (registry, handle) = registered_account(&mock, "stress-m2b-rcpt").await;
+    let (registry, handle) = common::registered_account(mock.ws_url(), "stress-m2b-rcpt").await;
 
     // Subscribe BEFORE connecting: the broadcast has no replay, so a late
     // subscriber would miss the receipt the mock pushes right after login.
@@ -207,7 +168,8 @@ async fn connection_survives_keepalive_window() {
     init_tracing();
 
     let mock = MockWaServer::start().await.expect("start mock");
-    let (registry, handle) = registered_account(&mock, "stress-m2b-keepalive").await;
+    let (registry, handle) =
+        common::registered_account(mock.ws_url(), "stress-m2b-keepalive").await;
 
     registry
         .connect(&handle, None, true)
