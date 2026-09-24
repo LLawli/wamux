@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
+use wacore::store::Device;
 use wamux::proto::v1 as pb;
+use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
 use wamux::storage::StorageEngine;
 use wamux::storage::postgres::PgStorage;
 use wamux::storage::sqlite::SqliteStorage;
@@ -97,4 +99,43 @@ pub async fn sweep_orphans(storage: &Arc<dyn StorageEngine>, prefix: &str) -> u6
         }
     }
     deleted
+}
+
+/// Build a registry pointed at a mock WhatsApp endpoint (`ws_url`) and create
+/// an account whose device is already *registered* (pn set + persisted), so
+/// `connect` makes the client send a LOGIN payload and treat the mock's
+/// `<success>` as auth success. Returns the registry and the (not-yet-connected)
+/// account handle. Shared by the stress suites.
+pub async fn registered_account(
+    ws_url: String,
+    tag_prefix: &str,
+) -> (Arc<AccountRegistry>, Arc<AccountHandle>) {
+    let engine = pg_engine(4).await;
+    let tuning = RegistryTuning {
+        ws_url_override: Some(ws_url),
+        ..RegistryTuning::default()
+    };
+    let registry = Arc::new(AccountRegistry::new(engine, tuning));
+
+    let tag = uuid::Uuid::new_v4();
+    let handle = registry
+        .create_account(Some(&format!("{tag_prefix}-{tag}")))
+        .await
+        .expect("create account");
+
+    let mut device = Device::new();
+    device.pn = Some(
+        "5511999999999@s.whatsapp.net"
+            .parse()
+            .expect("parse pn jid"),
+    );
+    device.push_name = "Stress".to_string();
+    registry
+        .storage()
+        .device_backend(handle.device_id)
+        .save(&device)
+        .await
+        .expect("save registered device");
+
+    (registry, handle)
 }

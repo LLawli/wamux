@@ -40,8 +40,15 @@ pub struct MockWaServer {
     post_login_frames: Arc<AtomicUsize>,
     parsed_nodes: Arc<AtomicUsize>,
     keepalive_pings: Arc<AtomicUsize>,
+    mex_answer: MexAnswer,
     accept_task: tokio::task::JoinHandle<()>,
 }
+
+/// The JSON body the mock answers every `<iq xmlns="w:mex">` with, standing in
+/// for the server's GraphQL answer. `None` answers a bare `<iq type=result>`
+/// like any other IQ. Shared with every connection, so a test sets it before
+/// the call it wants answered.
+type MexAnswer = Arc<std::sync::Mutex<Option<String>>>;
 
 impl Drop for MockWaServer {
     fn drop(&mut self) {
@@ -60,7 +67,9 @@ impl MockWaServer {
         let post_login_frames = Arc::new(AtomicUsize::new(0));
         let parsed_nodes = Arc::new(AtomicUsize::new(0));
         let keepalive_pings = Arc::new(AtomicUsize::new(0));
+        let mex_answer: MexAnswer = Arc::new(std::sync::Mutex::new(None));
 
+        let mex = mex_answer.clone();
         let hs = handshakes.clone();
         let plf = post_login_frames.clone();
         let pn = parsed_nodes.clone();
@@ -74,6 +83,7 @@ impl MockWaServer {
                             post_login_frames: plf.clone(),
                             parsed_nodes: pn.clone(),
                             keepalive_pings: kap.clone(),
+                            mex_answer: mex.clone(),
                         };
                         tokio::spawn(async move {
                             if let Err(e) = serve_connection(stream, counters).await {
@@ -95,8 +105,19 @@ impl MockWaServer {
             post_login_frames,
             parsed_nodes,
             keepalive_pings,
+            mex_answer,
             accept_task,
         })
+    }
+
+    /// Answer every later MEX query with this `{"data":...}` JSON, as the
+    /// server would. Lets a test feed the library's own response parsing a
+    /// server answer of its choosing.
+    pub fn answer_mex_with(&self, json: &str) {
+        // Poisoning needs a panic while the lock is held; nothing here panics.
+        if let Ok(mut slot) = self.mex_answer.lock() {
+            *slot = Some(json.to_string());
+        }
     }
 
     /// `ws://` URL a client transport should target.
@@ -139,6 +160,7 @@ struct ConnCounters {
     post_login_frames: Arc<AtomicUsize>,
     parsed_nodes: Arc<AtomicUsize>,
     keepalive_pings: Arc<AtomicUsize>,
+    mex_answer: MexAnswer,
 }
 
 /// Unix seconds (server time) for the `<success t=...>` attribute.
@@ -158,6 +180,7 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
         post_login_frames: post_login,
         parsed_nodes,
         keepalive_pings,
+        mex_answer,
     } = counters;
     let (_req, mut ws) = ServerBuilder::new()
         .accept(stream)
@@ -333,10 +356,9 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
             if tag == "iq"
                 && let Some(id) = node.get_attr("id").map(|v| v.to_string())
             {
-                let reply = NodeBuilder::new("iq")
-                    .attr("type", "result")
-                    .attr("id", id)
-                    .build();
+                let is_mex =
+                    node.get_attr("xmlns").map(|v| v.to_string()).as_deref() == Some("w:mex");
+                let reply = iq_reply(id, is_mex, &mex_answer);
                 if let Ok(plain) = marshal(&reply)
                     && let Ok(ct) = send_cipher.encrypt_with_counter(send_ctr, &plain)
                 {
@@ -347,6 +369,19 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
         }
     }
     Ok(())
+}
+
+/// A minimal `<iq type=result>`, carrying the configured `<result>` JSON when
+/// the query is MEX and a test set one (`MockWaServer::answer_mex_with`).
+fn iq_reply(id: String, is_mex: bool, mex_answer: &MexAnswer) -> wacore_binary::Node {
+    let reply = NodeBuilder::new("iq").attr("type", "result").attr("id", id);
+    let body = mex_answer.lock().ok().and_then(|slot| slot.clone());
+    match body {
+        Some(json) if is_mex => reply
+            .children([NodeBuilder::new("result").bytes(json.into_bytes()).build()])
+            .build(),
+        _ => reply.build(),
+    }
 }
 
 /// Pull the next WhatsApp frame, stripping the 4-byte `WA_CONN_HEADER` that
