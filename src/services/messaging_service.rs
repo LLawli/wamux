@@ -9,7 +9,9 @@ use whatsapp_rust::SendResult;
 
 use super::{account_of, client_of, own_jid, require_field, require_jid};
 use crate::domain::jid_parse::{parse_jid, parse_optional_jid};
-use crate::domain::messaging::{self, send_result_to_proto, sent_message_key};
+use crate::domain::messaging::{
+    self, recipient_fanout_to_proto, send_result_to_proto, sent_message_key,
+};
 use crate::domain::{chat_actions, interactive_reply, media_transfer, polls, send_rich, status};
 use crate::proto::v1 as pb;
 use crate::proto::v1::messaging_service_server::MessagingService;
@@ -65,7 +67,11 @@ impl MessagingSvc {
         result: SendResult,
     ) -> Response<pb::SendResult> {
         self.echo(handle, client, &result).await;
-        Response::new(send_result_to_proto(result.message_id, &result.to))
+        Response::new(send_result_to_proto(
+            result.message_id,
+            &result.to,
+            result.recipient_fanout,
+        ))
     }
 }
 
@@ -139,6 +145,7 @@ impl MessagingService for MessagingSvc {
                 participant: String::new(),
             }),
             server_timestamp: 0,
+            recipient_fanout: result.recipient_fanout.map(recipient_fanout_to_proto),
         }))
     }
 
@@ -151,12 +158,16 @@ impl MessagingService for MessagingSvc {
         messaging::refuse_status_revoke(&target, req.for_everyone)?;
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
         let revoke = messaging::delete_message(&client, &target, req.for_everyone).await?;
-        if let Some(result) = revoke {
-            self.echo(&handle, &client, &result).await;
+        if let Some(result) = &revoke {
+            self.echo(&handle, &client, result).await;
         }
+        // A delete-for-me sends nothing, so it has no fan-out to report.
         Ok(Response::new(pb::SendResult {
             key: Some(target),
             server_timestamp: 0,
+            recipient_fanout: revoke
+                .and_then(|result| result.recipient_fanout)
+                .map(recipient_fanout_to_proto),
         }))
     }
 
@@ -315,11 +326,12 @@ impl MessagingService for MessagingSvc {
         let to = parse_jid(&require_jid(req.to.clone())?)?;
         let (result, message_secret) = send_rich::send_poll(&client, to, &req).await?;
         self.echo(&handle, &client, &result).await;
-        // The poll key reuses send_result_to_proto's shape; the message_secret
-        // rides alongside so the edge can decrypt incoming votes.
+        // The poll key is the same key every send answers with; the
+        // message_secret rides alongside so the edge can decrypt incoming votes.
         Ok(Response::new(pb::SendPollResult {
-            key: send_result_to_proto(result.message_id, &result.to).key,
+            key: Some(sent_message_key(result.message_id, &result.to)),
             message_secret,
+            recipient_fanout: result.recipient_fanout.map(recipient_fanout_to_proto),
         }))
     }
 

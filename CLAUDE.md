@@ -69,10 +69,13 @@ Record the constraint, not the workaround.
 
 **Judge a send by `delivered`, never by the ack.** `SendResult` means the library accepted
 the message; `ServerAckEvent` means the server accepted the stanza. Neither means anyone
-received it — a stanza that encrypted for nobody who matters gets both. There is no
-`delivered` receipt for a note to self, which is why that case needs a human or, once
-[#1362](https://github.com/oxidezap/whatsapp-rust/pull/1362) is released,
-`SendResult.recipient_fanout` (`encrypted`, `skipped_primary`, `is_partial()`).
+received it — a stanza that encrypted for nobody who matters gets both. For a DM to
+someone else, `SendResult.recipient_fanout` (#47, upstream
+[#1362](https://github.com/oxidezap/whatsapp-rust/pull/1362)) says at send time how many
+of the recipient's devices got an `<enc>` and whether the phone was among the misses.
+There is no `delivered` receipt for a note to self, and the fan-out does not cover it
+either: a self-chat has no recipient half, so it reports all zeros (verified in
+`wacore/src/send/dm.rs`). That case still needs a human.
 
 **Worked example (Sprint 3, 2026-06-09): reconnection is not the core's job.** The
 `whatsapp-rust` run loop already reconnects transient drops with Fibonacci backoff;

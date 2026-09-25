@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use wacore::send::RecipientFanout;
 use whatsapp_rust::buffa::{Enumeration, MessageField};
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::PreviewType;
@@ -264,13 +265,31 @@ fn proto_key_to_wa(key: &pb::MessageKey) -> wa::MessageKey {
     }
 }
 
-/// Takes the two fields instead of the whole `SendResult`: 0.7 sealed that
+/// Takes the fields instead of the whole `SendResult`: 0.7 sealed that
 /// struct (`#[non_exhaustive]`, no public constructor), so a projection that
 /// consumed it could not be exercised from a test at all.
-pub fn send_result_to_proto(message_id: String, to: &Jid) -> pb::SendResult {
+pub fn send_result_to_proto(
+    message_id: String,
+    to: &Jid,
+    fanout: Option<RecipientFanout>,
+) -> pb::SendResult {
     pb::SendResult {
         key: Some(sent_message_key(message_id, to)),
         server_timestamp: 0,
+        recipient_fanout: fanout.map(recipient_fanout_to_proto),
+    }
+}
+
+/// The library's DM fan-out count, relayed field for field (#47). Device counts
+/// are `usize` there and `uint32` on the wire; a count past `u32::MAX` cannot
+/// happen for one recipient, and saturating keeps it from wrapping to a small
+/// number that would read as a real one.
+pub fn recipient_fanout_to_proto(fanout: RecipientFanout) -> pb::RecipientFanout {
+    pb::RecipientFanout {
+        addressed: u32::try_from(fanout.addressed).unwrap_or(u32::MAX),
+        encrypted: u32::try_from(fanout.encrypted).unwrap_or(u32::MAX),
+        skipped_primary: fanout.skipped_primary,
+        had_unregistered_device: fanout.had_unregistered_device,
     }
 }
 
@@ -320,6 +339,7 @@ mod tests {
         let proto = send_result_to_proto(
             "3EB0ABCDEF".to_string(),
             &Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
+            None,
         );
         let key = proto.key.expect("key must be set");
         assert_eq!(key.remote_jid, "5511999999999@s.whatsapp.net");
@@ -329,6 +349,47 @@ mod tests {
         // The lib's SendResult carries no server timestamp; we pin 0 so the
         // edge knows the field is a placeholder, not a real clock reading.
         assert_eq!(proto.server_timestamp, 0);
+    }
+
+    // Issue #47: the four facts cross as the library counted them.
+    #[test]
+    fn a_dm_send_relays_its_recipient_fanout() {
+        let mut fanout = RecipientFanout::default();
+        fanout.addressed = 3;
+        fanout.encrypted = 2;
+        fanout.skipped_primary = true;
+        fanout.had_unregistered_device = true;
+        let proto = send_result_to_proto(
+            "3EB0ABCDEF".to_string(),
+            &Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
+            Some(fanout),
+        );
+        let relayed = proto.recipient_fanout.expect("a DM carries its fan-out");
+        assert_eq!((relayed.addressed, relayed.encrypted), (3, 2));
+        assert!(relayed.skipped_primary);
+        assert!(relayed.had_unregistered_device);
+    }
+
+    // A self-chat is zeros, present; a non-DM send is absent. The two must not
+    // collapse into one another on the wire.
+    #[test]
+    fn a_self_chat_fanout_stays_apart_from_a_non_dm_send() {
+        let to = Jid::from_str("5511999999999@s.whatsapp.net").unwrap();
+        let self_chat =
+            send_result_to_proto("A".to_string(), &to, Some(RecipientFanout::default()));
+        assert_eq!(
+            self_chat.recipient_fanout,
+            Some(pb::RecipientFanout::default())
+        );
+        let group = send_result_to_proto("B".to_string(), &to, None);
+        assert_eq!(group.recipient_fanout, None);
+    }
+
+    #[test]
+    fn a_device_count_past_u32_saturates() {
+        let mut fanout = RecipientFanout::default();
+        fanout.addressed = usize::MAX;
+        assert_eq!(recipient_fanout_to_proto(fanout).addressed, u32::MAX);
     }
 
     #[test]

@@ -35,6 +35,29 @@ message SendTextRequest {
 message SendResult {
   MessageKey key = 1;
   int64 server_timestamp = 2;
+  // What a DM's fan-out reached (#47). Absent for every other send: a group, a
+  // status, a delete-for-me that sent nothing. Zeros would read as "addressed
+  // nobody", which is a different fact.
+  RecipientFanout recipient_fanout = 3;
+}
+
+// The recipient half of a DM send, as the library counted it (upstream #1362).
+// `SendResult` and the server ack only say the message was taken; this says
+// which of the recipient's devices got something to decrypt, at send time,
+// before any `delivered` receipt could arrive.
+//
+// Four facts, nothing derived: "partial" is `encrypted < addressed`, and what
+// to do about it (retry, warn, wait for a receipt) is the edge's call. A send
+// that reached no recipient device at all never answers with this: it fails.
+//
+// All zeros means a self-chat, which has no recipient half. It says nothing
+// about this account's own devices, so a note to self is NOT settled by it:
+// that case still has neither a receipt nor a count.
+message RecipientFanout {
+  uint32 addressed = 1;              // recipient devices the fan-out attempted
+  uint32 encrypted = 2;              // of those, how many got an <enc>
+  bool skipped_primary = 3;          // device 0 (the phone) was among the misses
+  bool had_unregistered_device = 4;  // the server answered 406 for at least one
 }
 
 message SendMediaHeader {
@@ -195,6 +218,9 @@ message SendPollRequest {
 message SendPollResult {
   MessageKey key = 1;
   bytes message_secret = 2;
+  // Same as SendResult.recipient_fanout: a poll to a DM goes through the same
+  // fan-out as any other message (#47).
+  RecipientFanout recipient_fanout = 3;
 }
 
 // --- Polls: voting and tallying (issue #13) ---
