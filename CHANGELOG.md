@@ -13,6 +13,14 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **`NewsletterMessage` says when a row was edited** (issue #51). #44 relayed
+  the row's `edit` token, so an edited row could be told apart but not dated.
+  `GetNewsletterMessages` now reads the two times the server puts on `<meta>`:
+  `original_timestamp` (field 9, from `original_msg_t`) and
+  `last_edit_timestamp` (field 10, from `msg_edit_t`). The server counts the
+  first in seconds and the second in milliseconds; both cross in milliseconds.
+  0 on a row the server has not edited.
+
 - **`RevokeStatus`: a posted status can be taken down** (issue #41). A status
   revoke is encrypted to the status's own recipients, so the request carries
   them: `message_id` (the `PostStatus*` answer's `key.id`) and `recipients`,
