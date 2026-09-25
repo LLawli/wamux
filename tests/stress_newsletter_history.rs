@@ -75,7 +75,7 @@ fn meta_polltype(value: &str) -> Node {
 }
 
 /// The rows both paths read the same way (#26's capture, plus revoked and
-/// undecodable bodies).
+/// undecodable bodies, and an admin edit with its times, #51).
 fn agreeing_rows() -> Vec<Node> {
     let hash = wacore::poll::compute_option_hash(POLL_OPTION).to_vec();
     vec![
@@ -120,6 +120,17 @@ fn agreeing_rows() -> Vec<Node> {
             .build(),
         row("783", Some("hologram"))
             .children([plaintext(text_payload("?"))])
+            .build(),
+        // #51: an admin edit carries both times on `<meta>`, in two units.
+        row("784", Some("text"))
+            .attr("edit", "3")
+            .children([
+                NodeBuilder::new("meta")
+                    .attr("original_msg_t", "1790001172")
+                    .attr("msg_edit_t", "1790004321987")
+                    .build(),
+                plaintext(text_payload("editado")),
+            ])
             .build(),
         // No server_id: nothing can address it, both skip it.
         NodeBuilder::new("message")
@@ -183,8 +194,9 @@ async fn read_both(
     (core, library)
 }
 
-/// server_id, type, payload, forwards_count, poll_type, edit.
-type WireRow = (u64, String, Vec<u8>, u64, String, String);
+/// server_id, type, payload, forwards_count, poll_type, edit, and the two
+/// edit times in ms (original, last edit).
+type WireRow = (u64, String, Vec<u8>, u64, String, String, (i64, i64));
 
 /// The library's row in the core's wire terms, for the fields both carry.
 fn library_row_as_wire(row: &NewsletterMessage) -> WireRow {
@@ -200,6 +212,11 @@ fn library_row_as_wire(row: &NewsletterMessage) -> WireRow {
             .map(|kind| kind.as_str().to_string())
             .unwrap_or_default(),
         row.edit.as_str().to_string(),
+        // The library keeps the wire's units; the core crosses in ms.
+        (
+            row.original_timestamp.map_or(0, |s| s as i64 * 1000),
+            row.last_edit_timestamp_ms.map_or(0, |ms| ms as i64),
+        ),
     )
 }
 
@@ -216,6 +233,7 @@ fn core_row_as_wire(row: &pb::NewsletterMessage) -> WireRow {
         row.forwards_count,
         row.poll_type.clone(),
         row.edit.clone(),
+        (row.original_timestamp, row.last_edit_timestamp),
     )
 }
 
@@ -225,7 +243,7 @@ async fn both_read_the_captured_page_the_same() {
     let (_registry, client) = logged_in_client(&mock).await;
     let (core, library) = read_both(&client, &mock, agreeing_rows()).await;
 
-    assert_eq!(core.len(), 6, "the row without server_id is skipped");
+    assert_eq!(core.len(), 7, "the row without server_id is skipped");
     assert_eq!(core.len(), library.len());
     for (ours, theirs) in core.iter().zip(&library) {
         assert_eq!(core_row_as_wire(ours), library_row_as_wire(theirs));
@@ -259,6 +277,15 @@ async fn both_read_the_captured_page_the_same() {
     // #44: the revoked rows say so, instead of reading as an undecodable body.
     assert_eq!((core[2].edit.as_str(), core[3].edit.as_str()), ("8", "8"));
     assert_eq!(core[4].edit, "");
+    // #51: the edit times, by value, in ms; an unedited row carries neither.
+    assert_eq!(
+        (core[6].original_timestamp, core[6].last_edit_timestamp),
+        (1_790_001_172_000, 1_790_004_321_987)
+    );
+    assert_eq!(
+        (core[0].original_timestamp, core[0].last_edit_timestamp),
+        (0, 0)
+    );
     // An undecodable body is an empty payload on BOTH sides, with nothing
     // saying so: a swap would not fix that, and would not make it worse.
     assert!(library[4].message.is_none());
