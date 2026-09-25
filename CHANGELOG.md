@@ -111,8 +111,9 @@ migration note, since the edge that consumes this socket has to follow them.
   IQs are probed before the watchdog reconnects; #1547: an IQ's write is
   bounded by its deadline), #1542 (a call offer teaches the caller's LID-PN
   pair) and #1544, a new `FavoritesUpdate` event for the favorite-chats sync.
-  That event is not typed by the core yet and reaches subscribers as a
-  `RawEvent`. The gRPC contract is unchanged.
+  That event reached subscribers as a `RawEvent` until #48 typed it (see
+  **Added**, `FavoritesChanged`). The bump itself left the gRPC contract
+  unchanged.
 
 - **Channel history stays on the core's own IQ** (issue #40). Upstream fixed
   both reasons `GetNewsletterMessages` built the history IQ itself (#1523, the
