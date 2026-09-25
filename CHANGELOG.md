@@ -19,7 +19,9 @@ migration note, since the edge that consumes this socket has to follow them.
   `original_timestamp` (field 9, from `original_msg_t`) and
   `last_edit_timestamp` (field 10, from `msg_edit_t`). The server counts the
   first in seconds and the second in milliseconds; both cross in milliseconds.
-  0 on a row the server has not edited.
+  Measured live: an edited row carries both, a revoked row only the original,
+  an untouched row neither (0). An edited row's `message.timestamp` is the
+  edit time, so `original_timestamp` is where its posting time survives.
 
 - **`RevokeStatus`: a posted status can be taken down** (issue #41). A status
   revoke is encrypted to the status's own recipients, so the request carries

@@ -113,11 +113,16 @@ message NewsletterMessage {
   // `EditAttribute`: "3" admin edit, "8" admin revoke. Mapping a token to a
   // meaning is the edge's job; an unknown one relays as sent.
   string edit = 8;
-  // When an edited row was first posted and last edited (#51), read off
+  // When a touched row was first posted and last edited (#51), read off
   // `<meta original_msg_t>` and `<meta msg_edit_t>`. The server counts the
   // first in seconds and the second in milliseconds, in the same node; both
   // cross here in milliseconds, like every timestamp in this contract. 0 when
-  // the attribute is absent, which is every row the server has not edited.
+  // the attribute is absent.
+  //
+  // Measured live 2026-09-25 (two channels, 200 rows): an edited row
+  // (`edit = "3"`) carries both, a revoked one (`"8"`) only the original, an
+  // untouched one neither. On an edited row `message.timestamp` is the EDIT
+  // time, so `original_timestamp` is the only place the posting time survives.
   int64 original_timestamp = 9;
   int64 last_edit_timestamp = 10;
 }
