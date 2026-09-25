@@ -13,6 +13,18 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **`FavoritesChanged`: the favorite chats list is typed** (issue #48, upstream
+  #1544). When the favorites change on a linked device, the library emits the
+  whole list. It reached the socket as an untyped `RawEvent` (kind
+  `FavoritesUpdate`); it is now `EventEnvelope.favorites_changed` (field 26),
+  with `chats` (the JIDs in the phone's order, spelled as the phone sent them),
+  `timestamp` (ms), `from_full_sync`, and `raw` (the serialized
+  `FavoritesAction`). Each event replaces the previous list, and an empty
+  `chats` means no favorites. It is not an `AppStateUpdate` kind because it is
+  one list for the account, not one chat. An entry without an id is skipped
+  in `chats` and kept in `raw`. A consumer matching the `Raw` kind
+  `FavoritesUpdate` should switch to the typed event.
+
 - **`NewsletterMessage` says when a row was edited** (issue #51). #44 relayed
   the row's `edit` token, so an edited row could be told apart but not dated.
   `GetNewsletterMessages` now reads the two times the server puts on `<meta>`:
@@ -109,8 +121,9 @@ migration note, since the edge that consumes this socket has to follow them.
   IQs are probed before the watchdog reconnects; #1547: an IQ's write is
   bounded by its deadline), #1542 (a call offer teaches the caller's LID-PN
   pair) and #1544, a new `FavoritesUpdate` event for the favorite-chats sync.
-  That event is not typed by the core yet and reaches subscribers as a
-  `RawEvent`. The gRPC contract is unchanged.
+  That event reached subscribers as a `RawEvent` until #48 typed it (see
+  **Added**, `FavoritesChanged`). The bump itself left the gRPC contract
+  unchanged.
 
 - **Channel history stays on the core's own IQ** (issue #40). Upstream fixed
   both reasons `GetNewsletterMessages` built the history IQ itself (#1523, the

@@ -134,6 +134,9 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::DeleteChatUpdate(s) => {
             one(Pb::AppState(app_state(s.jid.to_string(), "delete_chat", s)))
         }
+        // Issue #48 (upstream #1544): one list for the whole account, not one
+        // chat, so it is its own event rather than an AppStateUpdate kind.
+        Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),
 
         // Inbound call signaling. The core relays the primitive; ring/answer
         // policy is the edge's. `call_id` is the CallAction id (the stanza id
@@ -270,6 +273,23 @@ fn app_state<T: Serialize>(chat: String, kind: &str, update: &T) -> pb::AppState
         chat,
         kind: kind.to_string(),
         raw: serde_json::to_vec(update).unwrap_or_default(),
+    }
+}
+
+/// The whole favorites list, ids verbatim and in the phone's order. `id` is
+/// optional on the wire; a missing one is skipped rather than relayed as an
+/// empty string a consumer would take for a chat. `raw` keeps every entry.
+fn favorites_changed(update: &wacore::types::events::FavoritesUpdate) -> pb::FavoritesChanged {
+    pb::FavoritesChanged {
+        chats: update
+            .action
+            .favorites
+            .iter()
+            .filter_map(|f| f.id.clone())
+            .collect(),
+        timestamp: update.timestamp.timestamp_millis(),
+        from_full_sync: update.from_full_sync,
+        raw: update.action.encode_to_vec(),
     }
 }
 
@@ -578,6 +598,9 @@ fn variant_name(event: &Event) -> String {
 }
 
 // Tests live in sibling files to keep each one under the 500-line rule.
+#[cfg(test)]
+#[path = "event_mapping_favorites_tests.rs"]
+mod favorites_tests;
 #[cfg(test)]
 #[path = "event_mapping_media_tests.rs"]
 mod media_tests;
