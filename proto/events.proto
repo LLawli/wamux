@@ -204,6 +204,24 @@ message AppStateUpdate {
   bytes raw = 3;
 }
 
+// The account's favorite chats changed on a linked device (the `favorites`
+// syncd mutation, upstream #1544). Issue #48: it reached the socket as an
+// untyped RawEvent.
+//
+// Not an AppStateUpdate: favorites is ONE list for the whole account, and each
+// event carries the whole of it. It REPLACES whatever the consumer held before;
+// an empty `chats` means no favorites, not "nothing changed". The core relays
+// each list and keeps none, so replacing is the consumer's job.
+message FavoritesChanged {
+  // Chat JIDs in the phone's order, exactly as the phone sent them: no
+  // normalization, so a legacy or LID spelling is the consumer's to handle.
+  // An entry the wire sent without an id is skipped; `raw` still carries it.
+  repeated string chats = 1;
+  int64 timestamp = 2;      // mutation time (ms)
+  bool from_full_sync = 3;  // true when replayed by a full app-state sync
+  bytes raw = 4;            // the serialized `wa.SyncActionValue.FavoritesAction`
+}
+
 // Inbound `<call>` signaling stanza (lib `IncomingCall`). The core relays the
 // primitive; the edge composes any ring/answer policy. `call_id` is the
 // CallAction's id (distinct from the stanza id, which lives in `raw`).
@@ -334,6 +352,7 @@ message EventEnvelope {
     OfflineSyncPreview offline_sync_preview = 23;
     OfflineSyncCompleted offline_sync_completed = 24;
     OfflineSyncInterrupted offline_sync_interrupted = 25;
+    FavoritesChanged favorites_changed = 26;
     RawEvent raw = 99;
   }
 }

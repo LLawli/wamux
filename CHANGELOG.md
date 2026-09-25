@@ -13,6 +13,18 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **`FavoritesChanged`: the favorite chats list is typed** (issue #48, upstream
+  #1544). When the favorites change on a linked device, the library emits the
+  whole list. It reached the socket as an untyped `RawEvent` (kind
+  `FavoritesUpdate`); it is now `EventEnvelope.favorites_changed` (field 26),
+  with `chats` (the JIDs in the phone's order, spelled as the phone sent them),
+  `timestamp` (ms), `from_full_sync`, and `raw` (the serialized
+  `FavoritesAction`). Each event replaces the previous list, and an empty
+  `chats` means no favorites. It is not an `AppStateUpdate` kind because it is
+  one list for the account, not one chat. An entry without an id is skipped
+  in `chats` and kept in `raw`. A consumer matching the `Raw` kind
+  `FavoritesUpdate` should switch to the typed event.
+
 - **`RevokeStatus`: a posted status can be taken down** (issue #41). A status
   revoke is encrypted to the status's own recipients, so the request carries
   them: `message_id` (the `PostStatus*` answer's `key.id`) and `recipients`,
