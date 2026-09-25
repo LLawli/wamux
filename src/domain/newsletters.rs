@@ -139,7 +139,8 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
 // same bytes (`tests/stress_newsletter_history.rs`). It agrees on the ids, the
 // payload (both re-encode the decoded `wa.Message`, and both hand back an
 // empty one for a body that does not decode), reactions, votes, forwards and
-// the `edit` token (#44). It differs in three places, and the first two lose what the server sent
+// the `edit` token (#44), and the two edit times on `<meta>` once each is in
+// ms (#51). It differs in three places, and the first two lose what the server sent
 // (reported as upstream #1548):
 //
 // 1. An absent `type` comes back as `text`. The core relays the absence.
@@ -239,6 +240,7 @@ fn parse_history(response: &NodeRef<'_>, chat: &str) -> Vec<pb::NewsletterMessag
 /// such row.
 fn message_node_to_proto(node: &NodeRef<'_>, chat: &str) -> Option<pb::NewsletterMessage> {
     let server_id = attr_u64(node, "server_id")?;
+    let meta = node.get_optional_child("meta");
     Some(pb::NewsletterMessage {
         message: Some(history_row_to_inbound(node, chat)),
         server_id,
@@ -246,11 +248,19 @@ fn message_node_to_proto(node: &NodeRef<'_>, chat: &str) -> Option<pb::Newslette
         reactions: reaction_counts(node),
         votes: vote_counts(node),
         forwards_count: child_count(node, "forwards_count"),
-        poll_type: node
-            .get_optional_child("meta")
+        poll_type: meta
             .and_then(|meta| attr_str(meta, "polltype"))
             .unwrap_or_default(),
         edit: attr_str(node, "edit").unwrap_or_default(),
+        // #51: one node, two units. `original_msg_t` is seconds and
+        // `msg_edit_t` is already milliseconds (the library reads them the
+        // same way), so only the first is converted.
+        original_timestamp: meta
+            .and_then(|meta| attr_u64(meta, "original_msg_t"))
+            .map_or(0, millis_from_seconds),
+        last_edit_timestamp: meta
+            .and_then(|meta| attr_u64(meta, "msg_edit_t"))
+            .map_or(0, saturating_i64),
     })
 }
 
@@ -374,9 +384,13 @@ fn attr_u64(node: &NodeRef<'_>, key: &str) -> Option<u64> {
 /// milliseconds. Saturating, so a nonsense value cannot come back as a date in
 /// the past.
 fn millis_from_seconds(seconds: u64) -> i64 {
-    i64::try_from(seconds)
-        .unwrap_or(i64::MAX)
-        .saturating_mul(1000)
+    saturating_i64(seconds).saturating_mul(1000)
+}
+
+/// A wire `u64` into the contract's `int64`, clamped rather than wrapped into
+/// a negative time.
+fn saturating_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 /// Project one newsletter node onto the wire shape.
@@ -704,6 +718,27 @@ mod history_tests {
         assert_eq!(edit_of(row(Some("8"))), "8");
         assert_eq!(edit_of(row(Some("42"))), "42", "unknown tokens relay too");
         assert_eq!(edit_of(row(None)), "");
+    }
+
+    // Issue #51: the edit times ride on `<meta>` in two units. Both cross in
+    // ms; a row without them (every unedited row) reads 0, not a guess.
+    #[test]
+    fn a_row_relays_its_edit_times_in_milliseconds() {
+        let edited = NodeBuilder::new("message")
+            .attr("server_id", "790")
+            .attr("edit", "3")
+            .children([NodeBuilder::new("meta")
+                .attr("original_msg_t", "1790001172")
+                .attr("msg_edit_t", "1790004321987")
+                .build()])
+            .build();
+        let row = message_node_to_proto(&edited.as_node_ref(), CHANNEL).expect("row");
+        assert_eq!(row.original_timestamp, 1_790_001_172_000);
+        assert_eq!(row.last_edit_timestamp, 1_790_004_321_987);
+
+        let plain = NodeBuilder::new("message").attr("server_id", "791").build();
+        let row = message_node_to_proto(&plain.as_node_ref(), CHANNEL).expect("row");
+        assert_eq!((row.original_timestamp, row.last_edit_timestamp), (0, 0));
     }
 
     // Issue #43: an absent count is not a count of zero, and 31 bytes name no
