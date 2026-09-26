@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+// The server's per-message tallies on a channel, shared by the history page
+// (`NewsletterMessage`) and the live push (`NewsletterLiveUpdate`). Their own
+// file because events.proto cannot import newsletters.proto, which imports it
+// (issue #26). Same package, so the generated names did not change.
+
+// How many viewers reacted with one emoji, as the server tallies it.
+//
+// This is a COUNT, not a list: a channel has no participant roster the viewer
+// can see, so nobody's identity crosses here. It is also the only tally the
+// server volunteers per message.
+message NewsletterReactionCount {
+  string code = 1;   // the emoji, spelled as the server sent it
+  uint64 count = 2;
+}
+
+// One option's tally in a channel poll, straight off `<votes><vote/></votes>`.
+//
+// The option is named by HASH, never by text: 32 bytes, the SHA-256 of the
+// option name exactly as the poll's payload spells it. Match it against
+// `sha256(option_name)` over the options in the poll's own `raw_message`.
+//
+// This is why a channel poll needs no `message_secret` and why voting in one
+// does not fit `SendPollVote` (issue #26): the vote is by hash, in the clear,
+// and the server does the counting. Measured live 2026-09-21: 4 `<vote>` nodes
+// for a 4-option channel poll, 32 bytes of content each. Vote with
+// `NewsletterService.SendNewsletterPollVote`, naming options by this same hash.
+//
+// A `<vote>` that could not fill both fields is skipped, not relayed (#43):
+// content that is not 32 bytes names no option, and a vote with no `count`
+// (or one that is not a number) is not a vote for nobody. So an option absent
+// from `votes` means the server gave no tally for it that the core could read,
+// NOT that its count is zero.
+message NewsletterPollVote {
+  bytes option_hash = 1;   // 32 bytes, SHA-256 of the option name
+  uint64 count = 2;
+}

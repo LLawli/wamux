@@ -41,6 +41,7 @@ pub struct MockWaServer {
     parsed_nodes: Arc<AtomicUsize>,
     keepalive_pings: Arc<AtomicUsize>,
     iq_answers: SharedIqAnswers,
+    client_messages: SharedClientMessages,
     accept_task: tokio::task::JoinHandle<()>,
 }
 
@@ -57,6 +58,10 @@ struct IqAnswers {
 }
 
 type SharedIqAnswers = Arc<std::sync::Mutex<IqAnswers>>;
+
+/// Every `<message>` a client sent after login, in arrival order: what a test
+/// asserts a send put on the wire (#26, the channel poll vote).
+type SharedClientMessages = Arc<std::sync::Mutex<Vec<wacore_binary::Node>>>;
 
 impl Drop for MockWaServer {
     fn drop(&mut self) {
@@ -76,8 +81,10 @@ impl MockWaServer {
         let parsed_nodes = Arc::new(AtomicUsize::new(0));
         let keepalive_pings = Arc::new(AtomicUsize::new(0));
         let iq_answers: SharedIqAnswers = Arc::default();
+        let client_messages: SharedClientMessages = Arc::default();
 
         let answers = iq_answers.clone();
+        let messages = client_messages.clone();
         let hs = handshakes.clone();
         let plf = post_login_frames.clone();
         let pn = parsed_nodes.clone();
@@ -92,6 +99,7 @@ impl MockWaServer {
                             parsed_nodes: pn.clone(),
                             keepalive_pings: kap.clone(),
                             iq_answers: answers.clone(),
+                            client_messages: messages.clone(),
                         };
                         tokio::spawn(async move {
                             if let Err(e) = serve_connection(stream, counters).await {
@@ -114,6 +122,7 @@ impl MockWaServer {
             parsed_nodes,
             keepalive_pings,
             iq_answers,
+            client_messages,
             accept_task,
         })
     }
@@ -136,6 +145,15 @@ impl MockWaServer {
         if let Ok(mut answers) = self.iq_answers.lock() {
             answers.newsletter = Some(body);
         }
+    }
+
+    /// The `<message>` stanzas clients have sent so far, oldest first.
+    pub fn client_messages(&self) -> Vec<wacore_binary::Node> {
+        // Poisoning needs a panic while the lock is held; nothing here panics.
+        self.client_messages
+            .lock()
+            .map(|messages| messages.clone())
+            .unwrap_or_default()
     }
 
     /// `ws://` URL a client transport should target.
@@ -179,6 +197,7 @@ struct ConnCounters {
     parsed_nodes: Arc<AtomicUsize>,
     keepalive_pings: Arc<AtomicUsize>,
     iq_answers: SharedIqAnswers,
+    client_messages: SharedClientMessages,
 }
 
 /// Unix seconds (server time) for the `<success t=...>` attribute.
@@ -199,6 +218,7 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
         parsed_nodes,
         keepalive_pings,
         iq_answers,
+        client_messages,
     } = counters;
     let (_req, mut ws) = ServerBuilder::new()
         .accept(stream)
@@ -370,6 +390,11 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
                 && node.get_attr("xmlns").map(|v| v.to_string()).as_deref() == Some("w:p")
             {
                 keepalive_pings.fetch_add(1, Ordering::SeqCst);
+            }
+            if tag == "message"
+                && let Ok(mut messages) = client_messages.lock()
+            {
+                messages.push(node.to_owned());
             }
             if tag == "iq"
                 && let Some(id) = node.get_attr("id").map(|v| v.to_string())

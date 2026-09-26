@@ -137,6 +137,9 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),
+        // Issue #26 (upstream #1554): a subscribed channel's tallies. It used
+        // to reach the socket as a RawEvent carrying reactions only.
+        Event::NewsletterLiveUpdate(u) => one(Pb::NewsletterLiveUpdate(newsletter_live_update(u))),
 
         // Inbound call signaling. The core relays the primitive; ring/answer
         // policy is the edge's. `call_id` is the CallAction id (the stanza id
@@ -290,6 +293,40 @@ fn favorites_changed(update: &wacore::types::events::FavoritesUpdate) -> pb::Fav
         timestamp: update.timestamp.timestamp_millis(),
         from_full_sync: update.from_full_sync,
         raw: update.action.encode_to_vec(),
+    }
+}
+
+/// A channel's live tallies, one entry per message the push named.
+fn newsletter_live_update(
+    update: &wacore::types::events::NewsletterLiveUpdate,
+) -> pb::NewsletterLiveUpdate {
+    pb::NewsletterLiveUpdate {
+        newsletter_jid: update.newsletter_jid.to_string(),
+        messages: update.messages.iter().map(live_update_message).collect(),
+    }
+}
+
+/// One message's counts, relayed as the server sent them. `forwards_count`
+/// keeps the library's absence (no node) apart from a zero.
+fn live_update_message(
+    message: &wacore::types::events::NewsletterLiveUpdateMessage,
+) -> pb::NewsletterLiveUpdateMessage {
+    let reactions = message
+        .reactions
+        .iter()
+        .map(|r| pb::NewsletterReactionCount {
+            code: r.code.clone(),
+            count: r.count,
+        });
+    let votes = message.votes.iter().map(|v| pb::NewsletterPollVote {
+        option_hash: v.option_hash.to_vec(),
+        count: v.count,
+    });
+    pb::NewsletterLiveUpdateMessage {
+        server_id: message.server_id,
+        reactions: reactions.collect(),
+        votes: votes.collect(),
+        forwards_count: message.forwards_count,
     }
 }
 
@@ -601,6 +638,9 @@ fn variant_name(event: &Event) -> String {
 #[cfg(test)]
 #[path = "event_mapping_favorites_tests.rs"]
 mod favorites_tests;
+#[cfg(test)]
+#[path = "event_mapping_live_update_tests.rs"]
+mod live_update_tests;
 #[cfg(test)]
 #[path = "event_mapping_media_tests.rs"]
 mod media_tests;

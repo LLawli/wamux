@@ -113,6 +113,11 @@ must_run_tests --features stress --test stress_newsletter_parse
 stage "stress tests (newsletter history vs the library)"
 must_run_tests --features stress --test stress_newsletter_history
 
+# The channel poll vote, own add-ons and live-update subscription (#26): the
+# stanza a vote puts on the wire, and the captured answers the reads relay.
+stage "stress tests (newsletter poll vote)"
+must_run_tests --features stress --test stress_newsletter_poll_vote
+
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
   must_run_tests --test load_multi_account -- --ignored

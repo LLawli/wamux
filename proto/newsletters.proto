@@ -5,6 +5,7 @@ package wamux.v1;
 import "common.proto";
 import "contacts.proto";
 import "events.proto";
+import "newsletter_tallies.proto";
 
 // A channel (`@newsletter`), relayed as the server describes it.
 //
@@ -33,37 +34,6 @@ message Newsletter {
 
 message NewsletterList {
   repeated Newsletter newsletters = 1;
-}
-
-// How many viewers reacted with one emoji, as the server tallies it.
-//
-// This is a COUNT, not a list: a channel has no participant roster the viewer
-// can see, so nobody's identity crosses here. It is also the only tally the
-// server volunteers per message.
-message NewsletterReactionCount {
-  string code = 1;   // the emoji, spelled as the server sent it
-  uint64 count = 2;
-}
-
-// One option's tally in a channel poll, straight off `<votes><vote/></votes>`.
-//
-// The option is named by HASH, never by text: 32 bytes, the SHA-256 of the
-// option name exactly as the poll's payload spells it. Match it against
-// `sha256(option_name)` over the options in the poll's own `raw_message`.
-//
-// This is why a channel poll needs no `message_secret` and why voting in one
-// does not fit `SendPollVote` (issue #26): the vote is by hash, in the clear,
-// and the server does the counting. Measured live 2026-09-21: 4 `<vote>` nodes
-// for a 4-option channel poll, 32 bytes of content each.
-//
-// A `<vote>` that could not fill both fields is skipped, not relayed (#43):
-// content that is not 32 bytes names no option, and a vote with no `count`
-// (or one that is not a number) is not a vote for nobody. So an option absent
-// from `votes` means the server gave no tally for it that the core could read,
-// NOT that its count is zero.
-message NewsletterPollVote {
-  bytes option_hash = 1;   // 32 bytes, SHA-256 of the option name
-  uint64 count = 2;
 }
 
 // One row of a channel's history, as `<messages>` returned it (issue #26).
@@ -144,6 +114,77 @@ message NewsletterMessageList {
   repeated NewsletterMessage messages = 1;
 }
 
+// Vote in a channel poll (issue #26). A channel is not E2E, so this is not
+// `SendPollVote`: no `message_secret`, no encryption. Each option is named by
+// its hash, the same `NewsletterPollVote.option_hash` the tallies use.
+//
+// Measured live 2026-09-25 on the WhatsApp channel's poll: every send carries
+// the WHOLE selection and the server keeps exactly the last list, and an empty
+// list removes the vote. Read the result back with GetMyNewsletterAddOns.
+message SendNewsletterPollVoteRequest {
+  AccountRef account = 1;
+  string jid = 2;         // the channel, `...@newsletter`
+  // The POLL's server_id (`NewsletterMessage.server_id`), not a new id.
+  uint64 server_id = 3;
+  // 32 bytes each: sha256 of the option name exactly as the poll payload
+  // spells it (names carry variation selectors and ZWJ; a retyped name hashes
+  // to an option the server does not know). At most 1000, none repeated.
+  // InvalidArgument otherwise, before anything is sent.
+  repeated bytes option_hashes = 4;
+}
+
+message SendNewsletterPollVoteResponse {
+  // The vote stanza's id. The server's verdict is the ServerAckEvent with this
+  // `id`; no ack for it means the server never took it. There is no echo: a
+  // vote puts no message in the channel.
+  string stanza_id = 1;
+}
+
+// This account's own add-ons on a channel's recent messages (issue #26).
+message GetMyNewsletterAddOnsRequest {
+  AccountRef account = 1;
+  string jid = 2;
+  // How many messages to ask about. Required, like GetNewsletterMessages.count:
+  // InvalidArgument when 0.
+  uint32 limit = 3;
+}
+
+message NewsletterMyReaction {
+  string code = 1;
+  int64 timestamp = 2;  // ms
+}
+
+message NewsletterMyPollVote {
+  // ms. The server's `t` for the last vote sent, equal to that vote's ack `t`
+  // (3 of 3 measured).
+  int64 timestamp = 1;
+  // The selection the server holds, 32 bytes each. EMPTY after the vote was
+  // removed: the server keeps a removal as a dated, empty selection.
+  repeated bytes option_hashes = 2;
+}
+
+// One message's add-ons. Each is absent when this account has none on it, so
+// an absent `poll_vote` (never voted) is not the same as one with no hashes
+// (vote removed).
+message NewsletterMyAddOns {
+  uint64 server_id = 1;
+  NewsletterMyReaction reaction = 2;
+  NewsletterMyPollVote poll_vote = 3;
+}
+
+message NewsletterMyAddOnsList {
+  // Only messages this account has an add-on on (the library's reading of the
+  // answer). Measured once: with limit 20, only the one poll voted on came back.
+  repeated NewsletterMyAddOns messages = 1;
+}
+
+message SubscribeNewsletterLiveUpdatesResponse {
+  // How long the server keeps pushing, in seconds. Measured live: 90. The
+  // library answers 300 when the server omits the attribute; that fallback is
+  // its, not the server's.
+  uint64 duration_seconds = 1;
+}
+
 service NewsletterService {
   // Every channel this account follows. The startup call: it lets a consumer
   // name every newsletter row it already holds in one round trip, the way
@@ -160,6 +201,16 @@ service NewsletterService {
   // reaction is a server node, not a `ReactionMessage`, and in 2244 channel
   // payloads measured on one live store not one carried a
   // `pollResultSnapshotMessage`. Reaction counts, poll votes and forward counts
-  // are counted by the server and handed over only here.
+  // are counted by the server and handed over here, and pushed as
+  // NewsletterLiveUpdate events to a subscriber of the channel.
   rpc GetNewsletterMessages(GetNewsletterMessagesRequest) returns (NewsletterMessageList);
+  // Vote in a channel poll, or change or remove the vote (issue #26).
+  rpc SendNewsletterPollVote(SendNewsletterPollVoteRequest) returns (SendNewsletterPollVoteResponse);
+  // This account's own reaction and poll vote per message: the only way to read
+  // back a vote, since the tallies count every follower.
+  rpc GetMyNewsletterAddOns(GetMyNewsletterAddOnsRequest) returns (NewsletterMyAddOnsList);
+  // Ask the server to push this channel's tallies as NewsletterLiveUpdate
+  // events, for the answered duration. Without it none arrive. Renewing before
+  // the duration runs out is the caller's timer: the core keeps none.
+  rpc SubscribeNewsletterLiveUpdates(JidRequest) returns (SubscribeNewsletterLiveUpdatesResponse);
 }

@@ -13,6 +13,43 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **A channel poll can be voted on** (issue #26, upstream #1552 and #1555).
+  `SendPollVote` could never vote in a `@newsletter` poll: a channel is not
+  E2E, so its poll carries no `message_secret`, and the vote is a plaintext
+  stanza naming each option by `sha256(option_name)`, the hash the history
+  tallies already use. Three `NewsletterService` RPCs:
+  - `SendNewsletterPollVote{account, jid, server_id, option_hashes}` sends the
+    whole selection; it replaces the previous one, and an empty list removes
+    the vote. The answer is the stanza id, the `id` of the `ServerAckEvent`
+    that carries the server's verdict. No echo: a vote puts no message in the
+    channel. A hash that is not 32 bytes, a repeated one, more than 1000, a
+    `server_id` of 0 or a jid off `@newsletter` answer InvalidArgument before
+    anything is sent.
+  - `GetMyNewsletterAddOns{account, jid, limit}` reads this account's own
+    reaction and poll vote per message, timestamps in ms. The tallies count
+    every follower, so this is the only read-back of a vote. An absent
+    `poll_vote` means never voted; one with no hashes is a removed vote, which
+    the server keeps dated.
+  - `SubscribeNewsletterLiveUpdates(JidRequest)` asks the server to push the
+    channel's tallies (next entry) and answers how long for, in seconds (90
+    measured). Renewing is the caller's timer.
+
+  Measured live on 2026-09-25 through WA Web, on the WhatsApp channel's poll:
+  one and two options, a change of selection and a removal, all acked, the
+  server holding exactly the last list each time.
+  `NewsletterReactionCount` and `NewsletterPollVote` moved to
+  `newsletter_tallies.proto` so the event below can use them; same package,
+  same generated names, no wire change.
+
+- **`NewsletterLiveUpdate`: a subscribed channel's tallies are typed** (issue
+  #26, upstream #1554). They reached the socket as an untyped `RawEvent`
+  carrying reactions only. `EventEnvelope.newsletter_live_update` (field 27)
+  now carries, per message, `reactions`, `votes` (by option hash, polls only)
+  and `forwards_count` (absent when the server sent none). A push names only
+  the messages whose counts changed, after a first push of the latest ones. A
+  consumer matching the `Raw` kind `NewsletterLiveUpdate` should switch to the
+  typed event.
+
 - **`FavoritesChanged`: the favorite chats list is typed** (issue #48, upstream
   #1544). When the favorites change on a linked device, the library emits the
   whole list. It reached the socket as an untyped `RawEvent` (kind
@@ -115,6 +152,16 @@ migration note, since the edge that consumes this socket has to follow them.
   their graceful stop, the socket is unlinked and `wamux stopped` is logged.
 
 ### Changed
+
+- **whatsapp-rust moves to git main `f9811768`** (issue #26), same nightly.
+  Brings the three channel-poll PRs the new newsletter RPCs sit on (#1552
+  `send_poll_vote`, #1554 live tallies, #1555 `get_my_addons`) and #1550,
+  opt-in history sharing on a group member add. #1550 touches the send and
+  retry paths; read before the bump: its sender-key repair now skips only
+  message ids registered as pairwise history bundles, which exist only when
+  `add_participants_with_history` is called, and the core never calls it. The
+  message-unwrapping list in `classify.rs` is the same 24 wrappers,
+  reorganised. No other dependency moved.
 
 - **whatsapp-rust moves to git main `f7468ae2`** (issue #36), same nightly.
   Brings upstream #1545 (see **Fixed**), two keepalive fixes (#1543: pending

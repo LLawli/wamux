@@ -4,6 +4,7 @@ package wamux.v1;
 
 import "common.proto";
 import "account.proto";
+import "newsletter_tallies.proto";
 
 message SubscribeRequest {
   oneof selector {
@@ -49,7 +50,9 @@ message SubscribeRequest {
 // SendMedia, SendReaction, SendContact, SendInteractiveReply, SendPoll,
 // SendPollVote, EditMessage, DeleteMessage with `for_everyone`, PostStatusText,
 // PostStatusMedia and RevokeStatus. DeleteMessage for-me sends nothing to the chat (it is an
-// app-state mutation), so it has nothing to echo. The payload is always the
+// app-state mutation), so it has nothing to echo, and neither does
+// NewsletterService.SendNewsletterPollVote: a channel vote is an add-on on a
+// message, not a message in the channel (issue #26). The payload is always the
 // message the send encoded, handed back by the library (upstream #1406), never
 // a reconstruction -- including the half the library builds itself (issue #38):
 //
@@ -222,6 +225,30 @@ message FavoritesChanged {
   bytes raw = 4;            // the serialized `wa.SyncActionValue.FavoritesAction`
 }
 
+// A channel's tallies, pushed while this account is subscribed to it
+// (NewsletterService.SubscribeNewsletterLiveUpdates, upstream #1554). Issue
+// #26: it reached the socket as an untyped RawEvent carrying only reactions.
+//
+// Measured live 2026-09-25 on the WhatsApp channel: the first push after
+// subscribing held the 10 latest messages, the next one (30 s later) only the
+// two whose counts had changed. So a message missing from a push is unchanged,
+// not zeroed. Counts are across every follower, the same numbers the history
+// page carries.
+message NewsletterLiveUpdate {
+  string newsletter_jid = 1;
+  repeated NewsletterLiveUpdateMessage messages = 2;
+}
+
+message NewsletterLiveUpdateMessage {
+  uint64 server_id = 1;
+  repeated NewsletterReactionCount reactions = 2;
+  // Per-option tallies, on a poll only. Same hash as NewsletterMessage.votes.
+  repeated NewsletterPollVote votes = 3;
+  // Absent when the server sent no `<forwards_count>`, which is not a count of
+  // zero. (Every message in the measured pushes carried one.)
+  optional uint64 forwards_count = 4;
+}
+
 // Inbound `<call>` signaling stanza (lib `IncomingCall`). The core relays the
 // primitive; the edge composes any ring/answer policy. `call_id` is the
 // CallAction's id (distinct from the stanza id, which lives in `raw`).
@@ -353,6 +380,7 @@ message EventEnvelope {
     OfflineSyncCompleted offline_sync_completed = 24;
     OfflineSyncInterrupted offline_sync_interrupted = 25;
     FavoritesChanged favorites_changed = 26;
+    NewsletterLiveUpdate newsletter_live_update = 27;
     RawEvent raw = 99;
   }
 }
