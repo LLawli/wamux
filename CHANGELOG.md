@@ -116,6 +116,16 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **whatsapp-rust moves to git main `f9811768`** (issue #26), same nightly.
+  Brings the three channel-poll PRs the new newsletter RPCs sit on (#1552
+  `send_poll_vote`, #1554 live tallies, #1555 `get_my_addons`) and #1550,
+  opt-in history sharing on a group member add. #1550 touches the send and
+  retry paths; read before the bump: its sender-key repair now skips only
+  message ids registered as pairwise history bundles, which exist only when
+  `add_participants_with_history` is called, and the core never calls it. The
+  message-unwrapping list in `classify.rs` is the same 24 wrappers,
+  reorganised. No other dependency moved.
+
 - **whatsapp-rust moves to git main `f7468ae2`** (issue #36), same nightly.
   Brings upstream #1545 (see **Fixed**), two keepalive fixes (#1543: pending
   IQs are probed before the watchdog reconnects; #1547: an IQ's write is
