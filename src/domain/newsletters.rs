@@ -167,7 +167,7 @@ pub async fn get_messages(
     req: &pb::GetNewsletterMessagesRequest,
 ) -> Result<pb::NewsletterMessageList, WamuxError> {
     let jid = parse_jid(&req.jid)?;
-    require_count(req.count)?;
+    require_at_least_one("count", req.count)?;
     // 0 is proto3's "absent": start at the newest rather than before row zero.
     let before = (req.before != 0).then_some(req.before);
     let response = client
@@ -203,14 +203,14 @@ fn history_query(
     ))
 }
 
-/// The page size is the caller's to choose, and 0 asks the server for nothing.
-/// Refused here so it answers InvalidArgument instead of an empty list, which
-/// reads as "this channel has no history".
-fn require_count(count: u32) -> Result<(), WamuxError> {
-    if count == 0 {
-        return Err(WamuxError::InvalidArgument(
-            "count must be at least 1, got 0".to_string(),
-        ));
+/// A page size (`count`, `limit`) is the caller's to choose, and 0 asks the
+/// server for nothing. Refused here so it answers InvalidArgument instead of an
+/// empty list, which reads as "this channel has no history".
+fn require_at_least_one(field: &str, value: u32) -> Result<(), WamuxError> {
+    if value == 0 {
+        return Err(WamuxError::InvalidArgument(format!(
+            "{field} must be at least 1, got 0"
+        )));
     }
     Ok(())
 }
@@ -441,6 +441,9 @@ fn newsletter_to_proto(value: &serde_json::Value) -> pb::Newsletter {
 fn lowercase_token(value: &serde_json::Value) -> String {
     value.as_str().unwrap_or_default().to_lowercase()
 }
+
+mod poll_votes;
+pub use poll_votes::{get_my_addons, send_poll_vote, subscribe_live_updates};
 
 #[cfg(test)]
 mod mex_request_tests;
@@ -827,9 +830,13 @@ mod history_tests {
     // caller's mistake, not as an empty channel.
     #[test]
     fn a_zero_count_is_an_invalid_argument() {
-        let err = require_count(0).expect_err("0 must be refused");
+        let err = require_at_least_one("count", 0).expect_err("0 must be refused");
         assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
-        assert!(require_count(1).is_ok());
+        assert!(
+            err.to_string().contains("count must be at least 1"),
+            "{err}"
+        );
+        assert!(require_at_least_one("count", 1).is_ok());
     }
 
     // The addressing is the half that was silently wrong: the library sends
