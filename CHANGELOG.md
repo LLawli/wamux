@@ -128,6 +128,22 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Fixed
 
+- **`GetNewsletterMetadata` answers `NotFound` for a channel that does not
+  exist** (issue #56). The server answers such a JID with a node whose `id`
+  is null (`"state": {"type": "NON_EXISTING"}`), not with `null`, so the
+  core's own `is_null()` check never fired and it relayed an empty
+  `Newsletter` (`jid: ""`, `state: "non_existing"`) with `OK`. The stress test
+  that should have caught it answered `null`, which the server never sends; it
+  now plays the answer captured live. `ListSubscribedNewsletters` drops an
+  entry with no `id` instead of relaying it with an empty jid, as WA Web does.
+
+- **A MEX query the server refuses answers with the server's code** (issue
+  #56). A GraphQL error carrying a code (e.g. `405 Not Allowed`, measured on
+  `GetNewsletterMetadata` for a channel the account does not follow) came
+  back `Unavailable`, which reads as the core being down. It now lifts into
+  the same `wa-code` / `wa-text` trailers an IQ rejection carries, and `405`
+  (IQ `not-allowed` or MEX `Not Allowed`) maps to `PermissionDenied`.
+
 - **App-state writes work again after the main bump** (issue #36).
   `MarkChatRead`, pin, archive, mute and star were all refused with "its
   bootstrap has not completed" (330 `unavailable`, zero `ok`, since the #30
@@ -153,6 +169,35 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **whatsapp-rust moves to git main `23846f7e`** (issue #56), same nightly.
+  Brings the three newsletter fixes the core had been waiting on, all filed
+  from here: #1557 (channel state and verification read in the server's
+  spelling, unknown values kept), #1558 (history rows keep the server's
+  `type` and `polltype` tokens) and #1561 (a missing channel is `NotFound`,
+  one id-less list entry no longer fails the list). Also #1559, which makes a
+  channel's `send_reaction` return the stanza id: a breaking signature for
+  callers that bind the `()`, and the core never calls it. No other
+  dependency moved.
+
+- **Channel metadata and history go through the library** (issue #56, which
+  closes out #38 and #40). `ListSubscribedNewsletters`,
+  `GetNewsletterMetadata` and `GetNewsletterMessages` stopped issuing their
+  own MEX queries and history IQ: every reason they were hand-rolled is fixed
+  upstream (see the bump above). What the library still answers differently,
+  accepted on purpose:
+  - a `role` it has no variant for relays as `""` instead of its token;
+  - an absent `state` / `verification` relays as `"active"` / `"unverified"`
+    instead of `""`;
+  - a history answer without `<messages>` is an error (`Unavailable`), where
+    it used to be an empty page. WA Web's own parser requires the node and
+    throws, so this is the server's contract, not a new strictness.
+
+  Measured on production before the swap, read-only: 9 subscribed channels
+  (list and one get each), every role `SUBSCRIBER`, every state `ACTIVE`,
+  verification always present, so no row changes. The stress suites
+  (`stress_newsletter_parse`, `stress_newsletter_history`) now pin what the
+  core relays by value, with canaries on the two accepted losses.
+
 - **whatsapp-rust moves to git main `f9811768`** (issue #26), same nightly.
   Brings the three channel-poll PRs the new newsletter RPCs sit on (#1552
   `send_poll_vote`, #1554 live tallies, #1555 `get_my_addons`) and #1550,
@@ -172,37 +217,12 @@ migration note, since the edge that consumes this socket has to follow them.
   **Added**, `FavoritesChanged`). The bump itself left the gRPC contract
   unchanged.
 
-- **Channel history stays on the core's own IQ** (issue #40). Upstream fixed
-  both reasons `GetNewsletterMessages` built the history IQ itself (#1523, the
-  addressing; #1518, the dropped `<votes>`), so the library's
-  `get_messages` was compared against it over the same page. They agree on
-  ids, payloads, reactions, votes and forwards. The library still turns an
-  absent row `type` into `text`, drops a `<meta polltype>` it has no variant
-  for (or that sits on a non-poll row), fails the whole call on an answer
-  without `<messages>` (`Unavailable` through the core), and skips a
-  malformed `<vote>`. The first two lose what the server sent (reported as
-  upstream #1548), so the core keeps its path. Nothing changes on the wire. The mock now plays back
-  `newsletter` IQs, and `tests/stress_newsletter_history.rs` (in
-  `scripts/ci.sh`) pins both the agreement and each difference.
-
 - **`DeleteMessage` on a status answers `InvalidArgument`** (issue #41).
   With `for_everyone` on a `status@broadcast` key it used to reach the chat
   revoke, which the library refuses there, and came back `Unavailable`, which
   reads as the core being down. It now names `RevokeStatus`, and is checked
   before the account is, so it answers the same whether or not the account is
   connected. Delete-for-me on a status is unchanged.
-
-- **Channel metadata stays on the core's own projection** (issue #38, the
-  #15 queue). `ListSubscribedNewsletters` / `GetNewsletterMetadata` were
-  queued to move onto whatsapp-rust's calls once upstream #1372 was fixed. It
-  is fixed, but the library folds the answer: it matches the channel state in
-  lowercase while the server sends uppercase, so every channel, suspended ones
-  included, reads as active (reported as upstream #1546). It also folds unknown
-  values, fails a whole list on one malformed node, and turns a missing channel
-  into `Unavailable`. The core keeps issuing the queries itself and relays the
-  server's tokens verbatim. Nothing changes on the wire. A new stress suite
-  (`tests/stress_newsletter_parse.rs`, in `scripts/ci.sh`) pins both halves:
-  the core's promise, and a canary that fails when upstream changes.
 
 - **The store's structured blobs are protobuf, not bincode** (issue #31).
   `Device`, app-state versions and app-state sync keys were positional

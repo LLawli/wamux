@@ -1,19 +1,17 @@
-//! Issue #38 (item 3): why `domain/newsletters.rs` issues the channel MEX
-//! queries itself instead of calling `client.newsletter().list_subscribed()` /
-//! `.get_metadata()`. Both reach the server fine since upstream #1378; what the
-//! library does with the ANSWER is the problem, and these tests pin it.
+//! Channel metadata through the library (issue #56): what `ListSubscribedNewsletters`
+//! and `GetNewsletterMetadata` relay for the answers the server really sends.
 //!
 //! The mock stands in for the server: it answers the MEX IQ with the JSON a
 //! test chooses, and a real, unmodified `whatsapp-rust` Client parses it, the
-//! same path production takes. The node is the answer captured from the live
-//! server on the production accounts, with only the enum fields swapped.
+//! same path production takes. The channel node is the answer captured from
+//! the live server on the production accounts, with only the enum fields
+//! swapped; the missing-channel node was captured live through WA Web.
 //!
-//! Two kinds of test live here:
-//! - `core_*`: what this relay promises (server tokens relayed verbatim,
-//!   a missing channel is NotFound, one bad node does not sink the list);
-//! - `library_*`: a canary on upstream oxidezap/whatsapp-rust#1546. When it
-//!   fails, the library stopped folding the state: re-read the note at the top
-//!   of `domain/newsletters.rs` and decide whether the hand-rolled path can go.
+//! - `core_*`: what this relay promises;
+//! - `accepted_*`: where the library still answers less than the server sent,
+//!   accepted on purpose and measured at zero rows in production (see the note
+//!   at the top of `domain/newsletters.rs`). When one fails, upstream started
+//!   keeping the distinction: relay it.
 //!
 //! Run with: `cargo test --features stress --test stress_newsletter_parse`.
 //! Requires the docker Postgres (DATABASE_URL).
@@ -26,16 +24,15 @@ use serde_json::{Value, json};
 use wamux::domain::newsletters;
 use wamux::state::AccountRegistry;
 use wamux::stress::MockWaServer;
-use whatsapp_rust::features::NewsletterState;
-use whatsapp_rust::{Client, Jid};
+use whatsapp_rust::Client;
 
 #[allow(dead_code)]
 mod common;
 
 const CHANNEL: &str = "120363144038483540@newsletter";
 
-/// The live-captured channel node (see the fixture in `domain/newsletters.rs`),
-/// with the three enum fields in the server's own spelling.
+/// The live-captured channel node, with the three enum fields in the server's
+/// own spelling.
 fn channel_node(state: &str, verification: &str, role: &str) -> Value {
     json!({
         "id": CHANNEL,
@@ -47,6 +44,17 @@ fn channel_node(state: &str, verification: &str, role: &str) -> Value {
             "verification": verification
         },
         "viewer_metadata": { "role": role }
+    })
+}
+
+/// What the server answered on 2026-09-28 for a well-formed newsletter JID
+/// with no channel behind it (upstream #1560): not `null`.
+fn non_existing_node() -> Value {
+    json!({
+        "id": null,
+        "state": { "type": "NON_EXISTING" },
+        "thread_metadata": null,
+        "viewer_metadata": null
     })
 }
 
@@ -75,7 +83,7 @@ async fn logged_in_client(mock: &MockWaServer) -> (Arc<AccountRegistry>, Arc<Cli
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn core_relays_the_servers_tokens_verbatim() {
+async fn core_relays_the_servers_tokens_lowercased() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
 
@@ -83,8 +91,8 @@ async fn core_relays_the_servers_tokens_verbatim() {
         ("ACTIVE", "VERIFIED", "SUBSCRIBER"),
         ("SUSPENDED", "VERIFIED", "SUBSCRIBER"),
         ("GEOSUSPENDED", "UNVERIFIED", "ADMIN"),
-        // Values no enum anywhere models: relayed, not folded.
-        ("ARCHIVED", "PENDING_REVIEW", "MODERATOR"),
+        // A state and a verification no enum models: kept, not folded (#1557).
+        ("ARCHIVED", "PENDING_REVIEW", "OWNER"),
     ];
     for (state, verification, role) in cases {
         answer_one_channel(&mock, channel_node(state, verification, role));
@@ -94,68 +102,117 @@ async fn core_relays_the_servers_tokens_verbatim() {
         assert_eq!(out.state, state.to_lowercase(), "state {state}");
         assert_eq!(out.verification, verification.to_lowercase());
         assert_eq!(out.role, role.to_lowercase());
+        assert_eq!(out.jid, CHANNEL);
         assert_eq!(out.name, "WhatsApp");
     }
 }
 
+// #56: the test used to answer `null` here, which is not what the server sends,
+// and so it never saw the core relay the live answer as an empty Newsletter.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_answers_not_found_for_a_missing_channel() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
 
-    answer_one_channel(&mock, Value::Null);
-    let err = newsletters::get_metadata(&client, CHANNEL)
-        .await
-        .expect_err("a null answer is a missing channel");
-    // Through the library this is an InvalidRequest, which `client_err` maps
-    // to Unavailable: "the core is down" for a channel that does not exist.
-    assert_eq!(tonic::Status::from(err).code(), tonic::Code::NotFound);
+    for (label, node) in [("live", non_existing_node()), ("null", Value::Null)] {
+        answer_one_channel(&mock, node);
+        let err = newsletters::get_metadata(&client, CHANNEL)
+            .await
+            .expect_err("a missing channel is not a Newsletter");
+        assert_eq!(
+            tonic::Status::from(err).code(),
+            tonic::Code::NotFound,
+            "{label}"
+        );
+    }
 }
 
+// #56: an entry that stands for no channel is dropped, as WA Web drops it; the
+// valid ones survive. It used to relay as a Newsletter with `jid: ""`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn core_keeps_the_list_when_one_node_is_broken() {
+async fn core_skips_a_list_entry_without_an_id() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
 
-    let mut broken = channel_node("ACTIVE", "VERIFIED", "SUBSCRIBER");
-    broken.as_object_mut().expect("node object").remove("id");
-    let list = json!([channel_node("ACTIVE", "VERIFIED", "SUBSCRIBER"), broken]);
+    let mut id_less = channel_node("ACTIVE", "VERIFIED", "SUBSCRIBER");
+    id_less.as_object_mut().expect("node object").remove("id");
+    let list = json!([
+        channel_node("ACTIVE", "VERIFIED", "SUBSCRIBER"),
+        id_less,
+        non_existing_node(),
+        Value::Null
+    ]);
     mock.answer_mex_with(&json!({ "data": { "xwa2_newsletter_subscribed": list } }).to_string());
 
     let out = newsletters::list_subscribed(&client)
         .await
         .expect("core list_subscribed");
     let jids: Vec<&str> = out.newsletters.iter().map(|n| n.jid.as_str()).collect();
-    assert_eq!(jids, vec![CHANNEL, ""], "the valid channel survives");
-
-    // The library fails the whole call on the one node without an id.
-    assert!(client.newsletter().list_subscribed().await.is_err());
+    assert_eq!(jids, vec![CHANNEL]);
 }
 
-/// Canary on upstream #1546: the library matches the state in lowercase while
-/// the server sends uppercase, so a suspended channel reads as Active. The
-/// lowercase control proves the arm exists and only the case misses it.
+// #56: measured in production on a channel the account does not follow. A MEX
+// refusal is the server's answer, not the core being down.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn library_still_reads_every_uppercase_state_as_active() {
+async fn core_relays_a_mex_refusal_as_the_servers_code() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
-    let jid: Jid = CHANNEL.parse().expect("channel jid");
 
-    for (sent, expected) in [
-        ("SUSPENDED", NewsletterState::Active),
-        ("GEOSUSPENDED", NewsletterState::Active),
-        ("suspended", NewsletterState::Suspended),
-    ] {
-        answer_one_channel(&mock, channel_node(sent, "VERIFIED", "SUBSCRIBER"));
-        let meta = client
-            .newsletter()
-            .get_metadata(&jid)
+    mock.answer_mex_with(
+        &json!({
+            "data": null,
+            "errors": [{
+                "message": "Not Allowed",
+                "extensions": { "error_code": 405, "is_summary": true, "severity": "CRITICAL" }
+            }]
+        })
+        .to_string(),
+    );
+    let status = tonic::Status::from(
+        newsletters::get_metadata(&client, CHANNEL)
             .await
-            .expect("library get_metadata");
-        assert_eq!(
-            meta.state, expected,
-            "state {sent}: if this changed, upstream #1546 moved; see the note \
-             at the top of domain/newsletters.rs"
-        );
-    }
+            .expect_err("a refused query is an error"),
+    );
+    assert_eq!(status.code(), tonic::Code::PermissionDenied);
+    assert_eq!(status.metadata().get("wa-code").expect("wa-code"), "405");
+}
+
+// Accepted loss 1: a role the library has no variant for relays as absent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn accepted_an_unmodelled_role_relays_as_empty() {
+    let mock = MockWaServer::start().await.expect("start mock");
+    let (_registry, client) = logged_in_client(&mock).await;
+
+    answer_one_channel(&mock, channel_node("ACTIVE", "VERIFIED", "MODERATOR"));
+    let out = newsletters::get_metadata(&client, CHANNEL)
+        .await
+        .expect("core get_metadata");
+    assert_eq!(
+        out.role, "",
+        "upstream now keeps an unknown role: relay the token"
+    );
+}
+
+// Accepted loss 2: an absent state or verification reads as the library's
+// default instead of as absent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn accepted_absent_state_and_verification_read_as_defaults() {
+    let mock = MockWaServer::start().await.expect("start mock");
+    let (_registry, client) = logged_in_client(&mock).await;
+
+    let mut node = channel_node("ACTIVE", "VERIFIED", "SUBSCRIBER");
+    node.as_object_mut().expect("node object").remove("state");
+    node["thread_metadata"]
+        .as_object_mut()
+        .expect("thread object")
+        .remove("verification");
+    answer_one_channel(&mock, node);
+    let out = newsletters::get_metadata(&client, CHANNEL)
+        .await
+        .expect("core get_metadata");
+    assert_eq!(
+        (out.state.as_str(), out.verification.as_str()),
+        ("active", "unverified"),
+        "upstream now keeps absence: relay it as \"\""
+    );
 }
