@@ -31,8 +31,9 @@ pub enum WamuxError {
     Client(String),
 
     /// Upstream WhatsApp server refused the request with an IQ error stanza
-    /// (e.g. `<error code="403"/>`). Code + text relay verbatim so the boundary
-    /// can map auth-shaped codes honestly instead of a blanket Unavailable
+    /// (e.g. `<error code="403"/>`) or a fatal MEX (GraphQL) error carrying a
+    /// code (#56). Code + text relay verbatim so the boundary can map
+    /// auth-shaped codes honestly instead of a blanket Unavailable
     /// (edge-review-insights.md achado #3).
     #[error("whatsapp server rejected the request: code={code}, text='{text}'")]
     WaServer { code: u16, text: String },
@@ -52,9 +53,9 @@ pub(crate) fn client_err(err: impl Into<anyhow::Error>) -> WamuxError {
     }
 }
 
-/// The lib surfaces server rejections as three types depending on the path:
+/// The lib surfaces server rejections as four types depending on the path:
 /// `ServerErrorCode` (its own cross-crate wrapper), the high-level `IqError`,
-/// or wacore's `IqError`. Probe all three.
+/// wacore's `IqError`, or a MEX query's `ExtensionError`. Probe all four.
 fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
     use wacore::request::{IqError as WacoreIq, ServerErrorCode};
     use whatsapp_rust::request::IqError as ClientIq;
@@ -71,7 +72,20 @@ fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16
     if let Some(WacoreIq::ServerError { code, text, .. }) = cause.downcast_ref::<WacoreIq>() {
         return Some((*code, text.clone()));
     }
-    None
+    mex_server_rejection(cause)
+}
+
+/// A MEX query the server refused arrives as a GraphQL error with a code, not
+/// as an IQ error stanza. #56: a channel this account does not follow answered
+/// `code=405, message='Not Allowed'` in production, and the edge saw
+/// Unavailable ("the core is down"). A code outside `u16` is not an HTTP-style
+/// status and stays an opaque client error.
+fn mex_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
+    use whatsapp_rust::features::MexError;
+    let Some(MexError::ExtensionError { code, message }) = cause.downcast_ref::<MexError>() else {
+        return None;
+    };
+    Some((u16::try_from(*code).ok()?, message.clone()))
 }
 
 /// Full `Display` cause chain ("outer: middle: root"), for integral logging.
@@ -147,6 +161,9 @@ fn wa_server_status(code: u16, text: &str, message: String) -> tonic::Status {
         401 => Code::Unauthenticated,
         403 => Code::PermissionDenied,
         404 => Code::NotFound,
+        // "not-allowed" (IQ) / "Not Allowed" (MEX): the server refuses this
+        // account the operation, e.g. reading a channel it does not follow.
+        405 => Code::PermissionDenied,
         429 => Code::ResourceExhausted,
         _ => Code::Unavailable,
     };
@@ -248,6 +265,53 @@ mod tests {
         let status = status_for(iq(409, "conflict"));
         assert_eq!(status.code(), tonic::Code::Unavailable);
         assert_eq!(status.metadata().get("wa-code").unwrap(), "409");
+    }
+
+    fn mex(code: i32, message: &str) -> anyhow::Error {
+        anyhow::Error::new(whatsapp_rust::features::MexError::ExtensionError {
+            code,
+            message: message.into(),
+        })
+    }
+
+    // #56: measured in production on a channel the account does not follow.
+    #[test]
+    fn mex_405_maps_to_permission_denied_with_wa_metadata() {
+        let status = status_for(mex(405, "Not Allowed"));
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        assert_eq!(status.metadata().get("wa-code").unwrap(), "405");
+        assert_eq!(status.metadata().get("wa-text").unwrap(), "Not Allowed");
+    }
+
+    // The library wraps the MEX error in its feature error; the chain walk
+    // still finds it.
+    #[test]
+    fn mex_rejection_is_found_under_a_newsletter_error() {
+        let wrapped = whatsapp_rust::features::NewsletterError::Mex(
+            whatsapp_rust::features::MexError::ExtensionError {
+                code: 404,
+                message: "Not Found".into(),
+            },
+        );
+        assert_eq!(
+            status_for(anyhow::Error::new(wrapped)).code(),
+            tonic::Code::NotFound
+        );
+    }
+
+    #[test]
+    fn iq_405_maps_to_permission_denied() {
+        assert_eq!(
+            status_for(iq(405, "not-allowed")).code(),
+            tonic::Code::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn a_mex_code_outside_u16_stays_an_opaque_client_error() {
+        let status = status_for(mex(-1, "weird"));
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert!(status.metadata().get("wa-code").is_none());
     }
 
     #[test]
