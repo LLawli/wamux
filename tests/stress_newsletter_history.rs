@@ -1,18 +1,12 @@
-//! Issue #40: can `GetNewsletterMessages` drop its hand-rolled IQ for
-//! `client.newsletter().get_messages()`? Upstream #1523 and #1518 fixed the two
-//! reasons it was hand-rolled (addressing, children dropped), so what is left
-//! is the check #38 ran on the metadata queries: does the library's parsed
-//! `NewsletterMessage` keep everything this RPC relays?
+//! Channel history through the library (issue #56): what `GetNewsletterMessages`
+//! relays for the pages the server sends.
 //!
-//! The mock answers the `newsletter` IQ with a page a test builds, and both
-//! paths read the same bytes through a real Client: the core's
-//! `newsletters::get_messages` and the library's `get_messages`. The page is
-//! the live-captured shape from #26 plus the edge cases the issue lists.
-//!
-//! - `both_*`: where the two agree, so a swap would change nothing;
-//! - `library_*`: where the library answers differently. Each one is a reason
-//!   the hand-rolled path stays; when one fails, upstream changed and the note
-//!   at the top of `domain/newsletters.rs` is due for a re-read.
+//! The mock answers the `newsletter` IQ with a page a test builds, and a real,
+//! unmodified `whatsapp-rust` Client reads it through
+//! `client.newsletter().get_messages()`, the path production takes. The page
+//! is the live-captured shape from #26 plus the edge cases #40, #43, #44 and
+//! #51 pinned when the core still parsed the IQ itself; every one of them is
+//! asserted by value here, so the swap to the library is held to them.
 //!
 //! Run with: `cargo test --features stress --test stress_newsletter_history`.
 //! Requires the docker Postgres (DATABASE_URL).
@@ -27,10 +21,9 @@ use wamux::domain::newsletters;
 use wamux::proto::v1 as pb;
 use wamux::state::AccountRegistry;
 use wamux::stress::MockWaServer;
+use whatsapp_rust::Client;
 use whatsapp_rust::buffa::Message as _;
-use whatsapp_rust::features::NewsletterMessage;
 use whatsapp_rust::waproto::whatsapp as wa;
-use whatsapp_rust::{Client, Jid};
 
 #[allow(dead_code)]
 mod common;
@@ -74,10 +67,13 @@ fn meta_polltype(value: &str) -> Node {
     NodeBuilder::new("meta").attr("polltype", value).build()
 }
 
-/// The rows both paths read the same way (#26's capture, plus revoked and
-/// undecodable bodies, and an admin edit with its times, #51).
-fn agreeing_rows() -> Vec<Node> {
-    let hash = wacore::poll::compute_option_hash(POLL_OPTION).to_vec();
+fn option_hash() -> Vec<u8> {
+    wacore::poll::compute_option_hash(POLL_OPTION).to_vec()
+}
+
+/// #26's capture, plus revoked and undecodable bodies, an unknown type, an
+/// admin edit with its times (#51), and a row nothing can address.
+fn captured_rows() -> Vec<Node> {
     vec![
         row("773", Some("media"))
             .children([
@@ -90,6 +86,7 @@ fn agreeing_rows() -> Vec<Node> {
                             .attr("code", "\u{1F621}")
                             .attr("count", "437")
                             .build(),
+                        // No code: a count for an emoji nobody can name.
                         NodeBuilder::new("reaction").attr("count", "9").build(),
                     ])
                     .build(),
@@ -100,7 +97,7 @@ fn agreeing_rows() -> Vec<Node> {
             .children([
                 meta_polltype("creation"),
                 NodeBuilder::new("votes")
-                    .children([vote(Some("25328"), hash)])
+                    .children([vote(Some("25328"), option_hash())])
                     .build(),
                 plaintext(text_payload("qual a sua?")),
             ])
@@ -124,6 +121,7 @@ fn agreeing_rows() -> Vec<Node> {
         // #51: an admin edit carries both times on `<meta>`, in two units.
         row("784", Some("text"))
             .attr("edit", "3")
+            .attr("is_sender", "true")
             .children([
                 NodeBuilder::new("meta")
                     .attr("original_msg_t", "1790001172")
@@ -132,7 +130,7 @@ fn agreeing_rows() -> Vec<Node> {
                 plaintext(text_payload("editado")),
             ])
             .build(),
-        // No server_id: nothing can address it, both skip it.
+        // No server_id: nothing can address it, so it is skipped.
         NodeBuilder::new("message")
             .attr("id", "NOSERVERID")
             .attr("type", "text")
@@ -174,133 +172,99 @@ async fn logged_in_client(mock: &MockWaServer) -> (Arc<AccountRegistry>, Arc<Cli
     panic!("client never logged in against the mock");
 }
 
-/// Both paths over the same page.
-async fn read_both(
+/// The core's answer to one page.
+async fn core_reads(
     client: &Client,
     mock: &MockWaServer,
     rows: Vec<Node>,
-) -> (Vec<pb::NewsletterMessage>, Vec<NewsletterMessage>) {
+) -> Vec<pb::NewsletterMessage> {
     mock.answer_newsletter_iq_with(page(rows));
-    let core = newsletters::get_messages(client, &history_request(20))
+    newsletters::get_messages(client, &history_request(20))
         .await
         .expect("core get_messages")
-        .messages;
-    let jid: Jid = CHANNEL.parse().expect("channel jid");
-    let library = client
-        .newsletter()
-        .get_messages(jid, 20, None)
-        .await
-        .expect("library get_messages");
-    (core, library)
+        .messages
 }
 
-/// server_id, type, payload, forwards_count, poll_type, edit, and the two
-/// edit times in ms (original, last edit).
-type WireRow = (u64, String, Vec<u8>, u64, String, String, (i64, i64));
-
-/// The library's row in the core's wire terms, for the fields both carry.
-fn library_row_as_wire(row: &NewsletterMessage) -> WireRow {
-    (
-        row.server_id,
-        row.message_type.as_str().to_string(),
-        row.message
-            .as_ref()
-            .map(|message| message.encode_to_vec())
-            .unwrap_or_default(),
-        row.forwards_count.unwrap_or(0),
-        row.poll_type
-            .map(|kind| kind.as_str().to_string())
-            .unwrap_or_default(),
-        row.edit.as_str().to_string(),
-        // The library keeps the wire's units; the core crosses in ms.
-        (
-            row.original_timestamp.map_or(0, |s| s as i64 * 1000),
-            row.last_edit_timestamp_ms.map_or(0, |ms| ms as i64),
-        ),
-    )
-}
-
-fn core_row_as_wire(row: &pb::NewsletterMessage) -> WireRow {
-    let raw = row
-        .message
-        .as_ref()
-        .map(|message| message.raw_message.clone())
-        .unwrap_or_default();
-    (
-        row.server_id,
-        row.r#type.clone(),
-        raw,
-        row.forwards_count,
-        row.poll_type.clone(),
-        row.edit.clone(),
-        (row.original_timestamp, row.last_edit_timestamp),
-    )
+fn inbound(row: &pb::NewsletterMessage) -> &pb::InboundMessage {
+    row.message.as_ref().expect("every row carries its message")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn both_read_the_captured_page_the_same() {
+async fn core_reads_the_captured_page() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
-    let (core, library) = read_both(&client, &mock, agreeing_rows()).await;
+    let rows = core_reads(&client, &mock, captured_rows()).await;
 
-    assert_eq!(core.len(), 7, "the row without server_id is skipped");
-    assert_eq!(core.len(), library.len());
-    for (ours, theirs) in core.iter().zip(&library) {
-        assert_eq!(core_row_as_wire(ours), library_row_as_wire(theirs));
-        let reactions: Vec<(String, u64)> = theirs
-            .reactions
-            .iter()
-            .map(|r| (r.code.clone(), r.count))
-            .collect();
-        let ours_reactions: Vec<(String, u64)> = ours
-            .reactions
-            .iter()
-            .map(|r| (r.code.clone(), r.count))
-            .collect();
-        assert_eq!(ours_reactions, reactions, "row {}", ours.server_id);
-        let votes: Vec<(Vec<u8>, u64)> = theirs
-            .votes
-            .iter()
-            .map(|v| (v.option_hash.to_vec(), v.count))
-            .collect();
-        let ours_votes: Vec<(Vec<u8>, u64)> = ours
-            .votes
-            .iter()
-            .map(|v| (v.option_hash.clone(), v.count))
-            .collect();
-        assert_eq!(ours_votes, votes, "row {}", ours.server_id);
-    }
-    // The two tallies #26 is for, checked by value and not only by agreement.
-    assert_eq!(core[0].forwards_count, 8329);
-    assert_eq!(core[1].votes[0].count, 25328);
-    assert_eq!(core[1].votes[0].option_hash.len(), 32);
-    // #44: the revoked rows say so, instead of reading as an undecodable body.
-    assert_eq!((core[2].edit.as_str(), core[3].edit.as_str()), ("8", "8"));
-    assert_eq!(core[4].edit, "");
-    // #51: the edit times, by value, in ms; an unedited row carries neither.
+    let ids: Vec<u64> = rows.iter().map(|r| r.server_id).collect();
     assert_eq!(
-        (core[6].original_timestamp, core[6].last_edit_timestamp),
+        ids,
+        vec![773, 777, 780, 781, 782, 783, 784],
+        "the row without server_id is skipped"
+    );
+    let types: Vec<&str> = rows.iter().map(|r| r.r#type.as_str()).collect();
+    assert_eq!(
+        types,
+        vec!["media", "poll", "text", "text", "text", "hologram", "text"]
+    );
+
+    // The point of #26: a row lands in the shape the event bus delivers.
+    let first = inbound(&rows[0]);
+    assert_eq!(first.text, "bom dia");
+    assert_eq!(first.chat, CHANNEL);
+    assert_eq!(first.timestamp, 1_790_001_172_000, "seconds become ms");
+    assert_eq!(first.raw_message, text_payload("bom dia"));
+    let key = first.key.as_ref().expect("the key is always built");
+    assert_eq!(
+        (key.remote_jid.as_str(), key.id.as_str()),
+        (CHANNEL, "3AEC773")
+    );
+    assert!(!key.from_me);
+    // The row names no sender, so nothing is invented beyond `from_me`.
+    assert!(first.sender.is_empty() && first.push_name.is_empty());
+    assert!(inbound(&rows[6]).key.as_ref().expect("key").from_me);
+
+    // The server-side tallies, the reason this RPC exists.
+    assert_eq!(rows[0].forwards_count, 8329);
+    let reactions: Vec<(&str, u64)> = rows[0]
+        .reactions
+        .iter()
+        .map(|r| (r.code.as_str(), r.count))
+        .collect();
+    assert_eq!(
+        reactions,
+        vec![("\u{1F621}", 437)],
+        "a code-less count drops"
+    );
+    assert_eq!(rows[1].poll_type, "creation");
+    assert_eq!(rows[1].votes.len(), 1);
+    assert_eq!(
+        (rows[1].votes[0].option_hash.clone(), rows[1].votes[0].count),
+        (option_hash(), 25328)
+    );
+
+    // #44: the revoked rows say so; an undecodable body is only empty.
+    assert_eq!((rows[2].edit.as_str(), rows[3].edit.as_str()), ("8", "8"));
+    assert_eq!(rows[4].edit, "");
+    for revoked_or_broken in &rows[2..=4] {
+        assert!(inbound(revoked_or_broken).raw_message.is_empty());
+    }
+
+    // #51: the edit times, by value, in ms; an unedited row carries neither.
+    assert_eq!(rows[6].edit, "3");
+    assert_eq!(
+        (rows[6].original_timestamp, rows[6].last_edit_timestamp),
         (1_790_001_172_000, 1_790_004_321_987)
     );
     assert_eq!(
-        (core[0].original_timestamp, core[0].last_edit_timestamp),
+        (rows[0].original_timestamp, rows[0].last_edit_timestamp),
         (0, 0)
-    );
-    // An undecodable body is an empty payload on BOTH sides, with nothing
-    // saying so: a swap would not fix that, and would not make it worse.
-    assert!(library[4].message.is_none());
-    assert!(
-        core[4]
-            .message
-            .as_ref()
-            .expect("row")
-            .raw_message
-            .is_empty()
     );
 }
 
+// #1548 → #1558: an absent `type` relays as absence, not as the `text` the
+// library's typed field defaults to.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn library_invents_a_type_the_server_did_not_send() {
+async fn core_relays_an_absent_type_as_absent() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
     let rows = vec![
@@ -308,39 +272,35 @@ async fn library_invents_a_type_the_server_did_not_send() {
             .children([plaintext(text_payload("sem tipo"))])
             .build(),
     ];
-    let (core, library) = read_both(&client, &mock, rows).await;
-    assert_eq!(core[0].r#type, "", "the core relays the absence");
-    assert_eq!(library[0].message_type.as_str(), "text");
+    let out = core_reads(&client, &mock, rows).await;
+    assert_eq!(out[0].r#type, "");
 }
 
+// #1548 → #1558: every `<meta polltype>` token relays, whether or not the
+// library has a stage for it and whatever the row type. The edge decides.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn library_drops_a_polltype_it_has_no_variant_for() {
+async fn core_relays_every_polltype_token() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
     let rows = vec![
         row("791", Some("poll"))
             .children([meta_polltype("future_stage"), plaintext(text_payload("?"))])
             .build(),
-        // A polltype on a row that is not a poll: WA Web ignores it, and so
-        // does the library. The core relays it; the edge decides.
         row("792", Some("text"))
             .children([meta_polltype("creation"), plaintext(text_payload("?"))])
             .build(),
     ];
-    let (core, library) = read_both(&client, &mock, rows).await;
-    assert_eq!(core[0].poll_type, "future_stage");
-    assert_eq!(library[0].poll_type, None);
-    assert_eq!(core[1].poll_type, "creation");
-    assert_eq!(library[1].poll_type, None);
+    let out = core_reads(&client, &mock, rows).await;
+    assert_eq!(out[0].poll_type, "future_stage");
+    assert_eq!(out[1].poll_type, "creation");
 }
 
-// Issue #43: this was `library_skips_a_vote_the_core_relays` until the core
-// stopped relaying a 31-byte hash and an absent count as a tally.
+// #43: "the server sent no count" is not "nobody picked this", and bytes that
+// are not 32 long name no option.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn both_skip_a_vote_without_a_count_or_a_32_byte_hash() {
+async fn core_skips_a_vote_without_a_count_or_a_32_byte_hash() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
-    let hash = wacore::poll::compute_option_hash(POLL_OPTION).to_vec();
     let rows = vec![
         row("793", Some("poll"))
             .children([
@@ -348,46 +308,43 @@ async fn both_skip_a_vote_without_a_count_or_a_32_byte_hash() {
                 NodeBuilder::new("votes")
                     .children([
                         vote(Some("5"), vec![7; 31]),
-                        vote(None, hash.clone()),
-                        vote(Some("9"), hash),
+                        vote(None, option_hash()),
+                        vote(Some("9"), option_hash()),
                     ])
                     .build(),
                 plaintext(text_payload("?")),
             ])
             .build(),
     ];
-    let (core, library) = read_both(&client, &mock, rows).await;
-    let ours: Vec<(usize, u64)> = core[0]
+    let out = core_reads(&client, &mock, rows).await;
+    let votes: Vec<(usize, u64)> = out[0]
         .votes
         .iter()
         .map(|v| (v.option_hash.len(), v.count))
         .collect();
-    let theirs: Vec<(usize, u64)> = library[0]
-        .votes
-        .iter()
-        .map(|v| (v.option_hash.len(), v.count))
-        .collect();
-    assert_eq!(ours, vec![(32, 9)], "only the well-formed vote crosses");
-    assert_eq!(ours, theirs);
+    assert_eq!(votes, vec![(32, 9)], "only the well-formed vote crosses");
 }
 
+// #56: accepted change. The old path read an answer without `<messages>` as an
+// empty page; WA Web's parser requires the node and throws, and so does the
+// library. It is a failed read, not a channel with no history.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn library_fails_an_answer_without_messages() {
+async fn core_fails_an_answer_without_messages() {
     let mock = MockWaServer::start().await.expect("start mock");
     let (_registry, client) = logged_in_client(&mock).await;
     mock.answer_newsletter_iq_with(NodeBuilder::new("unexpected").build());
 
-    let core = newsletters::get_messages(&client, &history_request(20))
+    let err = newsletters::get_messages(&client, &history_request(20))
         .await
-        .expect("the core reads a page it cannot find as empty");
-    assert!(core.messages.is_empty());
-    let jid: Jid = CHANNEL.parse().expect("channel jid");
-    assert!(
-        client
-            .newsletter()
-            .get_messages(jid, 20, None)
-            .await
-            .is_err(),
-        "the library fails the call"
-    );
+        .expect_err("an answer without <messages> is not an empty page");
+    assert_eq!(tonic::Status::from(err).code(), tonic::Code::Unavailable);
+}
+
+// A page with `<messages>` and no rows is what an empty channel looks like.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn core_reads_an_empty_page_as_no_rows() {
+    let mock = MockWaServer::start().await.expect("start mock");
+    let (_registry, client) = logged_in_client(&mock).await;
+    let out = core_reads(&client, &mock, Vec::new()).await;
+    assert!(out.is_empty());
 }

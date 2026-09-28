@@ -18,15 +18,22 @@ import "newsletter_tallies.proto";
 message Newsletter {
   string jid = 1;
   string name = 2;
-  // Absent fields relay as the proto3 default, never a placeholder.
+  // Absent fields relay as the proto3 default, never a placeholder, except
+  // `state` and `verification` below.
   string description = 3;
   uint64 subscriber_count = 4;
   string picture_url = 5;
   // Lowercase wire token, same convention as ReceiptEvent.type and
-  // CallEvent.action ("verified" / "unverified").
+  // CallEvent.action ("verified" / "unverified"). A value the library does
+  // not model relays lowercased as the server spelled it. When the server
+  // omits it this reads "unverified", the library's default (#56).
   string verification = 6;
+  // "active" / "suspended" / "geosuspended", or another server token
+  // lowercased. When the server omits it this reads "active" (#56).
   string state = 7;
-  // Whether this account owns/administers the channel, when the server says so.
+  // "owner" / "admin" / "subscriber" / "guest": this account's role in the
+  // channel. Empty when the server says nothing, or names a role the library
+  // has no variant for (#56).
   string role = 8;
   // Unix seconds, 0 when the server omits it.
   int64 creation_time = 9;
@@ -191,7 +198,9 @@ service NewsletterService {
   // GroupService.ListParticipating does for groups.
   rpc ListSubscribedNewsletters(AccountRef) returns (NewsletterList);
   // One channel, for a jid that turned up in a message before the list was
-  // fetched.
+  // fetched. NotFound when no channel exists behind the jid (#56).
+  // PermissionDenied with wa-code 405 when the server refuses the read to
+  // this account, as it did in production for a channel it does not follow.
   rpc GetNewsletterMetadata(JidRequest) returns (Newsletter);
   // A page of a channel's history (issue #26). Plain IQ, no decryption: a
   // channel is not E2E, so the server hands back the payloads itself.

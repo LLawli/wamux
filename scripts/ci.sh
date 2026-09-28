@@ -103,14 +103,15 @@ WAMUX_TEST_ENGINE=sqlite cargo test
 stage "stress tests (fast: M1/M2a/M2b)"
 cargo test --features stress --test stress_handshake
 
-# The real library's newsletter parse against answers the mock plays back
-# (#38): the core's relay-verbatim promise, plus the upstream #1546 canary.
-stage "stress tests (newsletter parse vs the library)"
+# Channel metadata through the real library, against answers the mock plays
+# back (#56): the relayed tokens, NotFound, the list skip, the MEX refusal, and
+# canaries on the two losses accepted when the core stopped querying itself.
+stage "stress tests (newsletter metadata)"
 must_run_tests --features stress --test stress_newsletter_parse
 
-# The channel-history IQ, core vs library over the same page (#40): where they
-# agree, and the four places the library answers differently.
-stage "stress tests (newsletter history vs the library)"
+# Channel history through the real library over captured pages (#56): every
+# edge case #40, #43, #44 and #51 pinned, asserted by value.
+stage "stress tests (newsletter history)"
 must_run_tests --features stress --test stress_newsletter_history
 
 # The channel poll vote, own add-ons and live-update subscription (#26): the
