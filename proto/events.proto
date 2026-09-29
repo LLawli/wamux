@@ -120,7 +120,51 @@ message InboundMessage {
   // (issue #1).
   string sender_alt = 16;
   string recipient_alt = 17;
+  // Set for a sticker PACK message (issue #58). `media` then carries the pack's
+  // archive under media_type "sticker_pack"; this says what is inside it and
+  // carries the thumbnail's own descriptor.
+  StickerPackInfo sticker_pack = 18;
   bytes raw_message = 20;           // serialized wa.Message for advanced consumers
+}
+
+// A received sticker pack, as its StickerPackMessage states it. The pack is ONE
+// encrypted file, a ZIP holding each sticker under its `file_name` plus the tray
+// icon; unzipping it is the edge's business, the core relays the bytes.
+message StickerPackInfo {
+  string pack_id = 1;               // the maker app's id, verbatim
+  string name = 2;
+  string publisher = 3;
+  string description = 4;
+  repeated StickerPackEntry stickers = 5;
+  string tray_icon_file_name = 6;   // the tray icon's entry in the ZIP
+  // `stickerPackSize` verbatim. NOT the archive's length, which is
+  // `media.file_length`: the two differ (501503 vs 501859 on the pack #58 was
+  // measured on), and upstream does not document what this one counts.
+  uint64 pack_size = 7;
+  // Lowercase wire token: first_party|third_party|user_created. Empty when the
+  // message carries no origin; `first_party` is the enum's 0 and is not what
+  // absence means.
+  string origin = 8;
+  // The pack's thumbnail, a second file encrypted under the pack's media key,
+  // under media_type "sticker_pack_thumbnail": DownloadMedia takes it as is.
+  // Unset when the message names no thumbnail path. Its `file_length` is 0
+  // because the message does not declare one; the download is still verified
+  // by both hashes and the MAC.
+  MediaDescriptor thumbnail = 9;
+  uint32 thumbnail_width = 10;
+  uint32 thumbnail_height = 11;
+}
+
+// One sticker inside a received pack, as the pack message lists it. `file_name`
+// is its entry in the ZIP, so an edge can match metadata to bytes after
+// unzipping.
+message StickerPackEntry {
+  string file_name = 1;
+  bool is_animated = 2;
+  repeated string emojis = 3;
+  string accessibility_label = 4;
+  bool is_lottie = 5;
+  string mime_type = 6;
 }
 
 message ReceiptEvent {

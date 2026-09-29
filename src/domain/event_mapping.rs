@@ -13,6 +13,7 @@ use whatsapp_rust::Jid;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
+use crate::domain::sticker_packs;
 use crate::proto::v1 as pb;
 
 /// Map an event to zero or more oneof payloads.
@@ -464,6 +465,11 @@ pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, c
         out.media = Some(descriptor);
         out.caption = caption;
     }
+    // Issue #58: `media` above is the pack's ZIP; this is the rest of it.
+    out.sticker_pack = msg
+        .sticker_pack_message
+        .as_option()
+        .map(sticker_packs::sticker_pack_info);
 }
 
 /// Project a message THIS relay just sent into the same `InboundMessage` shape
@@ -620,6 +626,10 @@ fn extract_media(msg: &wa::Message) -> Option<(pb::MediaDescriptor, String)> {
     }
     if let Some(m) = msg.sticker_message.as_option() {
         return Some((media_descriptor!(m, "sticker"), String::new()));
+    }
+    // Issue #58: a pack used to reach the edge with no descriptor at all.
+    if let Some(m) = msg.sticker_pack_message.as_option() {
+        return Some((sticker_packs::pack_descriptor(m), caption_of(&m.caption)));
     }
     None
 }

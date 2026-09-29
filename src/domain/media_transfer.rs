@@ -11,6 +11,7 @@ use whatsapp_rust::waproto::whatsapp::message::{
 use whatsapp_rust::{Client, Jid, SendResult};
 
 use crate::domain::outgoing_context::outgoing_context;
+use crate::domain::sticker_packs;
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_u32};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
@@ -277,11 +278,21 @@ pub async fn download(
     client: &Client,
     descriptor: &pb::MediaDescriptor,
 ) -> Result<Vec<u8>, WamuxError> {
-    let kind = MediaKind::parse(&descriptor.media_type)?;
+    let media_type = download_media_type(&descriptor.media_type)?;
     client
-        .download_from_params(&download_params(descriptor, kind))
+        .download_from_params(&download_params(descriptor, media_type))
         .await
         .map_err(client_err)
+}
+
+/// Download accepts the five sendable kinds plus the two a received sticker
+/// pack names (issue #58). Those two stay out of `MediaKind`, so SendMedia
+/// still refuses them.
+fn download_media_type(value: &str) -> Result<MediaType, WamuxError> {
+    if let Some(media_type) = sticker_packs::download_only_media_type(value) {
+        return Ok(media_type);
+    }
+    Ok(MediaKind::parse(value)?.upload_type())
 }
 
 /// Build the download parameters, encrypted or not.
@@ -297,7 +308,7 @@ pub async fn download(
 /// `MediaDecryption::Plaintext`, which verifies `file_sha256` rather than
 /// skipping verification. So this widens what the core can relay without
 /// loosening what it checks.
-fn download_params(descriptor: &pb::MediaDescriptor, kind: MediaKind) -> DownloadParams {
+fn download_params(descriptor: &pb::MediaDescriptor, media_type: MediaType) -> DownloadParams {
     let encrypted = !descriptor.media_key.is_empty();
     DownloadParams {
         direct_path: descriptor.direct_path.clone(),
@@ -306,7 +317,7 @@ fn download_params(descriptor: &pb::MediaDescriptor, kind: MediaKind) -> Downloa
         // Only meaningful alongside a key: it is the hash of the ENCRYPTED bytes.
         file_enc_sha256: encrypted.then(|| descriptor.file_enc_sha256.clone()),
         file_length: descriptor.file_length,
-        media_type: kind.upload_type(),
+        media_type,
     }
 }
 
@@ -357,6 +368,38 @@ mod tests {
         ));
     }
 
+    // Issue #58: DownloadMedia takes a received pack and its thumbnail, and
+    // still routes the five sendable kinds and refuses anything else.
+    #[test]
+    fn download_accepts_the_pack_tokens_on_top_of_the_five_kinds() {
+        let resolved = ["sticker_pack", "sticker_pack_thumbnail", "sticker"]
+            .map(|v| download_media_type(v).expect("accepted for download"));
+        assert_eq!(
+            resolved,
+            [
+                MediaType::StickerPack,
+                MediaType::StickerPackThumbnail,
+                MediaType::Sticker
+            ]
+        );
+        assert!(matches!(
+            download_media_type("gif"),
+            Err(WamuxError::InvalidArgument(_))
+        ));
+    }
+
+    // The pack tokens are download-only: SendMedia parses through MediaKind,
+    // which must keep refusing them, since there is no sub-message to build.
+    #[test]
+    fn send_media_still_refuses_the_pack_tokens() {
+        for value in ["sticker_pack", "sticker_pack_thumbnail"] {
+            assert!(
+                matches!(MediaKind::parse(value), Err(WamuxError::InvalidArgument(_))),
+                "value: {value}"
+            );
+        }
+    }
+
     fn descriptor(media_key: Vec<u8>, file_enc_sha256: Vec<u8>) -> pb::MediaDescriptor {
         pb::MediaDescriptor {
             direct_path: "/v/t62.7118-24/enc".to_string(),
@@ -372,7 +415,7 @@ mod tests {
     // Ordinary encrypted media: the key rides through and decryption happens.
     #[test]
     fn a_descriptor_with_a_key_downloads_as_encrypted() {
-        let params = download_params(&descriptor(vec![1u8; 32], vec![2u8; 32]), MediaKind::Image);
+        let params = download_params(&descriptor(vec![1u8; 32], vec![2u8; 32]), MediaType::Image);
         assert_eq!(params.media_key.as_deref(), Some(&[1u8; 32][..]));
         assert_eq!(params.file_enc_sha256.as_deref(), Some(&[2u8; 32][..]));
         assert_eq!(params.file_sha256, vec![9u8; 32]);
@@ -383,7 +426,7 @@ mod tests {
     // it is the only thing authenticating those bytes.
     #[test]
     fn a_keyless_descriptor_downloads_as_plaintext_and_keeps_its_hash() {
-        let params = download_params(&descriptor(Vec::new(), Vec::new()), MediaKind::Image);
+        let params = download_params(&descriptor(Vec::new(), Vec::new()), MediaType::Image);
         assert!(params.media_key.is_none());
         assert!(params.file_enc_sha256.is_none());
         assert_eq!(params.file_sha256, vec![9u8; 32]);
@@ -395,7 +438,7 @@ mod tests {
     // library to validate a hash of bytes it never produces.
     #[test]
     fn an_enc_hash_without_a_key_is_dropped() {
-        let params = download_params(&descriptor(Vec::new(), vec![2u8; 32]), MediaKind::Image);
+        let params = download_params(&descriptor(Vec::new(), vec![2u8; 32]), MediaType::Image);
         assert!(params.media_key.is_none());
         assert!(params.file_enc_sha256.is_none());
     }
