@@ -52,5 +52,8 @@ message MediaDescriptor {
   bytes file_sha256 = 4;
   uint64 file_length = 5;
   string mime_type = 6;
-  string media_type = 7; // image|video|audio|document|sticker
+  // image|video|audio|document|sticker, plus two that are download-only (issue
+  // #58): sticker_pack (a received pack's ZIP) and sticker_pack_thumbnail (its
+  // thumbnail). SendMedia refuses those two; sending a pack is not relayed.
+  string media_type = 7;
 }

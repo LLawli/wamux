@@ -91,7 +91,7 @@ fn message_event(msg: wa::Message, info: MessageInfo) -> Event {
     )
 }
 
-fn mapped_inbound(msg: wa::Message) -> pb::InboundMessage {
+pub(super) fn mapped_inbound(msg: wa::Message) -> pb::InboundMessage {
     match map_one(&message_event(msg, sample_info())) {
         Some(PbEvent::Message(m)) => m,
         other => panic!("expected inbound message, got {other:?}"),
