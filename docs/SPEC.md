@@ -101,6 +101,11 @@ src/
   uploads via `Client::upload` and builds the matching `wa::Message`.
 - Receive: inbound events carry a `MediaDescriptor`; the edge later calls
   `DownloadMedia`, which `download_from_params` decrypts and streams back.
+- Sticker packs (#58, receive-only): the event's `media` is the pack's ZIP
+  (`sticker_pack`), and `sticker_pack.thumbnail` is a second descriptor
+  (`sticker_pack_thumbnail`) under the same media key. Both are download-only
+  types (`domain/sticker_packs.rs`), outside `MediaKind`, so SendMedia refuses
+  them.
 
 ## Notable constraints / gotchas
 - waproto uses **prost 0.14**; tonic codegen uses **prost 0.13**. We depend on both

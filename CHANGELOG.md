@@ -13,6 +13,29 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Added
 
+- **A received sticker pack can be opened** (issue #58). A
+  `stickerPackMessage` reached the socket with no `MediaDescriptor`, and
+  `DownloadMedia` had no type that could fetch it: an edge saw that a pack
+  arrived and could not open it. Now:
+  - `InboundMessage.media` carries the pack's ZIP under the new `media_type`
+    `sticker_pack`, with `mime_type` empty (the message has no mimetype field),
+    and the pack's caption rides `caption`.
+  - `InboundMessage.sticker_pack` (field 18, `StickerPackInfo`) carries the
+    pack id, name, publisher, description, tray icon file name,
+    `stickerPackSize`, the origin as `first_party|third_party|user_created`,
+    the thumbnail's size, and each sticker's `file_name`, `is_animated`,
+    `emojis`, `accessibility_label`, `is_lottie` and `mime_type`.
+  - `StickerPackInfo.thumbnail` is the thumbnail's own descriptor, under
+    `media_type` `sticker_pack_thumbnail`: its own path and hashes, the pack's
+    media key, and `file_length` 0 because the message declares none.
+  - `DownloadMedia` accepts both new types and returns the decrypted ZIP or
+    thumbnail like any other file; unzipping is the edge's. `SendMedia` still
+    refuses them: sending a pack is not relayed.
+
+  Checked against the pack the issue was measured on (30 stickers, origin
+  `third_party`): both descriptors come out complete. Its entries carry no
+  `emojis` at all, so the list is empty there, not dropped.
+
 - **A channel poll can be voted on** (issue #26, upstream #1552 and #1555).
   `SendPollVote` could never vote in a `@newsletter` poll: a channel is not
   E2E, so its poll carries no `message_secret`, and the vote is a plaintext
