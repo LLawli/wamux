@@ -25,7 +25,7 @@ jobs:
         run: scripts/ci.sh --no-postgres
 
       # release-tarball.sh refuses to run when the tag disagrees with the
-      # version in Cargo.toml, so a mistyped tag fails here instead of
+      # version in [workspace.package], so a mistyped tag fails here instead of
       # shipping a binary whose --version lies.
       - name: build tarball
         run: scripts/release-tarball.sh "${GITHUB_REF_NAME#v}"

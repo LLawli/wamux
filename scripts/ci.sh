@@ -37,10 +37,10 @@ stage() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 # the gate forever. Assert tests actually ran.
 must_run_tests() {
   local out
-  out=$(cargo test "$@" 2>&1) || { printf '%s\n' "$out"; return 1; }
+  out=$(cargo test -p wamux "$@" 2>&1) || { printf '%s\n' "$out"; return 1; }
   printf '%s\n' "$out"
   if grep -qE '^running 0 tests$' <<<"$out"; then
-    echo "ERROR: gate ran 0 tests (renamed/moved?): cargo test $*" >&2
+    echo "ERROR: gate ran 0 tests (renamed/moved?): cargo test -p wamux $*" >&2
     return 1
   fi
 }
@@ -63,16 +63,21 @@ if [[ "$NO_POSTGRES" == 0 ]]; then
 fi
 
 stage "fmt --check"
-cargo fmt --check
+cargo fmt --all --check
 
 stage "clippy (default)"
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 
+# The stress feature lives on two members: the mock in wamux, the stress_live
+# probe in wamux-tools. Both are switched on so neither goes unlinted.
 stage "clippy (--features stress)"
-cargo clippy --features stress --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --features wamux/stress,wamux-tools/stress -- -D warnings
 
 stage "no duplicate gRPC/HTTP crates"
 scripts/check-dup-deps.sh
+
+stage "crate boundaries (daemon and wamux-proto)"
+scripts/check-crate-deps.sh
 
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
@@ -95,17 +100,22 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   exit 0
 fi
 
+# The root manifest is virtual with default-members = wamux, so a bare `cargo
+# test` would only test the daemon. Every test target lives in the daemon today
+# (wamux-proto and wamux-tools have none), and the stress suites are pinned to
+# it with -p wamux, so the test stages say `-p wamux` explicitly. The other
+# members are still compiled by the clippy --workspace stages above.
 stage "tests (unit + integration, postgres engine)"
-cargo test
+cargo test -p wamux
 
 # Same suite, SQLite engine. The service-level suites honor WAMUX_TEST_ENGINE,
 # so this re-runs them against the other backend; storage_backend.rs exercises
 # both engines in either pass (parity is only testable with both present).
 stage "tests (sqlite engine)"
-WAMUX_TEST_ENGINE=sqlite cargo test
+WAMUX_TEST_ENGINE=sqlite cargo test -p wamux
 
 stage "stress tests (fast: M1/M2a/M2b)"
-cargo test --features stress --test stress_handshake
+cargo test -p wamux --features stress --test stress_handshake
 
 # Channel metadata through the real library, against answers the mock plays
 # back (#56): the relayed tokens, NotFound, the list skip, the MEX refusal, and

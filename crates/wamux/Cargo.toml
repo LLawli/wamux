@@ -1,0 +1,106 @@
+[package]
+name = "wamux"
+version.workspace = true
+edition.workspace = true
+description = "WhatsApp multiplexer core daemon: many accounts, one Unix socket, gRPC."
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "wamux"
+path = "src/lib.rs"
+
+[features]
+# Stress harness: a mock WhatsApp WSS server (server-side Noise XX) so many real
+# whatsapp-rust Clients can connect to a local endpoint. Off by default: never
+# part of the production daemon.
+#
+# DANGER: a build with this feature can skip Noise server-certificate-chain
+# verification. The mock signs its chain with zeros (`build_cert_chain_bytes`),
+# and whatsapp-rust verifies the intermediate's XEdDSA signature against WA's
+# root key, which no mock can satisfy. Since upstream #1441/#1444 the skip is a
+# per-client runtime policy (`NoiseCertPolicy::DangerSkipCertChainVerify`), no
+# longer a cargo feature that disabled the check for the whole build.
+#
+# The safety net is in `domain::bot_factory`: a build with this feature refuses
+# to connect to anything but a loopback endpoint, and it is the only place that
+# sets the danger policy. Keep the two welded together.
+stress = [
+    "dep:tokio-websockets",
+    "dep:wacore-noise",
+    "dep:wacore-binary",
+    "wacore-noise/test-util",
+]
+
+[[bin]]
+name = "wamux"
+path = "src/main.rs"
+
+[dependencies]
+# Generated gRPC types live in wamux-proto; lib.rs re-exports them as `wamux::proto`.
+wamux-proto.workspace = true
+tonic.workspace = true
+tonic-reflection = "0.14"
+prost.workspace = true
+
+tokio.workspace = true
+tokio-stream.workspace = true
+tower.workspace = true
+futures = "0.3"
+async-trait = "0.1"
+
+# storage: both engines, always compiled. No feature gate: the DSN scheme picks
+# one at startup, and gating would sprinkle #[cfg] across the storage module for
+# the sole benefit of a slightly smaller binary.
+sqlx.workspace = true
+
+thiserror = "2"
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# metrics facade + Prometheus exposition. Rendered over the socket by AdminService;
+# default features off to drop the HTTP/TCP listener and push-gateway (no TCP here).
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
+# http-body Body/Frame traits for the per-request observability tower layer (wraps
+# the response body to read the grpc-status trailer at end-of-stream).
+http-body = "1"
+uuid.workspace = true
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+figment = { version = "0.10", features = ["toml", "env"] }
+dashmap = "6"
+bytes.workspace = true
+# Reads a store written before #31 (bincode-standard blobs) so
+# storage::bincode_upgrade can convert it to protobuf. Delete with that module.
+bincode = { version = "2", features = ["serde"] }
+serde_json = "1"
+http.workspace = true
+
+wacore.workspace = true
+whatsapp-rust.workspace = true
+whatsapp-rust-tokio-transport.workspace = true
+whatsapp-rust-ureq-http-client.workspace = true
+
+# --- stress harness only (optional; enabled by the `stress` feature) ---
+# Server side of the WhatsApp WS endpoint for the mock.
+tokio-websockets = { version = "0.13", optional = true, default-features = false, features = [
+    "server",
+    "ring",
+    "rand",
+] }
+# Noise XX primitives + the e2e cert-chain test fixture (server mirror).
+wacore-noise = { workspace = true, optional = true }
+wacore-binary = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# History-sync fixtures have to compress their payload: 0.7 keeps the chunk
+# zlib-compressed behind LazyHistorySync instead of handing over raw bytes.
+flate2 = "1"
+tempfile = "3"
+hyper-util.workspace = true

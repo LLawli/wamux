@@ -17,14 +17,14 @@ NAME="wamux-${VERSION}-${TARGET}"
 
 # The manifest is the source of truth for the version; a tag that disagrees
 # with it would ship an artifact whose --version lies about what it is.
-manifest_version=$(awk '/^\[package\]/{p=1} p && /^version = /{gsub(/[",]/,"",$3); print $3; exit}' Cargo.toml)
+manifest_version=$(awk '/^\[workspace\.package\]/{p=1} p && /^version = /{gsub(/[",]/,"",$3); print $3; exit}' Cargo.toml)
 if [[ "$manifest_version" != "$VERSION" ]]; then
-  echo "ERROR: version mismatch - argument '$VERSION', Cargo.toml '$manifest_version'" >&2
+  echo "ERROR: version mismatch - argument '$VERSION', workspace Cargo.toml '$manifest_version'" >&2
   exit 1
 fi
 
 echo "building wamux $VERSION for $TARGET"
-cargo build --release --bin wamux
+cargo build --release -p wamux --bin wamux
 
 rm -rf "${OUTDIR:?}/${NAME}"
 mkdir -p "${OUTDIR}/${NAME}/contrib" "${OUTDIR}/${NAME}/docs"

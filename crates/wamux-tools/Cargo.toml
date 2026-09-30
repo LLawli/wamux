@@ -1,0 +1,41 @@
+[package]
+name = "wamux-tools"
+version.workspace = true
+edition.workspace = true
+description = "Development and validation binaries for wamux (pairing, e2e, live probes). Not shipped."
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# `stress_live` drives the mock WhatsApp server from wamux's `stress` feature.
+stress = ["wamux/stress"]
+
+[[bin]]
+name = "stress_live"
+path = "src/bin/stress_live.rs"
+required-features = ["stress"]
+
+[dependencies]
+wamux.workspace = true
+tonic.workspace = true
+prost.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tower.workspace = true
+hyper-util.workspace = true
+anyhow.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+sqlx.workspace = true
+wacore.workspace = true
+whatsapp-rust.workspace = true
+# blocking HTTP GET used by the media probes (ureq 2; the daemon uses ureq 3
+# through whatsapp-rust-ureq-http-client)
+ureq = "2"
+# QR rendering for the pairing validator (pair_cli): matrix -> PNG/ASCII
+qrcode = { version = "0.14", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
