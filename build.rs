@@ -4,7 +4,7 @@ use std::path::PathBuf;
 // truth). protoc is vendored via protoc-bin-vendored so the host needs no protoc.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protoc = protoc_bin_vendored::protoc_bin_path()?;
-    // SAFETY: single-threaded build script; set before tonic_build spawns protoc.
+    // SAFETY: single-threaded build script; set before tonic_prost_build spawns protoc.
     unsafe {
         std::env::set_var("PROTOC", protoc);
     }
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "proto/admin.proto",
     ];
 
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .file_descriptor_set_path(out_dir.join("wamux_descriptor.bin"))
         .compile_protos(&protos, &["proto"])?;
 
@@ -31,10 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the reflection descriptor above, because it is not part of the socket's
     // contract. btree_map makes map encoding deterministic, which the
     // cross-engine byte-parity test depends on.
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_client(false)
         .build_server(false)
-        .btree_map(["."])
+        .btree_map(".")
         .compile_protos(&["proto/store/blobs.proto"], &["proto"])?;
 
     println!("cargo:rerun-if-changed=proto");
