@@ -10,6 +10,24 @@ use wacore::store::traits::AppStateSyncKey;
 use super::*;
 use crate::storage::blob_codec::tests::{every_field_device, persisted_fields};
 
+/// Real blobs written by the 23846f7e build (#86), each next to the protobuf
+/// of the same value: see tests/fixtures/bincode-23846f7e/README.md.
+macro_rules! fixture_23846f7e {
+    ($name:literal) => {
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/bincode-23846f7e/",
+            $name
+        ))
+    };
+}
+const DEVICE_BINCODE: &[u8] = fixture_23846f7e!("device.bincode");
+const DEVICE_PB: &[u8] = fixture_23846f7e!("device.pb");
+const HASH_STATE_BINCODE: &[u8] = fixture_23846f7e!("hash_state.bincode");
+const HASH_STATE_PB: &[u8] = fixture_23846f7e!("hash_state.pb");
+const SYNC_KEY_BINCODE: &[u8] = fixture_23846f7e!("sync_key.bincode");
+const SYNC_KEY_PB: &[u8] = fixture_23846f7e!("sync_key.pb");
+
 fn bincode_of<T: serde::Serialize>(value: &T) -> Vec<u8> {
     bincode::serde::encode_to_vec(value, bincode::config::standard()).unwrap()
 }
@@ -35,17 +53,53 @@ fn sync_key() -> AppStateSyncKey {
     }
 }
 
+/// The legacy blob is a real one, not `bincode_of(Device)`: bincode is
+/// positional, so a blob built from the current `Device` only proves the
+/// current layout converts, which is never the layout a legacy store holds.
+/// Upstream #1565 added `status_privacy` in the middle of `Device` (#86).
 #[test]
-fn a_legacy_device_converts_with_every_persisted_field_and_key_intact() {
-    let device = every_field_device();
-    let new = upgrade_device_blob(&bincode_of(&device), "probe".into()).unwrap();
+fn a_real_23846f7e_device_converts_with_every_field_and_key_intact() {
+    let new = upgrade_device_blob(DEVICE_BINCODE, "probe".into()).unwrap();
     let back = decode_device(&new).unwrap();
-    assert!(persisted_fields(&back) == persisted_fields(&device));
+    let want = decode_device(DEVICE_PB).unwrap();
+    assert!(
+        persisted_fields(&back) == persisted_fields(&want),
+        "a persisted field changed in the conversion"
+    );
     assert_eq!(
         back.identity_key.private_key.serialize(),
-        device.identity_key.private_key.serialize(),
+        want.identity_key.private_key.serialize(),
         "the account identity must survive byte for byte"
     );
+    assert_eq!(back.push_name, "wamux blob test");
+    assert!(
+        back.status_privacy.is_none(),
+        "the field did not exist when this blob was written"
+    );
+}
+
+#[test]
+fn a_real_23846f7e_hash_state_converts() {
+    let new = upgrade_hash_state_blob(HASH_STATE_BINCODE, "probe".into()).unwrap();
+    let back = decode_hash_state(&new).unwrap();
+    let want = decode_hash_state(HASH_STATE_PB).unwrap();
+    assert_eq!(back.version, want.version);
+    assert_eq!(back.hash, want.hash);
+    assert_eq!(back.index_value_map, want.index_value_map);
+    assert_eq!(back.mac_mismatch_fatal, want.mac_mismatch_fatal);
+    assert_eq!(back.bootstrapped, want.bootstrapped);
+    assert_eq!(back.version, 7, "the fixture is hash_state(7, true, false)");
+}
+
+#[test]
+fn a_real_23846f7e_sync_key_converts() {
+    let new = upgrade_sync_key_blob(SYNC_KEY_BINCODE, "probe".into()).unwrap();
+    let back = decode_app_state_sync_key(&new).unwrap();
+    let want = decode_app_state_sync_key(SYNC_KEY_PB).unwrap();
+    assert_eq!(back.key_data, want.key_data);
+    assert_eq!(back.fingerprint, want.fingerprint);
+    assert_eq!(back.timestamp, want.timestamp);
+    assert_eq!(back.key_data, sync_key().key_data);
 }
 
 #[test]
@@ -105,7 +159,7 @@ fn a_legacy_sync_key_converts() {
 #[test]
 fn one_bad_row_fails_the_whole_plan() {
     let rows = LegacyBlobRows {
-        devices: vec![(1, bincode_of(&every_field_device())), (2, vec![0xFF; 5])],
+        devices: vec![(1, DEVICE_BINCODE.to_vec()), (2, vec![0xFF; 5])],
         versions: vec![],
         sync_keys: vec![],
     };
@@ -116,7 +170,7 @@ fn one_bad_row_fails_the_whole_plan() {
 #[test]
 fn the_plan_lists_every_row() {
     let rows = LegacyBlobRows {
-        devices: vec![(1, bincode_of(&every_field_device()))],
+        devices: vec![(1, DEVICE_BINCODE.to_vec())],
         versions: vec![
             (
                 1,

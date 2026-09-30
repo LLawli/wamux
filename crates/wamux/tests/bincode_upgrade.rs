@@ -19,11 +19,19 @@ use wacore::appstate::hash::HashState;
 use wacore::store::Device;
 use wacore::store::traits::AppStateSyncKey;
 use wamux::storage::StorageEngine;
+use wamux::storage::bincode_upgrade::decode_legacy_device;
+use wamux::storage::blob_codec::decode_device;
 use wamux::storage::postgres::{self, PgStorage};
 use wamux::storage::sqlite::{self, SqliteStorage};
-use whatsapp_rust::Jid;
 
 const KEY_ID: &[u8] = &[0, 0, 0, 1];
+
+/// A real device blob written by the 23846f7e build, and the protobuf of the
+/// same value (#86). Bincode is positional: a blob built here from the current
+/// `Device` would only prove the current layout converts, never the layout a
+/// legacy store actually holds. See tests/fixtures/bincode-23846f7e/README.md.
+const DEVICE_BINCODE: &[u8] = include_bytes!("fixtures/bincode-23846f7e/device.bincode");
+const DEVICE_PB: &[u8] = include_bytes!("fixtures/bincode-23846f7e/device.pb");
 
 fn bincode_of<T: serde::Serialize>(value: &T) -> Vec<u8> {
     bincode::serde::encode_to_vec(value, bincode::config::standard()).unwrap()
@@ -31,7 +39,10 @@ fn bincode_of<T: serde::Serialize>(value: &T) -> Vec<u8> {
 
 /// What a pre-#31 daemon had written for one account.
 struct LegacyAccount {
-    device: Device,
+    /// The device row as the legacy store holds it.
+    device_bincode: &'static [u8],
+    /// What that row must load as after the conversion.
+    expected_device: Device,
     /// `(collection, state)`: one synced but unmarked, one marked. Both must
     /// come out exactly as they went in.
     versions: Vec<(&'static str, HashState)>,
@@ -49,15 +60,9 @@ fn hash_state(version: u64, bootstrapped: bool, mac_mismatch_fatal: bool) -> Has
 }
 
 fn legacy_account() -> LegacyAccount {
-    let mut device = Device::new();
-    // unwrap: parsing literal, well-formed JIDs.
-    device.pn = Some("559980000001@s.whatsapp.net".parse::<Jid>().unwrap());
-    device.lid = Some("169815004184633@lid".parse::<Jid>().unwrap());
-    device.push_name = "upgrade test".to_string();
-    device.next_pre_key_id = 812;
-    device.lid_migrated = true;
     LegacyAccount {
-        device,
+        device_bincode: DEVICE_BINCODE,
+        expected_device: decode_device(DEVICE_PB).unwrap(),
         versions: vec![
             ("regular_low", hash_state(1399, false, true)),
             ("critical_unblock_low", hash_state(12, true, false)),
@@ -83,7 +88,7 @@ async fn assert_converted(engine: Arc<dyn StorageEngine>, device_id: i32, legacy
         .unwrap()
         .expect("device loads after conversion");
     assert!(
-        persisted(&device) == persisted(&legacy.device),
+        persisted(&device) == persisted(&legacy.expected_device),
         "every persisted Device field, keys included, must survive the conversion"
     );
 
@@ -160,7 +165,7 @@ async fn insert_device_sqlite(pool: &SqlitePool, device_id: i32, blob: &[u8]) {
 }
 
 async fn seed_sqlite(pool: &SqlitePool, device_id: i32, legacy: &LegacyAccount) {
-    insert_device_sqlite(pool, device_id, &bincode_of(&legacy.device)).await;
+    insert_device_sqlite(pool, device_id, legacy.device_bincode).await;
     for (name, state) in &legacy.versions {
         sqlx::query(
             "INSERT INTO app_state_versions (name, state_data, device_id) VALUES (?, ?, ?)",
@@ -231,7 +236,7 @@ async fn sqlite_one_unreadable_row_aborts_the_conversion_and_changes_nothing() {
     );
     assert_eq!(
         sqlite_device_blob(&pool, device_id).await,
-        bincode_of(&legacy.device),
+        legacy.device_bincode,
         "the good row is still the bincode it was"
     );
 }
@@ -290,7 +295,7 @@ async fn legacy_pg(legacy: &LegacyAccount) -> (ThrowawayPg, i32) {
 async fn seed_pg(pool: &PgPool, device_id: i32, legacy: &LegacyAccount) {
     sqlx::query("INSERT INTO device (device_id, data) VALUES ($1, $2)")
         .bind(device_id)
-        .bind(bincode_of(&legacy.device))
+        .bind(legacy.device_bincode)
         .execute(pool)
         .await
         .unwrap();
@@ -365,7 +370,12 @@ async fn read_real_store(pool: &SqlitePool) -> RealStoreBefore {
     RealStoreBefore {
         devices: devices
             .into_iter()
-            .map(|(d, b)| (d, from_bincode(&b)))
+            .map(|(d, b)| {
+                let row = format!("device {d}");
+                let device = decode_legacy_device(&b, row)
+                    .expect("the copy must still be bincode: rehearse on a fresh copy");
+                (d, device)
+            })
             .collect(),
         versions: versions
             .into_iter()
