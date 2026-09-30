@@ -71,6 +71,9 @@ cargo clippy --all-targets -- -D warnings
 stage "clippy (--features stress)"
 cargo clippy --features stress --all-targets -- -D warnings
 
+stage "no duplicate gRPC/HTTP crates"
+scripts/check-dup-deps.sh
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -81,7 +84,8 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   must_run_tests --lib
 
   stage "no-postgres: service suites (sqlite engine)"
-  WAMUX_TEST_ENGINE=sqlite must_run_tests --test grpc_server --test event_subscription
+  WAMUX_TEST_ENGINE=sqlite must_run_tests --test grpc_server --test event_subscription \
+    --test reflection
 
   stage "no-postgres: sqlite-only storage cases"
   must_run_tests --test storage_backend sqlite_
