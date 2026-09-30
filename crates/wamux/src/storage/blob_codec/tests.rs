@@ -3,6 +3,7 @@
 //! since each engine keeps reading back what it wrote.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use prost::Message as _;
 use wacore::appstate::hash::HashState;
@@ -11,6 +12,10 @@ use wacore::store::device::{CachedNoiseCert, CachedServerCertChain, ServerClient
 use wacore::store::error::StoreError;
 use wacore::store::traits::{AppStateSyncKey, DeviceInfo};
 use whatsapp_rust::Jid;
+use whatsapp_rust::waproto::whatsapp::sync_action_value::StatusPrivacyAction;
+use whatsapp_rust::waproto::whatsapp::sync_action_value::status_privacy_action::{
+    CustomList, StatusDistributionMode,
+};
 
 use super::wire::{AppStateSyncKeyWire, DeviceBlob, HashStateWire};
 use super::*;
@@ -58,7 +63,24 @@ pub(crate) fn every_field_device() -> Device {
         version: (2, 3000, 1_023_456_789),
     });
     device.read_receipts_disabled = true;
+    device.status_privacy = Some(Arc::new(status_privacy_action()));
     device
+}
+
+/// A status audience with every part set: a mode, extra modes, an allow list
+/// and a custom list (#86, upstream #1565).
+pub(crate) fn status_privacy_action() -> StatusPrivacyAction {
+    StatusPrivacyAction {
+        mode: Some(StatusDistributionMode::CUSTOM_LIST.into()),
+        modes: vec![StatusDistributionMode::CLOSE_FRIENDS.into()],
+        user_jid: vec!["120363000000000042@lid".into()],
+        custom_lists: vec![CustomList {
+            list_id: Some("friends".into()),
+            user_jid: vec!["120363000000000043@lid".into()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
 }
 
 /// Every stored field of two devices, as bincode sees them: Device has no
