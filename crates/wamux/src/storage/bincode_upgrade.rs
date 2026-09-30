@@ -3,8 +3,12 @@
 //!
 //! Why this one is automatic when the two before it were one-shot bins: those
 //! had to read an OLD layout, which meant linking the old `wacore` next to the
-//! new one. This reads the CURRENT types as bincode and writes them as protobuf,
-//! so the running build is all it needs.
+//! new one. Bincode is positional, so the layout that wrote a blob is the only
+//! one that reads it. `Device` changed in the middle (#86, upstream #1565
+//! inserted `status_privacy`), so it is read through a frozen mirror of the
+//! layout that wrote it (`legacy_device`) instead of the current type.
+//! `HashState` and `AppStateSyncKey` have not changed and are still read as the
+//! current types; real-blob tests fail the day one of them does.
 //!
 //! `blob_format` (one row, created by the SQL migration as `bincode`) says which
 //! format the three columns hold. It is what makes this safe to run on every
@@ -23,6 +27,7 @@
 //! Delete this module, the `bincode` dependency and the check in the engines'
 //! `run_migrations` once every deployed store reports `protobuf`.
 
+mod legacy_device;
 #[cfg(test)]
 mod tests;
 
@@ -31,6 +36,7 @@ use wacore::appstate::hash::HashState;
 use wacore::store::Device;
 use wacore::store::traits::AppStateSyncKey;
 
+use self::legacy_device::LegacyDevice;
 use super::blob_codec::{
     decode_app_state_sync_key, decode_device, decode_hash_state, encode_app_state_sync_key,
     encode_device, encode_hash_state,
@@ -105,11 +111,21 @@ pub fn plan_bincode_upgrade(
     Ok(plan)
 }
 
-/// One `device.data`. Proved by comparing every persisted field: bincode itself
-/// serializes exactly those, so the old value's bincode and the round-tripped
-/// value's bincode are equal only if nothing was lost or changed.
+/// A legacy `device.data` as the `Device` it held (#86). Legacy bincode is the
+/// layout of the pin that wrote it, not of the current `wacore`, so this reads
+/// it through a frozen mirror. Also what the rehearsal test reads a real store
+/// with.
+pub fn decode_legacy_device(blob: &[u8], row: String) -> Result<Device, BincodeUpgradeError> {
+    let old: LegacyDevice = decode_whole(blob, &row)?;
+    Ok(old.into())
+}
+
+/// One `device.data`. Proved by comparing every persisted field: the current
+/// `Device`'s bincode serializes exactly those, so the converted legacy value's
+/// bincode and the round-tripped value's bincode are equal only if nothing was
+/// lost or changed. (Not compared with the legacy bytes: the layouts differ.)
 pub fn upgrade_device_blob(blob: &[u8], row: String) -> Result<Vec<u8>, BincodeUpgradeError> {
-    let old: Device = decode_whole(blob, &row)?;
+    let old = decode_legacy_device(blob, row.clone())?;
     let new = encode_device(&old);
     let back = decode_device(&new).map_err(|e| round_trip(&row, e.to_string()))?;
     if encode_bincode(&back, &row)? != encode_bincode(&old, &row)? {

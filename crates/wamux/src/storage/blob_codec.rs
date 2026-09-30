@@ -20,6 +20,8 @@ mod app_state_wire;
 mod device_wire;
 /// Also the fixtures `bincode_upgrade`'s tests build legacy blobs from.
 #[cfg(test)]
+mod status_privacy_tests;
+#[cfg(test)]
 pub(crate) mod tests;
 mod wire;
 

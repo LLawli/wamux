@@ -110,4 +110,9 @@ message DeviceBlob {
   int64 last_signed_pre_key_rotation_ms = 25;
   ServerClientExpirationWire server_client_expiration = 26;
   bool read_receipts_disabled = 27;
+  // The status audience app-state sync last delivered (#86, upstream #1565),
+  // as the library's own protobuf bytes (wacore's status_privacy_serde), so
+  // unknown modes and custom lists survive. Absent means unknown, never
+  // "all contacts".
+  optional bytes status_privacy = 28;
 }

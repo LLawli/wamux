@@ -646,6 +646,9 @@ fn variant_name(event: &Event) -> String {
 
 // Tests live in sibling files to keep each one under the 500-line rule.
 #[cfg(test)]
+#[path = "event_mapping_action_timestamp_tests.rs"]
+mod action_timestamp_tests;
+#[cfg(test)]
 #[path = "event_mapping_favorites_tests.rs"]
 mod favorites_tests;
 #[cfg(test)]

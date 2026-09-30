@@ -193,6 +193,38 @@ has to follow them.
 
 ### Changed
 
+- **whatsapp-rust moves to git main `6f07e3ab`** (issue #86), same nightly,
+  every crate of the family together. Brings upstream #1568, the fix for
+  #1567: since #30 every connection's keepalive loop exited at its first tick,
+  so a logged-in account had no idle ping and no dead-socket watchdog. It has
+  both again, and `scripts/ci.sh --full` is green through the keepalive stage
+  (M2b) for the first time since #30. Also carried:
+  - **`AppStateUpdate.raw` and `ContactUpdate.raw` gain `action_timestamp`**
+    (upstream #1562). The raw JSON is the library's struct, so the new key
+    reaches the socket with no mapping change: the instant the mutation itself
+    carried, or `null` when it carried none. `timestamp` keeps its old value,
+    which in that case is a fallback (the epoch or the dispatch time), so only
+    `action_timestamp` tells a real epoch from a missing one. Additive: a
+    consumer that ignores unknown keys sees no change. Applies to `archive`,
+    `pin`, `mute`, `star`, `mark_read`, `delete_chat` and the contact update.
+  - **The store keeps the status audience** app-state sync delivers (upstream
+    #1565, `Device.status_privacy`), as a new optional field in the device
+    blob, in the library's own bytes, so unknown modes and custom lists survive
+    a restart. A store written before it reads the audience as unknown until
+    the phone syncs it again; one that does not decode is also unknown, with a
+    warning, and never stops the account from loading. Nothing to run: the
+    blob is field-tagged. The new `StatusPrivacyUpdate` event is not relayed
+    yet.
+  - **The bincode conversion (#31) keeps working.** It read a legacy device
+    blob as the current `Device`, and bincode is positional: #1565 inserting a
+    field would have made every store still in bincode unconvertible, with
+    the tests green, because they built their "legacy" blobs from the current
+    type. It now reads a frozen mirror of the layout that wrote it, proved
+    against real blobs written by the previous build
+    (`crates/wamux/tests/fixtures/bincode-23846f7e/`).
+  - Also in the range, internal to the library: pairwise retries keep the
+    message's content metadata (#1566), dependency bumps (#1563).
+
 - **The repository is a Cargo workspace** (issue #62). Three crates under
   `crates/`: `wamux-proto` (the `.proto` files, the build script that
   generates them, and nothing of wamux), `wamux` (the daemon, its tests and

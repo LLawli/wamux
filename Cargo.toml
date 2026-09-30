@@ -56,16 +56,16 @@ sqlx = { version = "0.8", default-features = false, features = [
 # so that reason is gone.)
 #
 # `simd` is gone: upstream removed it after measuring what it was worth (#1262).
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846f7e34c9842ed93c7a099a8f87818089fab7" }
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846f7e34c9842ed93c7a099a8f87818089fab7", default-features = false, features = [
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6f07e3ab7f6a94764c23dfd6298c312b58419e7b" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6f07e3ab7f6a94764c23dfd6298c312b58419e7b", default-features = false, features = [
     "tokio-transport",
     "tokio-runtime",
     "ureq-client",
     "tokio-native",
     "signal",
 ] }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846f7e34c9842ed93c7a099a8f87818089fab7" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846f7e34c9842ed93c7a099a8f87818089fab7" }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6f07e3ab7f6a94764c23dfd6298c312b58419e7b" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6f07e3ab7f6a94764c23dfd6298c312b58419e7b" }
 # Stress harness only; the members opt in with `optional = true`.
-wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846f7e34c9842ed93c7a099a8f87818089fab7", default-features = false }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846f7e34c9842ed93c7a099a8f87818089fab7", default-features = false }
+wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6f07e3ab7f6a94764c23dfd6298c312b58419e7b", default-features = false }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6f07e3ab7f6a94764c23dfd6298c312b58419e7b", default-features = false }

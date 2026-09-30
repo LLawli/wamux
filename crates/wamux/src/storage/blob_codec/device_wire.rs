@@ -11,8 +11,10 @@ use wacore::libsignal::protocol::{KeyPair, PrivateKey, PublicKey};
 use wacore::store::Device;
 use wacore::store::device::{
     CachedNoiseCert, CachedServerCertChain, DEVICE_PROPS, ServerClientExpiration, account_serde,
+    status_privacy_serde,
 };
 use wacore::store::error::StoreError;
+use whatsapp_rust::waproto::whatsapp::sync_action_value::StatusPrivacyAction;
 use whatsapp_rust::{Jid, Server};
 
 use super::wire::{DeviceBlob, JidWire, NoiseCert, ServerCertChain, ServerClientExpirationWire};
@@ -55,6 +57,10 @@ pub fn encode_device(device: &Device) -> Vec<u8> {
             .as_ref()
             .map(expiration_to_wire),
         read_receipts_disabled: device.read_receipts_disabled,
+        status_privacy: device
+            .status_privacy
+            .as_deref()
+            .map(status_privacy_serde::to_bytes),
     }
     .encode_to_vec()
 }
@@ -106,7 +112,26 @@ pub fn decode_device(bytes: &[u8]) -> Result<Device, StoreError> {
         last_signed_pre_key_rotation_ms: blob.last_signed_pre_key_rotation_ms,
         server_client_expiration: blob.server_client_expiration.map(expiration_from_wire),
         read_receipts_disabled: blob.read_receipts_disabled,
+        status_privacy: status_privacy_from_bytes(blob.status_privacy.as_deref()),
     })
+}
+
+/// Absent or undecodable => `None` ("unknown", never a widened default). A
+/// broken optional field must not stop the account from loading (#86, same call
+/// as upstream's sqlite-storage). Logs the size only: the content is account data.
+fn status_privacy_from_bytes(bytes: Option<&[u8]>) -> Option<Arc<StatusPrivacyAction>> {
+    let bytes = bytes?;
+    match status_privacy_serde::from_bytes(bytes) {
+        Ok(action) => Some(Arc::new(action)),
+        Err(error) => {
+            tracing::warn!(
+                len = bytes.len(),
+                %error,
+                "stored status_privacy does not decode, treating as unknown (#86)"
+            );
+            None
+        }
+    }
 }
 
 fn jid_to_wire(jid: &Jid) -> JidWire {
