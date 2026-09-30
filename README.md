@@ -53,7 +53,8 @@ Signal/session/device state (in Postgres), never business message history.
   scheme picks the engine: `postgres://` for the multi-account deployment,
   `sqlite://` for a single file with no server process.
 - `protoc` is **not** required on the host — it is vendored and run by
-  `build.rs`, which regenerates the Rust gRPC code from `proto/` on every build.
+  `crates/wamux-proto/build.rs`, which regenerates the Rust gRPC code from
+  `crates/wamux-proto/proto/` on every build.
 
 ## Install
 
@@ -71,7 +72,7 @@ user that will open it or every connection fails with permission denied.
 ### Native, no database server
 
 ```sh
-cargo build --release --bin wamux
+cargo build --release -p wamux --bin wamux
 cp target/release/wamux ~/.local/bin/
 cp contrib/wamux.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now wamux
@@ -124,39 +125,43 @@ example file for the full annotated list.
 ## Development
 
 ```sh
-cargo build                                   # build + regenerate proto
+cargo build                                    # build + regenerate proto
 cargo fmt                                      # format (law)
-cargo clippy --all-targets -- -D warnings      # lint, zero tolerance
+cargo clippy --workspace --all-targets -- -D warnings  # lint, zero tolerance
 DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux cargo test
 WAMUX_TEST_ENGINE=sqlite cargo test            # same suite, SQLite engine
-scripts/ci.sh                                  # every gate in one run (--full adds scale tests)
+scripts/ci.sh                                  # every gate (--full adds scale tests)
 ```
 
 `scripts/ci.sh` is the pipeline — there is no hosted CI. Run it before declaring
 work done.
 
-The `proto/` files are the **source of truth** for the API contract: change the
-proto, rebuild, then fix the Rust — never the other way around. Generated code is
+The `crates/wamux-proto/proto/` files are the **source of truth** for the API
+contract: change the proto, rebuild, then fix the Rust — never the other way around. Generated code is
 never edited by hand.
 
 ### Layout
 
 ```
-proto/        # .proto contracts (source of truth)
-build.rs      # tonic-prost-build: regenerates Rust from proto/
-src/
-  main.rs       # load config, bind socket, run server, handle signals
-  server.rs     # assemble the gRPC Server: services + tower layers
-  services/     # one gRPC service impl per file (thin handlers)
-  domain/       # business logic, transport-agnostic, unit-tested
-  state/        # shared state, pools, registry, event bridge
-  transport/    # UDS listener, socket lifecycle, peer-cred checks
-  storage/      # StorageEngine trait + postgres/ and sqlite/ backends
-  config.rs     # Config struct + load-at-startup
-  error.rs      # typed errors + mapping to tonic::Status
+crates/wamux-proto/     # generated gRPC types
+  proto/                # .proto contracts (source of truth)
+  build.rs              # tonic-prost-build: regenerates Rust from proto/
+crates/wamux-tools/     # development binaries (src/bin/), not shipped
+crates/wamux/           # the daemon
+  migrations/, migrations_sqlite/, tests/
+  src/
+    main.rs       # load config, bind socket, run server, handle signals
+    server.rs     # assemble the gRPC Server: services + tower layers
+    services/     # one gRPC service impl per file (thin handlers)
+    domain/       # business logic, transport-agnostic, unit-tested
+    state/        # shared state, pools, registry, event bridge
+    transport/    # UDS listener, socket lifecycle, peer-cred checks
+    storage/      # StorageEngine trait + postgres/ and sqlite/ backends
+    config.rs     # Config struct + load-at-startup
+    error.rs      # typed errors + mapping to tonic::Status
 ```
 
-The binaries under `src/bin/` (pairing, e2e, validation, live probes) are
+The binaries under `crates/wamux-tools/src/bin/` (pairing, e2e, validation, live probes) are
 development/diagnostic tools, not part of the daemon.
 
 ## Documentation

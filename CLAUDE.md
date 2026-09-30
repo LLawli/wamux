@@ -133,7 +133,8 @@ Ten more minutes of grep would have caught each one.
   framing over the socket.
 - `prost` for protobuf messages (generated). `prost-types` only if you actually need
   well-known types like `Timestamp`.
-- `tonic-prost-build` runs in `build.rs` and regenerates Rust from `proto/` on every build.
+- `tonic-prost-build` runs in `crates/wamux-proto/build.rs` and regenerates Rust from
+  `crates/wamux-proto/proto/` on every build.
   The `.proto` files are the source of truth; never edit generated code.
 - `tokio` (multi-thread runtime) for async.
 - `tokio-stream` for `UnixListenerStream`, which feeds accepted connections into
@@ -147,8 +148,8 @@ Ten more minutes of grep would have caught each one.
 - Build (also regenerates proto):  `cargo build` (proto via vendored `protoc`, no host install)
 - Run the server:                  `cargo run` (reads `wamux.toml` + `WAMUX_*` env)
 - Format:                          `cargo fmt`
-- Lint (zero tolerance):           `cargo clippy --all-targets -- -D warnings`
-- Tests:                           `DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux cargo test`
+- Lint (zero tolerance):           `cargo clippy --workspace --all-targets -- -D warnings`
+- Tests:                           `DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux cargo test -p wamux`
 - Postgres for tests/dev (docker): `docker run -d --name wamux-pg -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux -e POSTGRES_DB=wamux -p 5433:5432 postgres:16`
 - Poke the socket by hand:         `grpcurl -unix -plaintext /run/wamux.sock list`
   (needs `grpcurl` installed; reflection is on by default in dev)
@@ -171,7 +172,7 @@ Ten more minutes of grep would have caught each one.
   `thiserror` for typed errors; `anyhow` only in `main` where you're about to exit.
 
 ## gRPC services (tonic)
-- The `.proto` files in `proto/` define the contract. Change the proto, rebuild, then
+- The `.proto` files in `crates/wamux-proto/proto/` define the contract. Change the proto, rebuild, then
   fix the Rust. Never the other way around.
 - One service `impl` per file in `services/`. File name = snake_case of the service
   (`order_service.rs` -> `OrderService`).
@@ -240,24 +241,29 @@ Ten more minutes of grep would have caught each one.
 
 ## Formatting & lint
 - `cargo fmt` is law. Don't discuss style.
-- `cargo clippy --all-targets -- -D warnings` must pass clean. Fix the lint, don't
+- `cargo clippy --workspace --all-targets -- -D warnings` must pass clean. Fix the lint, don't
   `#[allow(...)]` it unless the allow has a comment and a reason.
 
 ## Directory structure
 ```
-proto/               # .proto contracts (the source of truth)
-build.rs             # tonic-prost-build: regenerates Rust from proto/
-src/
-  main.rs            # load config, bind socket, run server, handle signals
-  server.rs          # assemble Server: register services + tower layers
-  services/          # one gRPC service impl per file (thin RPC handlers)
-  domain/            # business logic, transport-agnostic, unit-tested
-  state/             # shared state, pools, context newtypes
-  transport/         # UDS listener, socket lifecycle, peer-cred checks
-  config.rs          # Config struct + load-at-startup
-  error.rs           # typed errors (thiserror) + mapping to tonic::Status
-  proto.rs           # tonic::include_proto!(...) module(s)
-Cargo.toml
+Cargo.toml           # virtual workspace: members, shared deps, lints, the whatsapp-rust rev
+crates/
+  wamux-proto/       # generated gRPC types (bottom of the graph, depends on no wamux crate)
+    proto/           # .proto contracts (the source of truth)
+    build.rs         # tonic-prost-build: regenerates Rust from proto/
+    src/lib.rs       # pub mod v1, pub mod store, FILE_DESCRIPTOR_SET
+  wamux-tools/       # development binaries (src/bin/), not shipped
+  wamux/             # the daemon (lib + `wamux` bin), tests/, migrations*/
+    src/
+      main.rs            # load config, bind socket, run server, handle signals
+      server.rs          # assemble Server: register services + tower layers
+      services/          # one gRPC service impl per file (thin RPC handlers)
+      domain/            # business logic, transport-agnostic, unit-tested
+      state/             # shared state, pools, context newtypes
+      transport/         # UDS listener, socket lifecycle, peer-cred checks
+      config.rs          # Config struct + load-at-startup
+      error.rs           # typed errors (thiserror) + mapping to tonic::Status
+      # (no proto.rs: lib.rs re-exports wamux-proto as `proto`)
 ``` 
 - Mirror this layout so the agent can predict paths without listing directories.
 
