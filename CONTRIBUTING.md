@@ -8,7 +8,8 @@ Using it may violate WhatsApp's Terms of Service and can get an account
 banned. Contribute and test only with accounts you are authorized to use.
 
 Never test against a real account you cannot afford to lose. Pair a spare
-number: the repo has helpers (`src/bin/pair_socket.rs`) for exactly that.
+number: the repo has helpers
+(`crates/wamux-tools/src/bin/pair_socket.rs`) for exactly that.
 
 ## Getting the gates green
 
@@ -52,9 +53,9 @@ contribution; it is also the file agents load.
 
 ## Changing the API
 
-The `.proto` files in `proto/` are the **source of truth**. Change the proto,
-rebuild (`build.rs` regenerates on every build), then fix the Rust. Never the
-other way around, and never edit generated code.
+The `.proto` files in `crates/wamux-proto/proto/` are the **source of truth**.
+Change the proto, rebuild (`crates/wamux-proto/build.rs` regenerates on every
+build), then fix the Rust. Never the other way around, and never edit generated code.
 
 A wire-breaking change needs a note in `CHANGELOG.md` under **Changed** with
 the migration path, because a separate edge project consumes this contract.

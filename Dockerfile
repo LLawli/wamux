@@ -13,18 +13,17 @@ WORKDIR /src
 COPY rust-toolchain.toml ./
 RUN rustup show
 
-COPY Cargo.toml Cargo.lock build.rs ./
-COPY proto ./proto
-COPY src ./src
-COPY migrations ./migrations
-COPY migrations_sqlite ./migrations_sqlite
+# The workspace resolver needs every member's manifest on disk, so the whole
+# crates/ tree is copied even though only wamux (and wamux-proto) get built.
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 
-# --bin wamux on purpose: the repo carries a dozen development binaries
+# -p wamux --bin wamux on purpose: the repo carries a dozen development binaries
 # (pairing helpers, e2e drivers, the bench client) that have no business in a
-# production image. protoc is vendored by build.rs, so nothing to install.
+# production image. protoc is vendored by wamux-proto's build.rs, so nothing to install.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --bin wamux && \
+    cargo build --release -p wamux --bin wamux && \
     cp target/release/wamux /usr/local/bin/wamux
 
 FROM debian:bookworm-slim AS runtime

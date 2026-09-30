@@ -5,9 +5,10 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-While the version is `0.x`, the gRPC contract in `proto/` may change in a minor
-release. Breaking wire changes are called out under **Changed** with the
-migration note, since the edge that consumes this socket has to follow them.
+While the version is `0.x`, the gRPC contract in `crates/wamux-proto/proto/`
+may change in a minor release. Breaking wire changes are called out under
+**Changed** with the migration note, since the edge that consumes this socket
+has to follow them.
 
 ## [Unreleased]
 
@@ -191,6 +192,26 @@ migration note, since the edge that consumes this socket has to follow them.
   their graceful stop, the socket is unlinked and `wamux stopped` is logged.
 
 ### Changed
+
+- **The repository is a Cargo workspace** (issue #62). Three crates under
+  `crates/`: `wamux-proto` (the `.proto` files, the build script that
+  generates them, and nothing of wamux), `wamux` (the daemon, its tests and
+  migrations) and `wamux-tools` (the development binaries that lived in
+  `src/bin/`, not shipped). For anyone building from source:
+  - `cargo build`, `cargo run` and `cargo test` at the root still mean the
+    daemon (`default-members`). The release build is
+    `cargo build --release -p wamux --bin wamux`; the tools build with
+    `-p wamux-tools`.
+  - The daemon no longer compiles `ureq` 2, `qrcode` or `image`, which only
+    the tools use. `scripts/check-crate-deps.sh`, run by `scripts/ci.sh`,
+    fails if any of them comes back, or if `wamux-proto` gains a dependency
+    on a wamux crate.
+  - `unsafe_code` is forbidden workspace-wide. The build script no longer
+    sets `PROTOC` in its environment: it hands the vendored protoc to
+    prost's config.
+
+  No wire or config change: the release tarball and the Docker image carry
+  the same single `wamux` binary.
 
 - **tonic and prost move to 0.14** (issue #61). `tonic`, `tonic-reflection`,
   `prost` and `prost-types` go up one line, and the codegen moves from

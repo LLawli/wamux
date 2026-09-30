@@ -8,7 +8,9 @@ pub mod config;
 pub mod domain;
 pub mod error;
 pub mod observe;
-pub mod proto;
+/// The generated gRPC types live in `wamux-proto`; re-exported so every
+/// `crate::proto::v1` / `wamux::proto::v1` path keeps resolving.
+pub use wamux_proto as proto;
 pub mod server;
 pub mod services;
 pub mod state;

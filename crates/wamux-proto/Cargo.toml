@@ -1,0 +1,21 @@
+[package]
+name = "wamux-proto"
+version.workspace = true
+edition.workspace = true
+description = "Generated gRPC/protobuf types for the wamux socket contract."
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+prost-build.workspace = true
+protoc-bin-vendored.workspace = true
