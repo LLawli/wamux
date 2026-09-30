@@ -45,10 +45,11 @@ required-features = ["stress"]
 
 [dependencies]
 # gRPC / protobuf
-tonic = "0.12"
-tonic-reflection = "0.12"
-prost = "0.13"
-prost-types = "0.13"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-reflection = "0.14"
+prost = "0.14"
+prost-types = "0.14"
 # NOTE: waproto dropped prost for `buffa` in whatsapp-rust 0.7, so the second
 # prost (0.14) this crate used to carry only to reach waproto's Message trait is
 # gone. Encoding a wa::Message now goes through `whatsapp_rust::buffa::Message`.
@@ -138,7 +139,7 @@ wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846
 wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "23846f7e34c9842ed93c7a099a8f87818089fab7", optional = true, default-features = false }
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]

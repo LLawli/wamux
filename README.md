@@ -143,7 +143,7 @@ never edited by hand.
 
 ```
 proto/        # .proto contracts (source of truth)
-build.rs      # tonic-build: regenerates Rust from proto/
+build.rs      # tonic-prost-build: regenerates Rust from proto/
 src/
   main.rs       # load config, bind socket, run server, handle signals
   server.rs     # assemble the gRPC Server: services + tower layers

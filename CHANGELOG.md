@@ -192,6 +192,16 @@ migration note, since the edge that consumes this socket has to follow them.
 
 ### Changed
 
+- **tonic and prost move to 0.14** (issue #61). `tonic`, `tonic-reflection`,
+  `prost` and `prost-types` go up one line, and the codegen moves from
+  `tonic-build` to `tonic-prost-build`, since 0.14 split the prost codec into
+  its own crates (`tonic-prost` at runtime). No wire change: the `.proto`
+  files are untouched, reflection lists the same eight services, and the
+  on-disk blob format (#31) encodes byte for byte as before, which the golden
+  and cross-engine parity tests pin. The lock no longer carries `tower` 0.4
+  next to 0.5, and `scripts/ci.sh` now fails if any crate of the gRPC/HTTP
+  stack (tonic, prost, http, hyper, h2, tower) resolves to two versions.
+
 - **whatsapp-rust moves to git main `23846f7e`** (issue #56), same nightly.
   Brings the three newsletter fixes the core had been waiting on, all filed
   from here: #1557 (channel state and verification read in the server's

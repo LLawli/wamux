@@ -3,7 +3,7 @@
 ## Layout
 ```
 proto/                 # gRPC contracts (package wamux.v1); source of truth
-build.rs               # tonic-build + vendored protoc; emits FILE_DESCRIPTOR_SET
+build.rs               # tonic-prost-build + vendored protoc; emits FILE_DESCRIPTOR_SET
 migrations/            # sqlx migrations (0001_initial.sql)
 docs/crate-notes/      # verbatim whatsapp-rust/wacore API extraction (reference)
 src/
@@ -108,8 +108,9 @@ src/
   them.
 
 ## Notable constraints / gotchas
-- waproto uses **prost 0.14**; tonic codegen uses **prost 0.13**. We depend on both
-  (`prost` 0.13 for generated code, `prost014` alias for `wa::Message::encode_to_vec`).
+- One prost only: tonic codegen uses **prost 0.14** through `tonic-prost-build` (#61).
+  waproto dropped prost for `buffa` in whatsapp-rust 0.7, so a `wa::Message` encodes
+  through `whatsapp_rust::buffa::Message`, not a second prost.
 - `Client::contacts().is_on_whatsapp` / `get_user_info` return **non-Send** futures
   (HRTB); they're driven on a dedicated current-thread runtime via `spawn_blocking`
   (`domain::contacts::run_isolated`) so they don't poison the `#[async_trait]` future.
