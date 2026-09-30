@@ -133,7 +133,7 @@ Ten more minutes of grep would have caught each one.
   framing over the socket.
 - `prost` for protobuf messages (generated). `prost-types` only if you actually need
   well-known types like `Timestamp`.
-- `tonic-build` runs in `build.rs` and regenerates Rust from `proto/` on every build.
+- `tonic-prost-build` runs in `build.rs` and regenerates Rust from `proto/` on every build.
   The `.proto` files are the source of truth; never edit generated code.
 - `tokio` (multi-thread runtime) for async.
 - `tokio-stream` for `UnixListenerStream`, which feeds accepted connections into
@@ -246,7 +246,7 @@ Ten more minutes of grep would have caught each one.
 ## Directory structure
 ```
 proto/               # .proto contracts (the source of truth)
-build.rs             # tonic-build: regenerates Rust from proto/
+build.rs             # tonic-prost-build: regenerates Rust from proto/
 src/
   main.rs            # load config, bind socket, run server, handle signals
   server.rs          # assemble Server: register services + tower layers
