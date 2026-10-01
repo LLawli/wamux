@@ -152,6 +152,25 @@ has to follow them.
 
 ### Fixed
 
+- **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
+  (issue #83). The file in the image and the tarball still listed the
+  whatsapp-rust family at 0.6.0, and since the workspace split (#62) its
+  generator wrote a file with 0 crates and exited 0, because it read a graph
+  root a virtual manifest does not have. Now:
+  - The notices come from the shipped daemon's graph (`wamux`): the crates
+    only the tools use (`qrcode`, `image`, `ureq` 2) and the workspace's own
+    crates are no longer listed. 341 crates.
+  - The whatsapp-rust family, built from git, carries its MIT text. The
+    license lives at the root of the upstream repository rather than in each
+    crate's directory, so nine of those crates used to be listed without one.
+  - `scripts/check-third-party.sh`, run by `scripts/ci.sh` in both modes,
+    regenerates the file and fails on any difference, naming the command
+    that fixes it (`python3 scripts/gen-third-party.py`). It also demands an
+    absolute floor of crates and the whatsapp-rust version in `Cargo.lock`,
+    so an empty graph cannot pass. The output does not depend on the
+    machine: generated from a freshly downloaded `CARGO_HOME`, it is
+    identical byte for byte.
+
 - **`GetNewsletterMetadata` answers `NotFound` for a channel that does not
   exist** (issue #56). The server answers such a JID with a node whose `id`
   is null (`"state": {"type": "NON_EXISTING"}`), not with `null`, so the

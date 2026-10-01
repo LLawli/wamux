@@ -6,3 +6,5 @@
 /.claude/
 /run
 /dist
+# Bytecode from scripts/tests importing scripts/gen-third-party.py (#83).
+__pycache__/
