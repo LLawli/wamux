@@ -87,6 +87,20 @@ scripts/check-dup-deps.sh
 stage "crate boundaries (daemon and wamux-proto)"
 scripts/check-crate-deps.sh
 
+# THIRD-PARTY-LICENSES.md ships in the image and the tarball, and the MIT and
+# Apache-2.0 terms of the crates it lists require their notices to travel with
+# the binary (#83). It went stale for every whatsapp-rust bump until this
+# stage: regenerate from the shipped daemon's graph and fail on any drift.
+# Needs no database, so both modes run it.
+stage "third-party licenses"
+out=$(python3 -m unittest discover -s scripts/tests -v 2>&1) || { printf '%s\n' "$out"; exit 1; }
+printf '%s\n' "$out"
+if ! grep -qE '^Ran [1-9][0-9]* tests? in ' <<<"$out"; then
+  echo "ERROR: scripts/tests ran no tests" >&2
+  exit 1
+fi
+scripts/check-third-party.sh
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
