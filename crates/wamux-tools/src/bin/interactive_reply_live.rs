@@ -1,6 +1,6 @@
 //! Live validation for issue #28: answering a button, a list or a template.
 //!
-//! The reply path cannot be proved between two accounts paired on one daemon —
+//! The reply path cannot be proved between two accounts paired on one daemon --
 //! neither can offer the other a button. The first real proof is a tap in a
 //! conversation with a real business, so this bin is built to make that one
 //! command instead of a session of hand-rolled gRPC.
@@ -11,34 +11,39 @@
 //!
 //! SAFETY: a reply LEAVES THE MACHINE and reaches a real merchant's bot. So the
 //! send half is off unless `WAMUX_REPLY` names a choice, and the destination
-//! must match `WAMUX_LIVE_DEST` — the same guard `stress_live`, `poll_live` and
+//! must match `WAMUX_LIVE_DEST` -- the same guard `stress_live`, `poll_live` and
 //! `read_receipt_live` use. Without `WAMUX_REPLY` this bin only ever reads.
 //!
-//! Usage: interactive_reply_live [socket_path] [seconds]
-//!   defaults: /tmp/wamux.sock 600
-//! Env: WAMUX_REF        account external_ref (default "pair-socket")
-//!      WAMUX_LIVE_DEST  the conversation to answer in; required to send
+//! Usage: interactive_reply_live [seconds]   (default 600)
+//! Env: WAMUX_REF        account external_ref (required)
+//!      WAMUX_LIVE_DEST  the conversation to answer in; required only when
+//!                       WAMUX_REPLY is set
 //!      WAMUX_REPLY      the choice to pick, as printed (e.g. "2"). Read-only
 //!                       when unset.
+//!      WAMUX_DELIVERY_SECS  how long a reply waits for its `delivered` receipt
 //!
 //! What to look for: the merchant's bot moves on. A `SendResult` means the
-//! library accepted the message and an ack means the server did — neither means
+//! library accepted the message and an ack means the server did -- neither means
 //! the bot understood the id. The proof is the next message in the chat.
 
+use std::process::ExitCode;
 use std::time::Duration;
 
-use hyper_util::rt::TokioIo;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
+use tonic::transport::Channel;
 
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
+use wamux_tools::delivery::{EventTap, send_reached_phone};
+use wamux_tools::live_env::{
+    account_ref_from, delivery_window_from, live_dest_from, process_env, refuse_own_number,
+    same_user, socket_path_from,
+};
+use wamux_tools::report::Report;
+use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
-
-const DEFAULT_REF: &str = "pair-socket";
 
 /// One answerable choice out of an offer, already in the shape the RPC wants.
 struct Choice {
@@ -46,28 +51,36 @@ struct Choice {
     reply: pb::send_interactive_reply_request::Reply,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket = arg(1, "/tmp/wamux.sock");
-    let secs: u64 = arg(2, "600").parse().unwrap_or(600);
-    let pick = std::env::var("WAMUX_REPLY").ok();
-    let dest = std::env::var("WAMUX_LIVE_DEST").ok();
-    if pick.is_some() && dest.is_none() {
-        anyhow::bail!("WAMUX_REPLY needs WAMUX_LIVE_DEST: a reply reaches a real bot");
-    }
+/// How the watch loop re-reads the tap for new events.
+const TAP_POLL: Duration = Duration::from_millis(500);
 
-    let channel = connect_uds(socket).await?;
+#[tokio::main]
+async fn main() -> anyhow::Result<ExitCode> {
+    let external_ref: String = account_ref_from(&process_env)?;
+    let socket: String = socket_path_from(&process_env)?;
+    let window: Duration = delivery_window_from(&process_env)?;
+    let secs: u64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(600);
+    let pick: Option<String> = process_env("WAMUX_REPLY");
+    // A reply reaches a real bot, so the destination is required exactly then.
+    let dest: Option<String> = match pick {
+        Some(_) => Some(live_dest_from(&process_env)?),
+        None => None,
+    };
+
+    let channel = connect_uds(&socket).await?;
     let mut account = AccountServiceClient::new(channel.clone());
     let mut messaging = MessagingServiceClient::new(channel.clone());
     let mut events = EventServiceClient::new(channel);
-    let acct = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(
-            std::env::var("WAMUX_REF").unwrap_or_else(|_| DEFAULT_REF.to_string()),
-        )),
-    };
+    let acct = account_ref(&external_ref);
 
-    let own = wait_connected(&mut account, &acct).await?;
+    let own = wait_connected(&mut account, &acct, Duration::from_secs(30)).await?;
     println!("connected as {own}");
+    if let Some(to) = &dest {
+        refuse_own_number(&own, to)?;
+    }
     match (&pick, &dest) {
         (Some(choice), Some(to)) => {
             println!("will answer the first offer from {to} with #{choice}")
@@ -75,38 +88,94 @@ async fn main() -> anyhow::Result<()> {
         _ => println!("read-only: set WAMUX_REPLY + WAMUX_LIVE_DEST to actually answer"),
     }
 
-    let mut stream = events
+    let stream = events
         .subscribe_events(pb::SubscribeRequest {
             selector: Some(pb::subscribe_request::Selector::Account(acct.clone())),
             replay_from_ring: 0,
         })
         .await?
         .into_inner();
+    let tap = EventTap::spawn(stream);
+    let mut report = Report::new();
+    let reply = pick.as_deref().zip(dest.as_deref());
+    let found = watch_offers(&tap, &mut report, secs, reply).await;
+    let Some((inbound, choices, (pick, to))) = found else {
+        return Ok(finish_without_reply(report, pick.is_some(), secs));
+    };
+    let ctx = Answer {
+        acct: &acct,
+        tap: &tap,
+        window,
+        to,
+    };
+    answer(&mut messaging, &mut report, &ctx, &inbound, &choices, pick).await;
+    Ok(report.finish())
+}
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
-    while tokio::time::Instant::now() < deadline {
-        let Ok(Ok(Some(envelope))) =
-            tokio::time::timeout(Duration::from_secs(5), stream.message()).await
-        else {
-            continue;
-        };
-        let Some(pb::event_envelope::Event::Message(inbound)) = envelope.event else {
-            continue;
-        };
-        let choices = offer_choices(&inbound);
-        if choices.is_empty() {
-            continue;
-        }
-        report_offer(&inbound, &choices);
-        if let (Some(choice), Some(to)) = (&pick, &dest)
-            && same_user(&inbound.chat, to)
-        {
-            answer(&mut messaging, &acct, &inbound, &choices, choice, to).await;
-            return Ok(());
-        }
+/// What a reply needs besides the offer: who answers, where, and how long to
+/// wait for delivery.
+struct Answer<'a> {
+    acct: &'a pb::AccountRef,
+    tap: &'a EventTap,
+    window: Duration,
+    to: &'a str,
+}
+
+/// Read-only runs prove only that an offer was decoded; a run that waited in
+/// vain, or never reached the answer, is a failure.
+fn finish_without_reply(mut report: Report, replying: bool, secs: u64) -> ExitCode {
+    if report.checks().is_empty() {
+        report.fail(
+            "Event.InboundMessage offer",
+            format!("no offer arrived in {secs}s"),
+        );
+    } else if replying {
+        report.fail(
+            "Messaging.SendInteractiveReply",
+            format!("no offer from WAMUX_LIVE_DEST arrived in {secs}s"),
+        );
     }
-    println!("\u{23F0} no offer arrived in {secs}s");
-    Ok(())
+    report.finish()
+}
+
+type Found<'a> = (pb::InboundMessage, Vec<Choice>, (&'a str, &'a str));
+
+/// Print every offer that arrives. Returns the first one from the destination
+/// when a reply was asked for; otherwise it watches until the window closes
+/// and returns `None`.
+async fn watch_offers<'a>(
+    tap: &EventTap,
+    report: &mut Report,
+    secs: u64,
+    reply: Option<(&'a str, &'a str)>,
+) -> Option<Found<'a>> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let mut next = 0usize;
+    while tokio::time::Instant::now() < deadline {
+        let seen = tap.seen();
+        for envelope in &seen[next..] {
+            let Some(pb::event_envelope::Event::Message(inbound)) = &envelope.event else {
+                continue;
+            };
+            let choices = offer_choices(inbound);
+            if choices.is_empty() {
+                continue;
+            }
+            report_offer(inbound, &choices);
+            report.pass(
+                "Event.InboundMessage offer",
+                format!("{} choices in {}", choices.len(), inbound.chat),
+            );
+            if let Some(chosen) = reply
+                && same_user(&inbound.chat, chosen.1)
+            {
+                return Some((inbound.clone(), choices, chosen));
+            }
+        }
+        next = seen.len();
+        tokio::time::sleep(TAP_POLL).await;
+    }
+    None
 }
 
 /// Every answerable choice in this message, or nothing if it is not an offer.
@@ -175,7 +244,7 @@ fn list_choices(offer: &wa::message::ListMessage) -> Vec<Choice> {
 /// message, so offering it here would invite a reply nobody expects. Measured
 /// over 143 live template offers: 96 carry a quick reply, 40 carry only a URL.
 ///
-/// The hydrated template rides in EITHER slot and usually both — `hydrated_
+/// The hydrated template rides in EITHER slot and usually both -- `hydrated_
 /// template` (field 4) in 56 of those 143, the `hydratedFourRowTemplate` arm of
 /// the `format` oneof (field 2) in 105. Reading one slot would have silently
 /// skipped a third of the offers.
@@ -227,34 +296,32 @@ fn report_offer(inbound: &pb::InboundMessage, choices: &[Choice]) {
     }
 }
 
-/// Send the chosen reply, quoting the offer and carrying its payload.
+/// Send the chosen reply, quoting the offer and carrying its payload. The
+/// reply passes only when it reached the bot's phone and a `delivered`
+/// receipt came back; the bot's NEXT message remains the human proof.
 async fn answer(
     messaging: &mut MessagingServiceClient<Channel>,
-    acct: &pb::AccountRef,
+    report: &mut Report,
+    ctx: &Answer<'_>,
     inbound: &pb::InboundMessage,
     choices: &[Choice],
     pick: &str,
-    to: &str,
 ) {
+    const NAME: &str = "Messaging.SendInteractiveReply";
     let Ok(index) = pick.parse::<usize>() else {
-        println!("\u{274C} WAMUX_REPLY={pick:?} is not a number");
-        return;
+        return report.fail(NAME, format!("WAMUX_REPLY={pick:?} is not a number"));
     };
     let Some(choice) = choices.get(index) else {
-        println!(
-            "\u{274C} #{index} is out of range ({} choices)",
-            choices.len()
-        );
-        return;
+        let why = format!("#{index} is out of range ({} choices)", choices.len());
+        return report.fail(NAME, why);
     };
     let Some(key) = inbound.key.clone() else {
-        println!("\u{274C} the offer carries no key to quote");
-        return;
+        return report.fail(NAME, "the offer carries no key to quote");
     };
     let request = pb::SendInteractiveReplyRequest {
-        account: Some(acct.clone()),
+        account: Some(ctx.acct.clone()),
         to: Some(pb::Jid {
-            value: to.to_string(),
+            value: ctx.to.to_string(),
         }),
         quote: Some(pb::QuoteContext {
             quoted: Some(key),
@@ -266,68 +333,23 @@ async fn answer(
         quoted_message: inbound.raw_message.clone(),
         reply: Some(choice.reply.clone()),
     };
-    match messaging.send_interactive_reply(request).await {
-        Ok(response) => {
-            let sent = response.into_inner();
-            let id = sent.key.map(|key| key.id).unwrap_or_default();
-            println!("\u{2705} answered #{index} ({}) as {id}", choice.label);
-            println!("   the proof is the bot's NEXT message, not this id.");
+    let sent = match messaging.send_interactive_reply(request).await {
+        Ok(response) => response.into_inner(),
+        Err(status) => {
+            return report.fail(NAME, format!("{}: {}", status.code(), status.message()));
         }
-        Err(status) => println!("\u{274C} {}: {}", status.code(), status.message()),
-    }
-}
-
-fn arg(index: usize, fallback: &str) -> String {
-    std::env::args()
-        .nth(index)
-        .unwrap_or_else(|| fallback.to_string())
-}
-
-/// The user part of a jid, without the server or any device suffix: the chat
-/// may arrive `@lid` while the guard names a phone jid.
-fn user_of(jid: &str) -> String {
-    jid.split('@')
-        .next()
-        .unwrap_or_default()
-        .split(':')
-        .next()
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn same_user(one: &str, other: &str) -> bool {
-    user_of(one) == user_of(other)
-}
-
-async fn wait_connected(
-    account: &mut AccountServiceClient<Channel>,
-    acct: &pb::AccountRef,
-) -> anyhow::Result<String> {
-    account
-        .connect_account(pb::ConnectAccountRequest {
-            account: Some(acct.clone()),
-            backfill_history: false,
-        })
-        .await?;
-    for _ in 0..100 {
-        let status = account.get_account_status(acct.clone()).await?.into_inner();
-        if status.state == pb::ConnectionState::Connected as i32
-            && let Some(jid) = status.jid
-        {
-            return Ok(jid.value);
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-    anyhow::bail!("account did not reach Connected with a jid")
-}
-
-async fn connect_uds(path: String) -> anyhow::Result<Channel> {
-    Ok(Endpoint::try_from("http://[::1]:50051")?
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let path = path.clone();
-            async move {
-                Ok::<_, std::io::Error>(TokioIo::new(tokio::net::UnixStream::connect(path).await?))
-            }
-        }))
-        .await?)
+    };
+    let id = match send_reached_phone(&sent) {
+        Ok(id) => id,
+        Err(why) => return report.fail(NAME, why),
+    };
+    let delivered = ctx.tap.delivered(&id, ctx.window).await;
+    report.verify(
+        NAME,
+        delivered,
+        format!(
+            "answered #{index} ({}) as {id}; delivered={delivered}",
+            choice.label
+        ),
+    );
 }

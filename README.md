@@ -162,7 +162,9 @@ crates/wamux/           # the daemon
 ```
 
 The binaries under `crates/wamux-tools/src/bin/` (pairing, e2e, validation, live probes) are
-development/diagnostic tools, not part of the daemon.
+development/diagnostic tools, not part of the daemon. Each one's purpose, environment, what a
+green run proves and what it writes to WhatsApp is in
+[`crates/wamux-tools/README.md`](crates/wamux-tools/README.md).
 
 ## Documentation
 

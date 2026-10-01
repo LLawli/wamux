@@ -5,80 +5,89 @@
 //! with the N fakes connected, so you can read the latency cost of the load.
 //!
 //! SAFETY: the destination is taken from `WAMUX_LIVE_DEST` (one JID, e.g.
-//! `5511999999999@c.us`); the bin only ever sends there and refuses to run if
-//! it is unset, so it can never fan out to arbitrary numbers.
+//! `<digits>@s.whatsapp.net`); the bin only ever sends there, refuses to run if
+//! it is unset, and refuses the connected account's own number, so it can
+//! never fan out to arbitrary numbers. The legacy server spelling is refused
+//! when the env is read (issue #4).
 //!
 //! Registry-direct, two registries on one shared Postgres pool: `real_registry`
 //! talks to the real endpoint (no `ws_url_override`); `mock_registry` points the
 //! N fakes at the in-process mock. Needs the `stress` feature for the mock.
 //!
-//! Usage: stress_live [external_ref] [n_fakes] [probes_per_phase]
-//!   defaults: pair-socket  199  5
-//! Env: DATABASE_URL (default local docker pg).
+//! Usage: stress_live [n_fakes] [probes_per_phase]   (defaults: 199 5)
+//! Env: WAMUX_REF (required, the real account), WAMUX_LIVE_DEST (required),
+//!      DATABASE_URL (default local docker pg).
 //!
-//! Run: `cargo run --features stress --bin stress_live -- pair-socket 199 5`
+//! Run: `WAMUX_REF=<ref> WAMUX_LIVE_DEST=<jid> cargo run --features stress --bin stress_live -- 199 5`
+//!
+//! A probe that gets no delivery receipt in 30s is a failed check, and the
+//! process exits non-zero.
 
 use std::collections::HashMap;
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
-use tracing_subscriber::EnvFilter;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::{Client, Jid};
 
 use wacore::store::Device;
 use wacore::store::traits::DeviceStore;
 use wamux::proto::v1 as pb;
-use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage;
+use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
 use wamux::storage::postgres::PgBackend;
 use wamux::stress::MockWaServer;
+use wamux_tools::delivery::is_delivery_receipt;
+use wamux_tools::inproc::{
+    database_url_from, init_tracing, load_registry, open_engine, resolve_or_create,
+};
+use wamux_tools::live_env::{account_ref_from, live_dest_from, process_env, refuse_own_number};
+use wamux_tools::qr::{ascii_qr, open_in_viewer, write_qr_png};
+use wamux_tools::report::Report;
 
 const QR_PNG: &str = "/tmp/wamux-qr.png";
+/// How long a probe waits for its delivery receipt.
+const PROBE_WINDOW: Duration = Duration::from_secs(30);
+
+type ReceiptMap = Arc<Mutex<HashMap<String, Instant>>>;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,wamux=info")),
-        )
-        .init();
-
-    let external_ref = arg(1).unwrap_or_else(|| "pair-socket".to_string());
-    let n_fakes: usize = arg(2).and_then(|s| s.parse().ok()).unwrap_or(199);
-    let probes: usize = arg(3).and_then(|s| s.parse().ok()).unwrap_or(5);
-
-    // Safety guard in code, not just convention: the one permitted destination
-    // is supplied by the operator at runtime (no hardcoded number); refuse to
-    // run without it, and send nowhere else.
-    let allowed_dest = std::env::var("WAMUX_LIVE_DEST").map_err(|_| {
-        anyhow::anyhow!("set WAMUX_LIVE_DEST to the destination JID (e.g. 5511999999999@c.us)")
-    })?;
+async fn main() -> anyhow::Result<ExitCode> {
+    // The whole config first: nothing is opened until every variable is valid.
+    let external_ref: String = account_ref_from(&process_env)?;
+    let allowed_dest: String = live_dest_from(&process_env)?;
+    let database_url: String = database_url_from(&process_env);
+    let n_fakes: usize = arg(1).and_then(|s| s.parse().ok()).unwrap_or(199);
+    let probes: usize = arg(2).and_then(|s| s.parse().ok()).unwrap_or(5);
     let dest: Jid = allowed_dest
         .parse()
         .map_err(|_| anyhow::anyhow!("WAMUX_LIVE_DEST is not a valid JID: {allowed_dest}"))?;
+    init_tracing("warn,wamux=info");
     println!(
         "stress_live: real account '{external_ref}', {n_fakes} fakes, {probes} probes/phase, dest {allowed_dest}"
     );
 
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".to_string());
-    let pool = storage::postgres::connect(&database_url, 16).await?;
-    storage::postgres::run_migrations(&pool).await?;
     // One engine over the shared pool; both registries mint backends from it.
-    let engine = Arc::new(storage::postgres::PgStorage::from_pool(pool.clone()));
+    let engine = open_engine(&database_url).await?;
+    let pool = engine.pool().clone();
 
     // --- real account (real WhatsApp endpoint: no ws_url_override) ---
-    let real_registry = Arc::new(AccountRegistry::new(
-        engine.clone(),
-        RegistryTuning::with_ring(512),
-    ));
-    real_registry.load_existing().await?;
-    let real = resolve_or_create(&real_registry, &external_ref).await?;
+    let real_registry = load_registry(engine.clone(), RegistryTuning::with_ring(512)).await?;
+    let (real, created) = resolve_or_create(&real_registry, &external_ref).await?;
+    println!(
+        "{} account {} (device_id={})",
+        if created {
+            "created (QR pairing required)"
+        } else {
+            "reusing"
+        },
+        real.uuid,
+        real.device_id
+    );
 
     // Drain the real account's events into a receipt-arrival map (id -> Instant).
-    let receipts: Arc<Mutex<HashMap<String, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
+    let receipts: ReceiptMap = Arc::new(Mutex::new(HashMap::new()));
     spawn_receipt_collector(real.subscribe(), receipts.clone());
 
     connect_real(&real_registry, &real).await?;
@@ -86,10 +95,18 @@ async fn main() -> anyhow::Result<()> {
         .client()
         .await
         .ok_or_else(|| anyhow::anyhow!("real account has no live client after connect"))?;
+    // No pn means refuse_own_number would compare against "" and pass silently.
+    let own: String = client
+        .pn()
+        .map(|jid| jid.to_string())
+        .ok_or_else(|| anyhow::anyhow!("the logged-in client has no phone jid (pn); refusing to probe without the own-number guard"))?;
+    refuse_own_number(&own, &allowed_dest)?;
 
+    let mut report = Report::new();
     // --- baseline: probe with NO load ---
     println!("\n=== baseline (no load) ===");
     let baseline = run_probes(&client, &dest, probes, &receipts, "baseline").await;
+    record_probes(&mut report, "baseline", &baseline);
 
     // --- bring up the mock + N fakes ---
     println!("\n=== bringing up {n_fakes} fake connections ===");
@@ -104,18 +121,23 @@ async fn main() -> anyhow::Result<()> {
     ));
     let fakes = provision_and_connect_fakes(&mock_registry, &pool, n_fakes).await?;
     wait_for_handshakes(&mock, n_fakes).await;
-    println!(
-        "{} fakes connected (mock handshakes={})",
-        mock_registry.connected_count(),
-        mock.handshakes_completed()
+    report.verify(
+        "mock handshakes",
+        mock.handshakes_completed() >= n_fakes,
+        format!(
+            "{} fakes connected (mock handshakes={}, wanted {n_fakes})",
+            mock_registry.connected_count(),
+            mock.handshakes_completed()
+        ),
     );
 
     // --- under load: same probe with N fakes held ---
     println!("\n=== under load ({n_fakes} fakes) ===");
     let under = run_probes(&client, &dest, probes, &receipts, "under-load").await;
+    record_probes(&mut report, "under-load", &under);
 
-    report("baseline", &baseline);
-    report("under-load", &under);
+    summarize("baseline", &baseline);
+    summarize("under-load", &under);
 
     // --- cleanup the fakes; leave the real account paired ---
     println!("\ncleaning up {} fakes ...", fakes.len());
@@ -124,33 +146,23 @@ async fn main() -> anyhow::Result<()> {
     }
     real_registry.disconnect(&real).await;
     println!("done. real account '{external_ref}' left paired.");
-    Ok(())
+    Ok(report.finish())
 }
 
 fn arg(n: usize) -> Option<String> {
     std::env::args().nth(n)
 }
 
-/// Reuse a persisted account by external_ref, or create a fresh one to pair.
-async fn resolve_or_create(
-    registry: &Arc<AccountRegistry>,
-    external_ref: &str,
-) -> anyhow::Result<Arc<wamux::state::AccountHandle>> {
-    let acct_ref = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(external_ref.to_string())),
-    };
-    match registry.resolve(Some(&acct_ref)) {
-        Ok(h) => {
-            println!("reusing account {} (device_id={})", h.uuid, h.device_id);
-            Ok(h)
-        }
-        Err(_) => {
-            let h = registry.create_account(Some(external_ref)).await?;
-            println!(
-                "created account {} (device_id={}); QR pairing required",
-                h.uuid, h.device_id
-            );
-            Ok(h)
+/// One check per probe: a probe that timed out is a failure, never skipped.
+fn record_probes(report: &mut Report, label: &str, samples: &[Option<Duration>]) {
+    for (i, sample) in samples.iter().enumerate() {
+        let name = format!("probe {label} #{i}");
+        match sample {
+            Some(rtt) => report.pass(
+                &name,
+                format!("receipt RTT {:.0} ms", rtt.as_secs_f64() * 1000.0),
+            ),
+            None => report.fail(&name, format!("no delivery receipt in {PROBE_WINDOW:?}")),
         }
     }
 }
@@ -161,7 +173,7 @@ async fn resolve_or_create(
 /// correct: the lib emits `Connected` on socket-up, then QR, then login.
 async fn connect_real(
     registry: &Arc<AccountRegistry>,
-    handle: &Arc<wamux::state::AccountHandle>,
+    handle: &Arc<AccountHandle>,
 ) -> anyhow::Result<()> {
     let mut events = handle.subscribe();
     registry.connect(handle, None, true).await?;
@@ -183,7 +195,7 @@ async fn connect_real(
             anyhow::bail!("real account did not log in within 600s");
         }
         match tokio::time::timeout(remaining.min(Duration::from_secs(2)), events.recv()).await {
-            Ok(Ok(env)) => handle_pairing(env),
+            Ok(Ok(env)) => show_pairing_qr(env),
             Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
             Ok(Err(_)) => anyhow::bail!("event stream closed before login"),
             Err(_) => {} // tick: re-check is_logged_in
@@ -191,12 +203,11 @@ async fn connect_real(
     }
 }
 
-fn handle_pairing(env: pb::EventEnvelope) {
+fn show_pairing_qr(env: pb::EventEnvelope) {
     if let Some(pb::event_envelope::Event::Pairing(u)) = env.event
         && let Some(pb::pairing_update::Event::QrCode(code)) = u.event
     {
         render_qr(&code);
-        open_qr();
     }
 }
 
@@ -207,7 +218,7 @@ async fn provision_and_connect_fakes(
     registry: &Arc<AccountRegistry>,
     pool: &sqlx::PgPool,
     n: usize,
-) -> anyhow::Result<Vec<Arc<wamux::state::AccountHandle>>> {
+) -> anyhow::Result<Vec<Arc<AccountHandle>>> {
     let tag = uuid::Uuid::new_v4();
     let mut fakes = Vec::with_capacity(n);
     for i in 0..n {
@@ -237,23 +248,17 @@ async fn wait_for_handshakes(mock: &MockWaServer, n: usize) {
     }
 }
 
-/// Background task: record the first delivery-receipt arrival time per message id.
+/// Background task: record the first delivery-receipt arrival time per message
+/// id. Only `delivered`/`read`/`played` count; a `sender` or `retry` receipt
+/// is not a delivery (CLAUDE.md).
 fn spawn_receipt_collector(
     mut events: tokio::sync::broadcast::Receiver<pb::EventEnvelope>,
-    receipts: Arc<Mutex<HashMap<String, Instant>>>,
+    receipts: ReceiptMap,
 ) {
     tokio::spawn(async move {
         loop {
             match events.recv().await {
-                Ok(env) => {
-                    if let Some(pb::event_envelope::Event::Receipt(r)) = env.event {
-                        let now = Instant::now();
-                        let mut map = receipts.lock().await;
-                        for id in r.message_ids {
-                            map.entry(id).or_insert(now);
-                        }
-                    }
-                }
+                Ok(env) => record_receipts(&env, &receipts).await,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(_) => break,
             }
@@ -261,12 +266,27 @@ fn spawn_receipt_collector(
     });
 }
 
+async fn record_receipts(env: &pb::EventEnvelope, receipts: &ReceiptMap) {
+    let Some(pb::event_envelope::Event::Receipt(r)) = &env.event else {
+        return;
+    };
+    let now = Instant::now();
+    let mut map = receipts.lock().await;
+    for id in r
+        .message_ids
+        .iter()
+        .filter(|id| is_delivery_receipt(env, id))
+    {
+        map.entry(id.clone()).or_insert(now);
+    }
+}
+
 /// Send `count` probe texts to the primary, timing each until its receipt lands.
 async fn run_probes(
     client: &Client,
     dest: &Jid,
     count: usize,
-    receipts: &Arc<Mutex<HashMap<String, Instant>>>,
+    receipts: &ReceiptMap,
     label: &str,
 ) -> Vec<Option<Duration>> {
     let mut out = Vec::with_capacity(count);
@@ -278,7 +298,7 @@ async fn run_probes(
                 "  {label} #{i}: receipt RTT {:.0} ms",
                 d.as_secs_f64() * 1000.0
             ),
-            None => println!("  {label} #{i}: TIMEOUT (no receipt in 30s — primary offline?)"),
+            None => println!("  {label} #{i}: TIMEOUT (no receipt in 30s, primary offline?)"),
         }
         out.push(rtt);
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -291,7 +311,7 @@ async fn probe_once(
     client: &Client,
     dest: Jid,
     text: &str,
-    receipts: &Arc<Mutex<HashMap<String, Instant>>>,
+    receipts: &ReceiptMap,
 ) -> Option<Duration> {
     let t0 = Instant::now();
     let message = wa::Message {
@@ -300,7 +320,7 @@ async fn probe_once(
     };
     let id = client.send_message(dest, message).await.ok()?.message_id;
 
-    let deadline = t0 + Duration::from_secs(30);
+    let deadline = t0 + PROBE_WINDOW;
     loop {
         if let Some(&t1) = receipts.lock().await.get(&id) {
             return Some(t1.saturating_duration_since(t0));
@@ -313,7 +333,7 @@ async fn probe_once(
 }
 
 /// Print min/median/max over the probes that landed, plus the timeout count.
-fn report(label: &str, samples: &[Option<Duration>]) {
+fn summarize(label: &str, samples: &[Option<Duration>]) {
     let mut ms: Vec<f64> = samples
         .iter()
         .filter_map(|d| d.map(|d| d.as_secs_f64() * 1000.0))
@@ -323,7 +343,7 @@ fn report(label: &str, samples: &[Option<Duration>]) {
         println!("[{label}] no receipts ({timeouts} timeouts)");
         return;
     }
-    ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ms.sort_by(f64::total_cmp);
     let median = ms[ms.len() / 2];
     println!(
         "[{label}] n={} min={:.0} median={:.0} max={:.0} ms  ({timeouts} timeouts)",
@@ -334,48 +354,13 @@ fn report(label: &str, samples: &[Option<Duration>]) {
     );
 }
 
-fn open_qr() {
-    match std::process::Command::new("xdg-open").arg(QR_PNG).spawn() {
-        Ok(_) => println!("[qr] opened {QR_PNG}"),
-        Err(e) => eprintln!("[qr] xdg-open failed ({e}); open {QR_PNG} manually"),
-    }
-}
-
 fn render_qr(code: &str) {
-    if let Err(e) = write_qr_png(code, QR_PNG) {
-        eprintln!("[qr] PNG render failed: {e}");
+    let path = std::path::Path::new(QR_PNG);
+    match write_qr_png(code, path) {
+        Ok(()) => open_in_viewer(path),
+        Err(e) => eprintln!("[qr] PNG render failed: {e}"),
     }
-    if let Ok(qr) = qrcode::QrCode::new(code.as_bytes()) {
-        println!(
-            "{}",
-            qr.render::<qrcode::render::unicode::Dense1x2>()
-                .quiet_zone(true)
-                .build()
-        );
+    if let Ok(text) = ascii_qr(code) {
+        println!("{text}");
     }
-}
-
-fn write_qr_png(data: &str, path: &str) -> anyhow::Result<()> {
-    let code = qrcode::QrCode::new(data.as_bytes())?;
-    let width = code.width();
-    let colors = code.to_colors();
-    let (scale, quiet) = (8usize, 4usize);
-    let dim = ((width + quiet * 2) * scale) as u32;
-    let mut img = image::GrayImage::from_pixel(dim, dim, image::Luma([255u8]));
-    for y in 0..width {
-        for x in 0..width {
-            if colors[y * width + x] != qrcode::Color::Dark {
-                continue;
-            }
-            for dy in 0..scale {
-                for dx in 0..scale {
-                    let px = ((x + quiet) * scale + dx) as u32;
-                    let py = ((y + quiet) * scale + dy) as u32;
-                    img.put_pixel(px, py, image::Luma([0u8]));
-                }
-            }
-        }
-    }
-    img.save(path)?;
-    Ok(())
 }

@@ -12,27 +12,33 @@
 //! It deliberately persists NOTHING (the core is a pure relay, and wacli's
 //! message history is the difference the comparison has to state, not hide).
 //!
-//! Usage: bench_client [socket_path]   (default: ~/.local/state/wamux/wamux.sock)
+//! It is a benchmark, not a check: it runs until Ctrl+C and keeps its own
+//! tally instead of a `Report`. It still exits non-zero when the stream
+//! breaks or the daemon closes it, so a broken run never reads as a result.
+//!
+//! Env: WAMUX_SOCKET_PATH (default: ~/.local/state/wamux/wamux.sock). It
+//! connects every account, so it takes no WAMUX_REF.
 
 use std::collections::BTreeMap;
+use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use hyper_util::rt::TokioIo;
 use prost::Message;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
+use tonic::transport::Channel;
 
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::event_service_client::EventServiceClient;
+use wamux_tools::live_env::{process_env, socket_path_from};
+use wamux_tools::socket_client::connect_uds;
 
 /// How often the running totals are printed.
 const REPORT_EVERY: Duration = Duration::from_secs(60);
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket_path = std::env::args().nth(1).unwrap_or_else(default_socket_path);
-    let channel = connect_uds(socket_path.clone()).await?;
+async fn main() -> anyhow::Result<ExitCode> {
+    let socket_path: String = socket_path_from(&process_env)?;
+    let channel = connect_uds(&socket_path).await?;
     let connected = connect_every_account(&channel).await?;
     println!("[bench] {connected} account(s) connected via {socket_path}");
 
@@ -47,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
 
     let started = Instant::now();
     let mut tally = Tally::default();
+    let mut exit = ExitCode::SUCCESS;
     let mut ticker = tokio::time::interval(REPORT_EVERY);
     ticker.tick().await; // the first tick resolves immediately
 
@@ -57,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(envelope) => tally.record(&envelope),
                 None => {
                     println!("[bench] stream closed by the daemon");
+                    exit = ExitCode::FAILURE;
                     break;
                 }
             },
@@ -68,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     tally.report(started.elapsed());
-    Ok(())
+    Ok(exit)
 }
 
 /// Running totals. Bytes are the encoded envelope size, i.e. what actually
@@ -188,23 +196,4 @@ fn self_pss_kib() -> Option<u64> {
         .lines()
         .find_map(|line| line.strip_prefix("Pss:"))
         .and_then(|value| value.trim().trim_end_matches(" kB").trim().parse().ok())
-}
-
-fn default_socket_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    format!("{home}/.local/state/wamux/wamux.sock")
-}
-
-async fn connect_uds(path: String) -> anyhow::Result<Channel> {
-    // The authority is ignored for UDS; the connector dials the socket.
-    let channel = Endpoint::try_from("http://[::1]:50051")?
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let path = path.clone();
-            async move {
-                let stream = tokio::net::UnixStream::connect(path).await?;
-                Ok::<_, std::io::Error>(TokioIo::new(stream))
-            }
-        }))
-        .await?;
-    Ok(channel)
 }

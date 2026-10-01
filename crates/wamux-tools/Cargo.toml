@@ -28,6 +28,7 @@ tokio-stream.workspace = true
 tower.workspace = true
 hyper-util.workspace = true
 anyhow.workspace = true
+thiserror = "2"
 tracing-subscriber.workspace = true
 uuid.workspace = true
 sqlx.workspace = true
@@ -39,3 +40,7 @@ ureq = "2"
 # QR rendering for the pairing validator (pair_cli): matrix -> PNG/ASCII
 qrcode = { version = "0.14", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"

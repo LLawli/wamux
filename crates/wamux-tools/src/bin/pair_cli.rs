@@ -6,64 +6,48 @@
 //!   pair_cli <intl_digits>      -> PAIR CODE: requests the 8-digit code ONCE
 //!                                  (rate-limited; never retried).
 //!
-//! Once paired, sends a self-message to validate the send path too.
-//! Env: DATABASE_URL (defaults to the local docker postgres).
+//! Once paired, sends a self-message to validate the send path too, then exits.
+//! Env: WAMUX_REF (required, the account to pair or reuse), DATABASE_URL
+//! (defaults to the local docker postgres). Runs the account in-process, so it
+//! needs no daemon.
 
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing_subscriber::EnvFilter;
+use tokio::sync::broadcast::{Receiver, error::RecvError};
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use wamux::domain::{jid_parse, messaging};
 use wamux::proto::v1 as pb;
-use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
-use wamux::storage;
+use wamux::state::AccountHandle;
+use wamux_tools::inproc::{database_url_from, init_tracing, open_registry, resolve_or_create};
+use wamux_tools::live_env::{account_ref_from, process_env};
+use wamux_tools::qr::{ascii_qr, open_in_viewer, write_qr_png};
+use wamux_tools::report::Report;
 
-const EXTERNAL_REF: &str = "pair-cli";
 const QR_PNG: &str = "/tmp/wamux-qr.png";
+/// How long a pairing may take before the run gives up and fails.
+const PAIRING_DEADLINE: Duration = Duration::from_secs(600);
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("warn,wamux=info,whatsapp_rust=info")),
-        )
-        .init();
-
+async fn main() -> anyhow::Result<ExitCode> {
+    let external_ref: String = account_ref_from(&process_env)?;
+    let database_url: String = database_url_from(&process_env);
     let arg = std::env::args().nth(1).unwrap_or_default();
     let qr_mode = arg.is_empty() || arg.eq_ignore_ascii_case("qr");
     let phone = if qr_mode { String::new() } else { arg };
+    init_tracing("warn,wamux=info,whatsapp_rust=info");
 
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".to_string());
-    let engine = Arc::new(storage::postgres::PgStorage::open(&database_url, 8).await?);
-    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(256)));
-    registry.load_existing().await?;
-
-    let external_ref = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(EXTERNAL_REF.to_string())),
-    };
-    let handle = match registry.resolve(Some(&external_ref)) {
-        Ok(handle) => {
-            println!(
-                "Reusing account {} (device_id={})",
-                handle.uuid, handle.device_id
-            );
-            handle
-        }
-        Err(_) => {
-            let handle = registry.create_account(Some(EXTERNAL_REF)).await?;
-            println!(
-                "Created account {} (device_id={})",
-                handle.uuid, handle.device_id
-            );
-            handle
-        }
-    };
-
-    let mut events = handle.subscribe();
+    let registry = open_registry(&database_url).await?;
+    let (handle, created) = resolve_or_create(&registry, &external_ref).await?;
+    println!(
+        "{} account {} (device_id={})",
+        if created { "Created" } else { "Reusing" },
+        handle.uuid,
+        handle.device_id
+    );
+    let events = handle.subscribe();
     println!(
         "Mode: {} | connecting ...",
         if qr_mode { "QR" } else { "PAIR CODE" }
@@ -72,103 +56,95 @@ async fn main() -> anyhow::Result<()> {
     if !qr_mode {
         spawn_pair_request(handle.clone(), phone.clone());
     }
+    let mut report = Report::new();
+    let paired =
+        tokio::time::timeout(PAIRING_DEADLINE, watch_events(events, qr_mode, &mut report)).await;
+    match paired {
+        Ok(Some(jid)) => send_self_message(&handle, &phone, jid, &mut report).await,
+        Ok(None) => {}
+        Err(_) => report.fail("Pairing", format!("not paired within {PAIRING_DEADLINE:?}")),
+    }
+    Ok(report.finish())
+}
 
+/// Print events until the phone pairs (returns its jid) or pairing fails.
+async fn watch_events(
+    mut events: Receiver<pb::EventEnvelope>,
+    qr_mode: bool,
+    report: &mut Report,
+) -> Option<String> {
     loop {
         let envelope = match events.recv().await {
             Ok(env) => env,
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+            Err(RecvError::Lagged(n)) => {
                 eprintln!("(lagged {n} events)");
                 continue;
             }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            Err(RecvError::Closed) => {
+                report.fail("Pairing", "event stream closed before pairing");
+                return None;
+            }
         };
-        let Some(event) = envelope.event else {
-            continue;
-        };
-        match event {
-            pb::event_envelope::Event::Pairing(update) => match update.event {
-                Some(pb::pairing_update::Event::QrCode(code)) if qr_mode => {
-                    on_qr(&code);
+        match envelope.event {
+            Some(pb::event_envelope::Event::Pairing(update)) => {
+                if let Some(outcome) = show_pairing(update, qr_mode, report) {
+                    return outcome;
                 }
-                Some(pb::pairing_update::Event::QrCode(_)) => {}
-                Some(pb::pairing_update::Event::PairCode(code)) => {
-                    println!("\n================= PAIR CODE =================");
-                    println!("                {code}");
-                    println!("============================================\n");
-                }
-                Some(pb::pairing_update::Event::Paired(info)) => {
-                    let jid = info.jid.map(|j| j.value).unwrap_or_default();
-                    println!(
-                        "\n✅ PAIRED as {jid} (business_name={})",
-                        info.business_name
-                    );
-                    let target = if phone.is_empty() {
-                        jid
-                    } else {
-                        format!("{phone}@s.whatsapp.net")
-                    };
-                    spawn_self_message(handle.clone(), target);
-                }
-                Some(pb::pairing_update::Event::Error(err)) => {
-                    println!("\n❌ PAIR ERROR: {}", err.message);
-                }
-                None => {}
-            },
-            pb::event_envelope::Event::Connection(state) => {
+            }
+            Some(pb::event_envelope::Event::Connection(state)) => {
                 let name = pb::ConnectionState::try_from(state.state)
                     .map(|s| format!("{s:?}"))
                     .unwrap_or_else(|_| state.state.to_string());
                 println!("[conn] {name} {}", state.detail);
             }
-            pb::event_envelope::Event::Message(message) => {
+            Some(pb::event_envelope::Event::Message(message)) => {
                 println!("[msg] from {}: {}", message.sender, message.text);
             }
             _ => {}
         }
     }
-    Ok(())
+}
+
+/// `Some(outcome)` ends the watch: the paired jid, or `None` after a recorded error.
+fn show_pairing(
+    update: pb::PairingUpdate,
+    qr_mode: bool,
+    report: &mut Report,
+) -> Option<Option<String>> {
+    match update.event {
+        Some(pb::pairing_update::Event::QrCode(code)) if qr_mode => on_qr(&code),
+        Some(pb::pairing_update::Event::PairCode(code)) => {
+            println!("\n================= PAIR CODE =================");
+            println!("                {code}");
+            println!("============================================\n");
+        }
+        Some(pb::pairing_update::Event::Paired(info)) => {
+            let jid: String = info.jid.map(|j| j.value).unwrap_or_default();
+            println!("\nPAIRED as {jid} (business_name={})", info.business_name);
+            report.verify("Pairing", !jid.is_empty(), format!("paired as {jid}"));
+            return Some(Some(jid).filter(|jid| !jid.is_empty()));
+        }
+        Some(pb::pairing_update::Event::Error(err)) => {
+            report.fail("Pairing", err.message);
+            return Some(None);
+        }
+        _ => {}
+    }
+    None
 }
 
 fn on_qr(code: &str) {
-    match write_qr_png(code, QR_PNG) {
-        Ok(()) => println!("[qr] new QR written to {QR_PNG} (scan with the phone)"),
+    let path = std::path::Path::new(QR_PNG);
+    match write_qr_png(code, path) {
+        Ok(()) => {
+            println!("[qr] new QR written to {QR_PNG} (scan with the phone)");
+            open_in_viewer(path);
+        }
         Err(e) => eprintln!("[qr] failed to render PNG: {e}"),
     }
-    println!("{}", ascii_qr(code));
-}
-
-fn write_qr_png(data: &str, path: &str) -> anyhow::Result<()> {
-    let code = qrcode::QrCode::new(data.as_bytes())?;
-    let width = code.width();
-    let colors = code.to_colors();
-    let scale = 8usize;
-    let quiet = 4usize;
-    let dim = ((width + quiet * 2) * scale) as u32;
-    let mut img = image::GrayImage::from_pixel(dim, dim, image::Luma([255u8]));
-    for y in 0..width {
-        for x in 0..width {
-            if colors[y * width + x] == qrcode::Color::Dark {
-                for dy in 0..scale {
-                    for dx in 0..scale {
-                        let px = ((x + quiet) * scale + dx) as u32;
-                        let py = ((y + quiet) * scale + dy) as u32;
-                        img.put_pixel(px, py, image::Luma([0u8]));
-                    }
-                }
-            }
-        }
-    }
-    img.save(path)?;
-    Ok(())
-}
-
-fn ascii_qr(data: &str) -> String {
-    match qrcode::QrCode::new(data.as_bytes()) {
-        Ok(code) => code
-            .render::<qrcode::render::unicode::Dense1x2>()
-            .quiet_zone(true)
-            .build(),
-        Err(_) => String::new(),
+    match ascii_qr(code) {
+        Ok(text) => println!("{text}"),
+        Err(e) => eprintln!("[qr] {e}"),
     }
 }
 
@@ -210,31 +186,36 @@ fn make_options(phone: &str) -> PairCodeOptions {
     }
 }
 
-/// After pairing, wait for the link to settle then send a self-message.
-fn spawn_self_message(handle: Arc<AccountHandle>, target: String) {
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(6)).await;
-        let Some(client) = handle.client().await else {
-            println!("[send] no client available for self-message");
-            return;
-        };
-        match jid_parse::parse_jid(&target) {
-            Ok(jid) => match messaging::send_text(
-                &client,
-                jid,
-                &pb::SendTextRequest {
-                    text: "wamux: pareamento + envio OK ✅".to_string(),
-                    ..Default::default()
-                },
-            )
-            .await
-            {
-                Ok(result) => {
-                    println!("[send] self-message sent, id={}", result.message_id)
-                }
-                Err(e) => println!("[send] self-message failed: {e}"),
-            },
-            Err(e) => println!("[send] bad self jid: {e}"),
-        }
-    });
+/// After pairing, wait for the link to settle then send a self-message. A
+/// self-chat has no receipt and no fan-out (CLAUDE.md), so it is `accepted`.
+async fn send_self_message(
+    handle: &Arc<AccountHandle>,
+    phone: &str,
+    paired_jid: String,
+    report: &mut Report,
+) {
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let target = if phone.is_empty() {
+        paired_jid
+    } else {
+        format!("{phone}@s.whatsapp.net")
+    };
+    let Some(client) = handle.client().await else {
+        return report.fail("Messaging.SendText(self)", "no client available");
+    };
+    let jid = match jid_parse::parse_jid(&target) {
+        Ok(jid) => jid,
+        Err(e) => return report.fail("Messaging.SendText(self)", format!("bad jid: {e}")),
+    };
+    let request = pb::SendTextRequest {
+        text: "wamux: pareamento + envio OK".to_string(),
+        ..Default::default()
+    };
+    match messaging::send_text(&client, jid, &request).await {
+        Ok(result) => report.accepted(
+            "Messaging.SendText(self)",
+            format!("id={}", result.message_id),
+        ),
+        Err(e) => report.fail("Messaging.SendText(self)", e.to_string()),
+    }
 }

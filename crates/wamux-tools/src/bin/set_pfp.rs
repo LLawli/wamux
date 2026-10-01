@@ -1,124 +1,63 @@
 //! Test SetProfilePicture (square JPEG) + restore on the already-paired,
-//! stably-connected account. Usage: set_pfp [socket_path]
+//! stably-connected account.
+//!
+//! Env: WAMUX_REF (required), WAMUX_SOCKET_PATH.
 
-use std::io::{Cursor, Read};
+use std::process::ExitCode;
 use std::time::Duration;
-
-use hyper_util::rt::TokioIo;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
 
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::contact_service_client::ContactServiceClient;
-
-const EXTERNAL_REF: &str = "pair-socket";
+use wamux_tools::live_env::{account_ref_from, process_env, socket_path_from};
+use wamux_tools::media_kit::{fetch_url_capped, jpeg_bytes};
+use wamux_tools::profile::{PHOTO_CAP_BYTES, expect_photo_changed, photo_url, restore_photo};
+use wamux_tools::report::Report;
+use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/tmp/wamux.sock".to_string());
-    let channel = connect_uds(socket).await?;
+async fn main() -> anyhow::Result<ExitCode> {
+    let external_ref: String = account_ref_from(&process_env)?;
+    let socket: String = socket_path_from(&process_env)?;
+    let channel = connect_uds(&socket).await?;
     let mut account = AccountServiceClient::new(channel.clone());
     let mut contacts = ContactServiceClient::new(channel);
-    let acct = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(EXTERNAL_REF.to_string())),
-    };
+    let acct = account_ref(&external_ref);
 
-    account
-        .connect_account(pb::ConnectAccountRequest {
-            account: Some(acct.clone()),
-            backfill_history: false,
-        })
-        .await?;
-    let mut own = String::new();
-    for _ in 0..100 {
-        if let Ok(r) = account.get_account_status(acct.clone()).await {
-            let s = r.into_inner();
-            if s.state == pb::ConnectionState::Connected as i32 {
-                own = s.jid.map(|j| j.value).unwrap_or_default();
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
+    let own = wait_connected(&mut account, &acct, Duration::from_secs(30)).await?;
     println!("connected; own={own}");
+    let image = jpeg_bytes(640)?;
+    let mut report = Report::new();
 
-    let orig_url = contacts
-        .get_profile_picture(pb::JidRequest {
-            account: Some(acct.clone()),
-            jid: own.clone(),
-        })
-        .await
-        .map(|r| r.into_inner().url)
-        .unwrap_or_default();
-    let orig = if orig_url.is_empty() {
-        None
-    } else {
-        fetch(&orig_url)
+    // A failed read of the ORIGINAL photo must not be taken for "no photo":
+    // the restore would then delete a picture that was never looked at.
+    let orig_url = match photo_url(&mut contacts, &acct, &own).await {
+        Ok(url) => url,
+        Err(status) => {
+            report.fail("Contact.GetProfilePicture (original)", status.to_string());
+            return Ok(report.finish());
+        }
+    };
+    let had_photo = !orig_url.is_empty();
+    let orig = match had_photo {
+        true => fetch_url_capped(&orig_url, PHOTO_CAP_BYTES).await.ok(),
+        false => None,
     };
     println!(
         "current photo: {}",
-        if orig_url.is_empty() {
-            "none".into()
-        } else {
-            format!("present (fetched={})", orig.is_some())
-        }
+        if had_photo { "present" } else { "none" }
     );
-
-    match contacts
-        .set_profile_picture(pb::SetProfilePictureRequest {
-            account: Some(acct.clone()),
-            image: square_jpeg()?,
-        })
-        .await
+    let request = pb::SetProfilePictureRequest {
+        account: Some(acct.clone()),
+        image,
+    };
+    let set = contacts.set_profile_picture(request).await;
+    if report
+        .accepted_rpc("Contact.SetProfilePicture", set)
+        .is_some()
     {
-        Ok(_) => println!("✅ SetProfilePicture OK"),
-        Err(e) => println!("❌ SetProfilePicture: {} / {}", e.code(), e.message()),
+        expect_photo_changed(&mut contacts, &mut report, &acct, &own, &orig_url).await;
     }
-    if let Some(b) = orig {
-        let _ = contacts
-            .set_profile_picture(pb::SetProfilePictureRequest {
-                account: Some(acct.clone()),
-                image: b,
-            })
-            .await;
-        println!("restored original");
-    } else {
-        let _ = contacts.remove_profile_picture(acct.clone()).await;
-        println!("restored (removed; had none)");
-    }
-    Ok(())
-}
-
-fn square_jpeg() -> anyhow::Result<Vec<u8>> {
-    let mut img = image::RgbImage::new(640, 640);
-    for (x, y, p) in img.enumerate_pixels_mut() {
-        *p = image::Rgb([(x % 256) as u8, (y % 256) as u8, 120]);
-    }
-    let mut buf = Vec::new();
-    img.write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)?;
-    Ok(buf)
-}
-
-fn fetch(url: &str) -> Option<Vec<u8>> {
-    let r = ureq::get(url).call().ok()?;
-    let mut b = Vec::new();
-    r.into_reader()
-        .take(16 * 1024 * 1024)
-        .read_to_end(&mut b)
-        .ok()?;
-    Some(b)
-}
-
-async fn connect_uds(path: String) -> anyhow::Result<Channel> {
-    Ok(Endpoint::try_from("http://[::1]:50051")?
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let path = path.clone();
-            async move {
-                Ok::<_, std::io::Error>(TokioIo::new(tokio::net::UnixStream::connect(path).await?))
-            }
-        }))
-        .await?)
+    restore_photo(&mut contacts, &mut report, &acct, orig, had_photo).await;
+    Ok(report.finish())
 }

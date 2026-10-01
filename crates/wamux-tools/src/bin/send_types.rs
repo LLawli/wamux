@@ -3,237 +3,200 @@
 //! fetches URLs); sticker is an inline generated 512x512 WebP; ptt streams an
 //! OGG/Opus file (WhatsApp only renders voice notes for OGG/Opus).
 //!
-//! Usage: send_types [socket_path] [target_number] [all|video|audio|sticker|ptt]
-//!   defaults: /tmp/wamux.sock 5511999999999 all  ("all" excludes ptt: it needs a file)
-//! Env: WAMUX_REF       account external_ref (default "pair-socket")
+//! Usage: send_types [all|video|audio|sticker|ptt]   ("all" excludes ptt: it needs a file)
+//! Env: WAMUX_REF       account external_ref (required)
+//!      WAMUX_LIVE_DEST the one chat to send to (required, @s.whatsapp.net)
+//!      WAMUX_DELIVERY_SECS  how long each send waits for its `delivered` receipt
 //!      WAMUX_PTT_FILE  OGG/Opus path for the ptt kind (default /tmp/wamux-ptt-test.ogg)
 //!      WAMUX_PTT_SECS  voice note duration shown in the bubble (default 3)
 //! Requires the daemon running with the account paired. The core relays to the
 //! JID verbatim (no routing); this client targets @s.whatsapp.net.
 //!
-//! NOT `@c.us`, which is what this bin used to send and what its comment used to
-//! recommend. Issue #4 measured the cost: the legacy spelling parses as
-//! `Server::Legacy`, the send path stops treating the recipient as a phone user,
-//! no session is built, and the stanza ships encrypted for nobody -- while still
-//! answering with a real message id and a server ack. A validation tool that
-//! sends there reports success for a message that reached no one.
+//! NOT the legacy server, which is what this bin used to send and what its
+//! comment used to recommend. Issue #4 measured the cost: the legacy spelling
+//! parses as `Server::Legacy`, the send path stops treating the recipient as a
+//! phone user, no session is built, and the stanza ships encrypted for nobody
+//! -- while still answering with a real message id and a server ack. A send
+//! passes here only when the fan-out reached the phone and `delivered` came.
 
-use std::io::{Cursor, Read};
+use std::process::ExitCode;
 use std::time::Duration;
 
-use hyper_util::rt::TokioIo;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
+use tonic::transport::Channel;
 
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
+use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
+use wamux_tools::delivery::{EventTap, judge_send};
+use wamux_tools::live_env::{
+    account_ref_from, delivery_window_from, live_dest_from, process_env, refuse_own_number,
+    socket_path_from,
+};
+use wamux_tools::media_kit::{fetch_url_capped, media_chunks, webp_sticker_bytes};
+use wamux_tools::report::Report;
+use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 
-const DEFAULT_REF: &str = "pair-socket";
 const VIDEO_URL: &str = "https://www.w3schools.com/html/mov_bbb.mp4";
 // WhatsApp does not process OGG/Vorbis; use MP3 (audio/mpeg) for an audio file.
 const AUDIO_URL: &str = "https://www.w3schools.com/html/horse.mp3";
+/// Largest sample file the client downloads before streaming it inline.
+const DOWNLOAD_CAP_BYTES: usize = 32 * 1024 * 1024;
+
+/// One media message: the wire fields that differ between the kinds.
+struct InlineMedia {
+    mime: &'static str,
+    media_type: &'static str,
+    filename: &'static str,
+    data: Vec<u8>,
+    ptt_seconds: Option<u32>,
+}
+
+/// Who sends, to whom, and how long a send waits for its receipt.
+struct SendCtx {
+    acct: pb::AccountRef,
+    target: String,
+    tap: EventTap,
+    window: Duration,
+}
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/tmp/wamux.sock".to_string());
-    let number = std::env::args()
-        .nth(2)
-        .unwrap_or_else(|| "5511999999999".to_string());
-    let target = format!("{number}@s.whatsapp.net");
+async fn main() -> anyhow::Result<ExitCode> {
+    let external_ref: String = account_ref_from(&process_env)?;
+    let socket: String = socket_path_from(&process_env)?;
+    let target: String = live_dest_from(&process_env)?;
+    let window: Duration = delivery_window_from(&process_env)?;
+    let kinds = std::env::args().nth(1).unwrap_or_else(|| "all".to_string());
 
-    let channel = connect_uds(socket).await?;
+    let channel = connect_uds(&socket).await?;
     let mut account = AccountServiceClient::new(channel.clone());
+    let mut events = EventServiceClient::new(channel.clone());
     let mut messaging = MessagingServiceClient::new(channel);
-    let acct = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(
-            std::env::var("WAMUX_REF").unwrap_or_else(|_| DEFAULT_REF.to_string()),
-        )),
-    };
+    let acct = account_ref(&external_ref);
 
-    account
-        .connect_account(pb::ConnectAccountRequest {
-            account: Some(acct.clone()),
-            backfill_history: false,
+    let own = wait_connected(&mut account, &acct, Duration::from_secs(30)).await?;
+    refuse_own_number(&own, &target)?;
+    println!("connected as {own}; sending [{kinds}] to {target}");
+    // Subscribe BEFORE the first send, or its receipt can land unseen.
+    let stream = events
+        .subscribe_events(pb::SubscribeRequest {
+            selector: Some(pb::subscribe_request::Selector::Account(acct.clone())),
+            replay_from_ring: 0,
         })
-        .await?;
-    for _ in 0..100 {
-        if let Ok(r) = account.get_account_status(acct.clone()).await
-            && r.into_inner().state == pb::ConnectionState::Connected as i32
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-    let kinds = std::env::args().nth(3).unwrap_or_else(|| "all".to_string());
+        .await?
+        .into_inner();
+    let ctx = SendCtx {
+        acct,
+        target,
+        tap: EventTap::spawn(stream),
+        window,
+    };
+    let mut report = Report::new();
     let want = |k: &str| kinds == "all" || kinds == k;
-    println!("connected; sending [{kinds}] to {target}");
 
     if want("video") {
-        report(
-            "video",
-            send_url(
-                &mut messaging,
-                &acct,
-                &target,
-                "video/mp4",
-                "video",
-                VIDEO_URL,
-            )
-            .await,
-        );
+        let media = download("video/mp4", "video", VIDEO_URL).await;
+        send_kind(&mut messaging, &mut report, &ctx, "video", media).await;
     }
     if want("audio") {
-        report(
-            "audio",
-            send_url(
-                &mut messaging,
-                &acct,
-                &target,
-                "audio/mpeg",
-                "audio",
-                AUDIO_URL,
-            )
-            .await,
-        );
+        let media = download("audio/mpeg", "audio", AUDIO_URL).await;
+        send_kind(&mut messaging, &mut report, &ctx, "audio", media).await;
     }
     if want("sticker") {
-        report(
-            "sticker",
-            send_inline(
-                &mut messaging,
-                &acct,
-                &target,
-                "image/webp",
-                "sticker",
-                "s.webp",
-                sticker_webp()?,
-                None,
-            )
-            .await,
-        );
+        let media = webp_sticker_bytes()
+            .map_err(|e| e.to_string())
+            .map(|data| InlineMedia {
+                mime: "image/webp",
+                media_type: "sticker",
+                filename: "s.webp",
+                data,
+                ptt_seconds: None,
+            });
+        send_kind(&mut messaging, &mut report, &ctx, "sticker", media).await;
     }
     // Explicit-only ("all" skips it): needs an OGG/Opus file on disk.
     if kinds == "ptt" {
-        let path = std::env::var("WAMUX_PTT_FILE")
-            .unwrap_or_else(|_| "/tmp/wamux-ptt-test.ogg".to_string());
-        let secs: u32 = std::env::var("WAMUX_PTT_SECS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(3);
-        // Async read: this file already pays spawn_blocking for ureq (no async
-        // alternative); fs has one, so don't block the runtime worker.
-        let data = tokio::fs::read(&path)
-            .await
-            .map_err(|e| anyhow::anyhow!("read {path}: {e}"))?;
-        report(
-            "ptt",
-            send_inline(
-                &mut messaging,
-                &acct,
-                &target,
-                "audio/ogg; codecs=opus",
-                "audio",
-                "",
-                data,
-                Some(secs),
-            )
-            .await,
-        );
+        let media = voice_note().await;
+        send_kind(&mut messaging, &mut report, &ctx, "ptt", media).await;
     }
-
-    Ok(())
+    Ok(report.finish())
 }
 
-fn report(kind: &str, r: Result<String, String>) {
-    match r {
-        Ok(id) => println!("✅ {kind} sent id={id}"),
-        Err(e) => println!("❌ {kind} failed: {e}"),
+/// A media failure before the send (download, encode, file) is a failed check
+/// for that kind, not a reason to stop the other kinds.
+async fn send_kind(
+    m: &mut MessagingServiceClient<Channel>,
+    report: &mut Report,
+    ctx: &SendCtx,
+    kind: &str,
+    media: Result<InlineMedia, String>,
+) {
+    let name = format!("Messaging.SendMedia({kind})");
+    match media {
+        Ok(media) => {
+            let sent = send_inline(m, ctx, media).await;
+            judge_send(report, &name, sent, &ctx.tap, ctx.window).await;
+        }
+        Err(why) => report.fail(&name, why),
     }
 }
 
 /// The core no longer fetches URLs; the client (acting as the edge) downloads
 /// the bytes itself and streams them inline.
-async fn send_url(
-    m: &mut MessagingServiceClient<Channel>,
-    acct: &pb::AccountRef,
-    target: &str,
-    mime: &str,
-    media_type: &str,
+async fn download(
+    mime: &'static str,
+    media_type: &'static str,
     url: &str,
-) -> Result<String, String> {
-    let url = url.to_string();
-    let data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let resp = ureq::get(&url).call().map_err(|e| e.to_string())?;
-        let mut buf = Vec::new();
-        resp.into_reader()
-            .read_to_end(&mut buf)
-            .map_err(|e| e.to_string())?;
-        Ok(buf)
+) -> Result<InlineMedia, String> {
+    let data = fetch_url_capped(url, DOWNLOAD_CAP_BYTES)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(InlineMedia {
+        mime,
+        media_type,
+        filename: "",
+        data,
+        ptt_seconds: None,
     })
-    .await
-    .map_err(|e| e.to_string())??;
-    send_inline(m, acct, target, mime, media_type, "", data, None).await
 }
 
-#[allow(clippy::too_many_arguments)] // flat wire-field list; a builder would obscure the proto shape
+async fn voice_note() -> Result<InlineMedia, String> {
+    let path = process_env("WAMUX_PTT_FILE").unwrap_or_else(|| "/tmp/wamux-ptt-test.ogg".into());
+    let secs: u32 = process_env("WAMUX_PTT_SECS")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    // Async read so the runtime worker is not blocked on the file.
+    let data = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("read {path}: {e}"))?;
+    Ok(InlineMedia {
+        mime: "audio/ogg; codecs=opus",
+        media_type: "audio",
+        filename: "",
+        data,
+        ptt_seconds: Some(secs),
+    })
+}
+
 async fn send_inline(
     m: &mut MessagingServiceClient<Channel>,
-    acct: &pb::AccountRef,
-    target: &str,
-    mime: &str,
-    media_type: &str,
-    filename: &str,
-    data: Vec<u8>,
-    ptt_seconds: Option<u32>,
-) -> Result<String, String> {
-    let header = pb::SendMediaChunk {
-        part: Some(pb::send_media_chunk::Part::Header(pb::SendMediaHeader {
-            account: Some(acct.clone()),
-            to: Some(pb::Jid {
-                value: target.to_string(),
-            }),
-            mime_type: mime.to_string(),
-            media_type: media_type.to_string(),
-            filename: filename.to_string(),
-            ptt: ptt_seconds.is_some(),
-            seconds: ptt_seconds.unwrap_or(0),
-            ..Default::default()
-        })),
+    ctx: &SendCtx,
+    media: InlineMedia,
+) -> Result<pb::SendResult, tonic::Status> {
+    let header = pb::SendMediaHeader {
+        account: Some(ctx.acct.clone()),
+        to: Some(pb::Jid {
+            value: ctx.target.clone(),
+        }),
+        mime_type: media.mime.to_string(),
+        media_type: media.media_type.to_string(),
+        filename: media.filename.to_string(),
+        ptt: media.ptt_seconds.is_some(),
+        seconds: media.ptt_seconds.unwrap_or(0),
+        ..Default::default()
     };
-    let mut chunks = vec![header];
-    for c in data.chunks(64 * 1024) {
-        chunks.push(pb::SendMediaChunk {
-            part: Some(pb::send_media_chunk::Part::Chunk(c.to_vec())),
-        });
-    }
-    let r = m
-        .send_media(tokio_stream::iter(chunks))
+    let chunks = media_chunks(header, &media.data);
+    m.send_media(tokio_stream::iter(chunks))
         .await
-        .map_err(|e| e.message().to_string())?;
-    Ok(r.into_inner().key.map(|k| k.id).unwrap_or_default())
-}
-
-fn sticker_webp() -> anyhow::Result<Vec<u8>> {
-    let mut img = image::RgbaImage::new(512, 512);
-    for (x, y, p) in img.enumerate_pixels_mut() {
-        *p = image::Rgba([(x / 2) as u8, (y / 2) as u8, 180, 255]);
-    }
-    let mut buf = Vec::new();
-    image::DynamicImage::ImageRgba8(img)
-        .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::WebP)?;
-    Ok(buf)
-}
-
-async fn connect_uds(path: String) -> anyhow::Result<Channel> {
-    Ok(Endpoint::try_from("http://[::1]:50051")?
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let path = path.clone();
-            async move {
-                Ok::<_, std::io::Error>(TokioIo::new(tokio::net::UnixStream::connect(path).await?))
-            }
-        }))
-        .await?)
+        .map(tonic::Response::into_inner)
 }

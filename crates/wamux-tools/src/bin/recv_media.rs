@@ -1,123 +1,120 @@
 //! Wait for an inbound media message on the already-paired account and validate
-//! MediaService.DownloadMedia. No pairing; assumes "pair-socket" is paired.
+//! MediaService.DownloadMedia. No pairing; assumes WAMUX_REF is paired.
 //!
-//! Usage: recv_media [socket_path] [seconds]   (defaults /tmp/wamux.sock 300)
+//! Env: WAMUX_REF (required), WAMUX_SOCKET_PATH.
+//! Usage: recv_media [seconds]   (default 300)
 
+use std::process::ExitCode;
 use std::time::Duration;
 
-use hyper_util::rt::TokioIo;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
+use tonic::transport::Channel;
 
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::media_service_client::MediaServiceClient;
-
-const EXTERNAL_REF: &str = "pair-socket";
+use wamux_tools::live_env::{account_ref_from, process_env, socket_path_from};
+use wamux_tools::report::Report;
+use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/tmp/wamux.sock".to_string());
+async fn main() -> anyhow::Result<ExitCode> {
+    let external_ref: String = account_ref_from(&process_env)?;
+    let socket: String = socket_path_from(&process_env)?;
     let secs: u64 = std::env::args()
-        .nth(2)
+        .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(300);
-    let channel = connect_uds(socket).await?;
+    let channel = connect_uds(&socket).await?;
     let mut account = AccountServiceClient::new(channel.clone());
     let mut media = MediaServiceClient::new(channel.clone());
     let mut events = EventServiceClient::new(channel);
-    let acct = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(EXTERNAL_REF.to_string())),
-    };
+    let acct = account_ref(&external_ref);
 
-    account
-        .connect_account(pb::ConnectAccountRequest {
-            account: Some(acct.clone()),
-            backfill_history: false,
-        })
-        .await?;
-    for _ in 0..100 {
-        if let Ok(r) = account.get_account_status(acct.clone()).await
-            && r.into_inner().state == pb::ConnectionState::Connected as i32
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
+    wait_connected(&mut account, &acct, Duration::from_secs(30)).await?;
     println!("connected; waiting up to {secs}s for inbound media ...");
-
     let sub = pb::SubscribeRequest {
         selector: Some(pb::subscribe_request::Selector::Account(acct.clone())),
         replay_from_ring: 0,
     };
-    let mut ev = events.subscribe_events(sub).await?.into_inner();
+    let stream = events.subscribe_events(sub).await?.into_inner();
+
+    let mut report = Report::new();
+    match wait_for_media(stream, secs).await {
+        Some(descriptor) => download(&mut media, &mut report, acct, descriptor).await,
+        None => report.fail(
+            "Event.InboundMedia",
+            format!("no inbound media received within {secs}s"),
+        ),
+    }
+    Ok(report.finish())
+}
+
+async fn wait_for_media(
+    mut ev: tonic::Streaming<pb::EventEnvelope>,
+    secs: u64,
+) -> Option<pb::MediaDescriptor> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
-    let mut descriptor: Option<pb::MediaDescriptor> = None;
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(Duration::from_secs(5), ev.message()).await {
             Ok(Ok(Some(env))) => {
-                if let Some(pb::event_envelope::Event::Message(m)) = env.event {
-                    println!(
-                        "[recv] from={} text={:?} media={:?}",
-                        m.sender,
-                        m.text,
-                        m.media.as_ref().map(|d| &d.media_type)
-                    );
-                    if let Some(d) = m.media {
-                        descriptor = Some(d);
-                        break;
-                    }
+                let Some(pb::event_envelope::Event::Message(m)) = env.event else {
+                    continue;
+                };
+                println!(
+                    "[recv] from={} text={:?} media={:?}",
+                    m.sender,
+                    m.text,
+                    m.media.as_ref().map(|d| &d.media_type)
+                );
+                if m.media.is_some() {
+                    return m.media;
                 }
             }
             Ok(Ok(None)) | Ok(Err(_)) => break,
             Err(_) => {}
         }
     }
-
-    match descriptor {
-        Some(d) => {
-            let (mime, mtype) = (d.mime_type.clone(), d.media_type.clone());
-            match media
-                .download_media(pb::DownloadMediaRequest {
-                    account: Some(acct),
-                    descriptor: Some(d),
-                })
-                .await
-            {
-                Ok(s) => {
-                    let mut s = s.into_inner();
-                    let mut bytes = Vec::new();
-                    while let Ok(Some(c)) = s.message().await {
-                        if let Some(pb::media_chunk::Part::Chunk(b)) = c.part {
-                            bytes.extend_from_slice(&b);
-                        }
-                    }
-                    let path = format!("/tmp/wamux-download-{mtype}.bin");
-                    let _ = std::fs::write(&path, &bytes);
-                    println!(
-                        "✅ DownloadMedia OK: {} bytes (mime={mime}, type={mtype}) -> {path}",
-                        bytes.len()
-                    );
-                }
-                Err(e) => println!("❌ DownloadMedia: {}", e.message()),
-            }
-        }
-        None => println!("❌ no inbound media received within {secs}s"),
-    }
-    Ok(())
+    None
 }
 
-async fn connect_uds(path: String) -> anyhow::Result<Channel> {
-    let channel = Endpoint::try_from("http://[::1]:50051")?
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let path = path.clone();
-            async move {
-                Ok::<_, std::io::Error>(TokioIo::new(tokio::net::UnixStream::connect(path).await?))
+async fn download(
+    media: &mut MediaServiceClient<Channel>,
+    report: &mut Report,
+    acct: pb::AccountRef,
+    descriptor: pb::MediaDescriptor,
+) {
+    let (mime, mtype) = (descriptor.mime_type.clone(), descriptor.media_type.clone());
+    let request = pb::DownloadMediaRequest {
+        account: Some(acct),
+        descriptor: Some(descriptor),
+    };
+    let mut stream = match media.download_media(request).await {
+        Ok(response) => response.into_inner(),
+        Err(status) => return report.fail("Media.DownloadMedia", status.to_string()),
+    };
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        match stream.message().await {
+            Ok(Some(chunk)) => {
+                if let Some(pb::media_chunk::Part::Chunk(piece)) = chunk.part {
+                    bytes.extend_from_slice(&piece);
+                }
             }
-        }))
-        .await?;
-    Ok(channel)
+            Ok(None) => break,
+            Err(status) => return report.fail("Media.DownloadMedia", status.to_string()),
+        }
+    }
+    let path = format!("/tmp/wamux-download-{mtype}.bin");
+    if let Err(e) = std::fs::write(&path, &bytes) {
+        eprintln!("cannot save {path}: {e}");
+    }
+    report.verify(
+        "Media.DownloadMedia",
+        !bytes.is_empty(),
+        format!(
+            "{} bytes (mime={mime}, type={mtype}) -> {path}",
+            bytes.len()
+        ),
+    );
 }
