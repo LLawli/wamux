@@ -5,70 +5,102 @@
 //!
 //! Opens the QR PNG with xdg-open on the first refresh; scan it with the phone.
 //!
-//! Usage: pair_backfill [external_ref] [watch_secs]   (default pair-bootstrap 120)
-//! Env: DATABASE_URL (defaults to the local docker postgres).
+//! Env: WAMUX_REF (required, the account to pair or reuse), DATABASE_URL
+//! (defaults to the local docker postgres).
+//! Usage: pair_backfill [watch_secs]   (default 120)
 
-use std::sync::Arc;
+use std::path::Path;
+use std::process::ExitCode;
 use std::time::Duration;
 
-use tracing_subscriber::EnvFilter;
 use whatsapp_rust::buffa::{Enumeration as _, Message as _};
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use wamux::proto::v1 as pb;
-use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage;
+use wamux_tools::inproc::{database_url_from, init_tracing, open_registry, resolve_or_create};
+use wamux_tools::live_env::{account_ref_from, process_env};
+use wamux_tools::qr::{ascii_qr, open_in_viewer, write_qr_png};
+use wamux_tools::report::Report;
 
 const QR_PNG: &str = "/tmp/wamux-qr.png";
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("warn,wamux=info,whatsapp_rust=info")),
-        )
-        .init();
+/// What the history watch counted.
+#[derive(Default)]
+struct HistoryTally {
+    paired: bool,
+    pair_error: Option<String>,
+    events: usize,
+    conversations: usize,
+    messages: usize,
+}
 
-    let external_ref = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "pair-bootstrap".to_string());
+#[tokio::main]
+async fn main() -> anyhow::Result<ExitCode> {
+    let external_ref: String = account_ref_from(&process_env)?;
+    let database_url: String = database_url_from(&process_env);
     let watch_secs: u64 = std::env::args()
-        .nth(2)
+        .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(120);
+    init_tracing("warn,wamux=info,whatsapp_rust=info");
 
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://wamux:wamux@localhost:5433/wamux".to_string());
-    let engine = Arc::new(storage::postgres::PgStorage::open(&database_url, 8).await?);
-    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(512)));
-    registry.load_existing().await?;
-
-    let acct_ref = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(external_ref.clone())),
-    };
-    let handle = match registry.resolve(Some(&acct_ref)) {
-        Ok(h) => {
-            println!("reusing account {} (device_id={})", h.uuid, h.device_id);
-            h
-        }
-        Err(_) => {
-            let h = registry.create_account(Some(&external_ref)).await?;
-            println!("created account {} (device_id={})", h.uuid, h.device_id);
-            h
-        }
-    };
-
-    let mut events = handle.subscribe();
+    let registry = open_registry(&database_url).await?;
+    let (handle, created) = resolve_or_create(&registry, &external_ref).await?;
+    println!(
+        "{} account {} (device_id={})",
+        if created { "created" } else { "reusing" },
+        handle.uuid,
+        handle.device_id
+    );
+    let events = handle.subscribe();
     // QR mode (pair_code=None), backfill ON (skip_history=false).
     println!("connecting with backfill ON; scan the QR when it opens ...");
     registry.connect(&handle, None, false).await?;
 
+    let tally = watch_history(events, watch_secs).await;
+    println!(
+        "\n=== summary ===\npaired: {}\nhistory_sync events: {}\nconversations: {}\nmessages: {}",
+        tally.paired, tally.events, tally.conversations, tally.messages
+    );
+    println!(
+        "(account '{external_ref}' left paired; run `e2e_all`/`logout_e2e` against it or DeleteAccount to clean up.)"
+    );
+    Ok(report_of(&tally).finish())
+}
+
+/// A pairing error or no pairing at all fails; so does a pairing that never
+/// got a history chunk, since that is the whole point of this probe.
+fn report_of(tally: &HistoryTally) -> Report {
+    let mut report = Report::new();
+    if let Some(message) = &tally.pair_error {
+        report.fail("Pairing", message.clone());
+        return report;
+    }
+    report.verify(
+        "Pairing",
+        tally.paired,
+        "the phone completed the QR pairing",
+    );
+    if tally.paired {
+        report.verify(
+            "HistorySyncEvent InitialBootstrap",
+            tally.events > 0,
+            format!(
+                "{} events, {} conversations, {} messages",
+                tally.events, tally.conversations, tally.messages
+            ),
+        );
+    }
+    report
+}
+
+/// Show the QR until paired, then count history events for `watch_secs`.
+async fn watch_history(
+    mut events: tokio::sync::broadcast::Receiver<pb::EventEnvelope>,
+    watch_secs: u64,
+) -> HistoryTally {
+    let mut tally = HistoryTally::default();
     let mut qr_opened = false;
-    let mut paired = false;
-    let mut n_hist = 0usize;
-    let mut n_convs = 0usize;
-    let mut n_msgs = 0usize;
     let mut deadline = tokio::time::Instant::now() + Duration::from_secs(600); // until paired
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -83,48 +115,27 @@ async fn main() -> anyhow::Result<()> {
             }
             _ => break,
         };
-        let Some(event) = env.event else { continue };
-        match event {
-            pb::event_envelope::Event::Pairing(u) => match u.event {
+        match env.event {
+            Some(pb::event_envelope::Event::Pairing(u)) => match u.event {
                 Some(pb::pairing_update::Event::QrCode(code)) => {
-                    render_qr(&code);
-                    if !qr_opened {
-                        open_qr();
-                        qr_opened = true;
-                    }
+                    render_qr(&code, &mut qr_opened);
                 }
                 Some(pb::pairing_update::Event::Paired(info)) => {
                     let jid = info.jid.map(|j| j.value).unwrap_or_default();
-                    println!(
-                        "\n✅ PAIRED as {jid} (business_name={})",
-                        info.business_name
-                    );
+                    println!("\nPAIRED as {jid} (business_name={})", info.business_name);
                     println!("watching {watch_secs}s for the InitialBootstrap history dump ...\n");
-                    paired = true;
+                    tally.paired = true;
                     deadline = tokio::time::Instant::now() + Duration::from_secs(watch_secs);
                 }
                 Some(pb::pairing_update::Event::Error(e)) => {
-                    println!("\n❌ PAIR ERROR: {}", e.message);
+                    println!("\nPAIR ERROR: {}", e.message);
+                    tally.pair_error = Some(e.message);
                     break;
                 }
                 _ => {}
             },
-            pb::event_envelope::Event::HistorySync(h) => {
-                n_hist += 1;
-                let (convs, msgs) = decode_counts(&h.raw);
-                n_convs += convs;
-                n_msgs += msgs;
-                println!(
-                    "[history] type={} chunk={:?} progress={:?} raw={}B convs={} msgs={}",
-                    sync_type_name(h.sync_type),
-                    h.chunk_order,
-                    h.progress,
-                    h.raw.len(),
-                    convs,
-                    msgs
-                );
-            }
-            pb::event_envelope::Event::Connection(c) => {
+            Some(pb::event_envelope::Event::HistorySync(h)) => count_history(&mut tally, &h),
+            Some(pb::event_envelope::Event::Connection(c)) => {
                 let name = pb::ConnectionState::try_from(c.state)
                     .map(|s| format!("{s:?}"))
                     .unwrap_or_else(|_| c.state.to_string());
@@ -133,14 +144,23 @@ async fn main() -> anyhow::Result<()> {
             _ => {}
         }
     }
+    tally
+}
 
+fn count_history(tally: &mut HistoryTally, h: &pb::HistorySyncEvent) {
+    tally.events += 1;
+    let (convs, msgs) = decode_counts(&h.raw);
+    tally.conversations += convs;
+    tally.messages += msgs;
     println!(
-        "\n=== summary ===\npaired: {paired}\nhistory_sync events: {n_hist}\nconversations: {n_convs}\nmessages: {n_msgs}"
+        "[history] type={} chunk={:?} progress={:?} raw={}B convs={} msgs={}",
+        sync_type_name(h.sync_type),
+        h.chunk_order,
+        h.progress,
+        h.raw.len(),
+        convs,
+        msgs
     );
-    println!(
-        "(account '{external_ref}' left paired; run `e2e_all`/`logout_e2e` against it or DeleteAccount to clean up.)"
-    );
-    Ok(())
 }
 
 fn sync_type_name(t: i32) -> String {
@@ -161,51 +181,16 @@ fn decode_counts(raw: &[u8]) -> (usize, usize) {
     }
 }
 
-fn open_qr() {
-    match std::process::Command::new("xdg-open").arg(QR_PNG).spawn() {
-        Ok(_) => println!("[qr] opened {QR_PNG} with xdg-open"),
-        Err(e) => eprintln!("[qr] xdg-open failed ({e}); open {QR_PNG} manually"),
-    }
-}
-
-fn render_qr(code: &str) {
-    if let Err(e) = write_qr_png(code, QR_PNG) {
+fn render_qr(code: &str, opened: &mut bool) {
+    let path = Path::new(QR_PNG);
+    if let Err(e) = write_qr_png(code, path) {
         eprintln!("[qr] PNG render failed: {e}");
+    } else if !*opened {
+        open_in_viewer(path);
+        *opened = true;
     }
-    println!("{}", ascii_qr(code));
-}
-
-fn write_qr_png(data: &str, path: &str) -> anyhow::Result<()> {
-    let code = qrcode::QrCode::new(data.as_bytes())?;
-    let width = code.width();
-    let colors = code.to_colors();
-    let scale = 8usize;
-    let quiet = 4usize;
-    let dim = ((width + quiet * 2) * scale) as u32;
-    let mut img = image::GrayImage::from_pixel(dim, dim, image::Luma([255u8]));
-    for y in 0..width {
-        for x in 0..width {
-            if colors[y * width + x] == qrcode::Color::Dark {
-                for dy in 0..scale {
-                    for dx in 0..scale {
-                        let px = ((x + quiet) * scale + dx) as u32;
-                        let py = ((y + quiet) * scale + dy) as u32;
-                        img.put_pixel(px, py, image::Luma([0u8]));
-                    }
-                }
-            }
-        }
-    }
-    img.save(path)?;
-    Ok(())
-}
-
-fn ascii_qr(data: &str) -> String {
-    match qrcode::QrCode::new(data.as_bytes()) {
-        Ok(code) => code
-            .render::<qrcode::render::unicode::Dense1x2>()
-            .quiet_zone(true)
-            .build(),
-        Err(_) => String::new(),
+    match ascii_qr(code) {
+        Ok(text) => println!("{text}"),
+        Err(e) => eprintln!("[qr] {e}"),
     }
 }

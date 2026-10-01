@@ -35,15 +35,23 @@ stage() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 # Name-filtered gates pass vacuously if the filter matches zero tests (cargo
 # exits 0 on "running 0 tests"), so a renamed/moved test would silently kill
 # the gate forever. Assert tests actually ran.
-must_run_tests() {
+must_run_pkg_tests() {
+  local pkg="$1"; shift
   local out
-  out=$(cargo test -p wamux "$@" 2>&1) || { printf '%s\n' "$out"; return 1; }
+  out=$(cargo test -p "$pkg" "$@" 2>&1) || { printf '%s\n' "$out"; return 1; }
   printf '%s\n' "$out"
   if grep -qE '^running 0 tests$' <<<"$out"; then
-    echo "ERROR: gate ran 0 tests (renamed/moved?): cargo test -p wamux $*" >&2
+    echo "ERROR: gate ran 0 tests (renamed/moved?): cargo test -p $pkg $*" >&2
     return 1
   fi
 }
+must_run_tests() { must_run_pkg_tests wamux "$@"; }
+
+# wamux-tools (#64): the shared client, the env contract, the exit code, and
+# the built binaries refusing a bad config. Every suite but inproc runs its
+# daemon fixture on SQLite; inproc is Postgres-backed like the bins it serves.
+TOOLS_NO_PG_SUITES=(--test live_env --test report --test delivery --test media_qr
+  --test socket_client --test bin_contract --test runbook)
 
 # Fail fast with an actionable message if Postgres isn't reachable (tests need it).
 # Parse host:port from any valid URL shape: strip the scheme, then optional
@@ -96,15 +104,17 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   must_run_tests --test storage_backend sqlite_
   must_run_tests --test bincode_upgrade sqlite_
 
+  stage "no-postgres: wamux-tools (sqlite daemon fixture)"
+  must_run_pkg_tests wamux-tools "${TOOLS_NO_PG_SUITES[@]}"
+
   stage "CI PASSED (no-postgres subset)"
   exit 0
 fi
 
 # The root manifest is virtual with default-members = wamux, so a bare `cargo
-# test` would only test the daemon. Every test target lives in the daemon today
-# (wamux-proto and wamux-tools have none), and the stress suites are pinned to
-# it with -p wamux, so the test stages say `-p wamux` explicitly. The other
-# members are still compiled by the clippy --workspace stages above.
+# test` would only test the daemon. The daemon's stages say `-p wamux` and the
+# tools' stage says `-p wamux-tools` (#64); wamux-proto has no tests and is
+# still compiled by the clippy --workspace stages above.
 stage "tests (unit + integration, postgres engine)"
 cargo test -p wamux
 
@@ -113,6 +123,9 @@ cargo test -p wamux
 # both engines in either pass (parity is only testable with both present).
 stage "tests (sqlite engine)"
 WAMUX_TEST_ENGINE=sqlite cargo test -p wamux
+
+stage "tests (wamux-tools)"
+must_run_pkg_tests wamux-tools --test '*'
 
 stage "stress tests (fast: M1/M2a/M2b)"
 cargo test -p wamux --features stress --test stress_handshake

@@ -5,28 +5,27 @@
 //! only ever sends there and refuses to run if it is unset, the same guard
 //! `stress_live` uses, so a live test can never fan out to arbitrary numbers.
 //!
-//! Usage: WAMUX_LIVE_DEST=<jid> poll_live [socket_path] [seconds]
-//!   defaults: /tmp/wamux.sock 180
-//! Env: WAMUX_REF  account external_ref (default "pair-socket")
+//! Usage: WAMUX_LIVE_DEST=<jid> poll_live [seconds]   (default 180)
+//! Env: WAMUX_REF            account external_ref (required)
+//!      WAMUX_LIVE_DEST      the one chat to send to (required)
+//!      WAMUX_POLL_EXPECT    the option the person votes for on the phone; the
+//!                           tally must then hold the voter under exactly it
+//!      WAMUX_DELIVERY_SECS  how long a send waits for its `delivered` receipt
 //!
 //! What to check, in this order:
-//!   1. the poll shows up on the phone;
+//!   1. the poll shows up on the phone (delivered receipt);
 //!   2. vote on the phone -> this prints a tally naming the option you chose,
-//!      with `undecryptable=0`;
+//!      with `undecryptable=0`; the run compares it with WAMUX_POLL_EXPECT;
 //!   3. it then votes "Sim" and, five seconds later, "Não" through the RPC.
 //!      The phone must show ONE vote by this account (the second one), not two.
 //!
-//! Pass the destination as `@s.whatsapp.net`, never `@c.us`: the legacy
-//! spelling parses as Server::Legacy and the send path then encrypts for
-//! nobody (issue #4). The pinned live-send rule still spells it `@c.us`; that
-//! half of the rule predates the 0.7 port. The NUMBER is the safety
-//! constraint, not the server field.
+//! The destination is spelled `@s.whatsapp.net`: the legacy server spelling
+//! encrypts for nobody (issue #4) and is refused when the env is read.
 
+use std::process::ExitCode;
 use std::time::Duration;
 
-use hyper_util::rt::TokioIo;
-use tonic::transport::{Channel, Endpoint, Uri};
-use tower::service_fn;
+use tonic::transport::Channel;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
@@ -34,54 +33,64 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
+use wamux_tools::delivery::{EventTap, judge_send};
+use wamux_tools::live_env::{
+    account_ref_from, delivery_window_from, live_dest_from, process_env, refuse_own_number,
+    socket_path_from,
+};
+use wamux_tools::report::Report;
+use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 
-const DEFAULT_REF: &str = "pair-socket";
 const QUESTION: &str = "wamux #13: o voto chegou?";
+const TAP_POLL: Duration = Duration::from_millis(500);
+
+/// Everything a vote needs to be sent or tallied for this one poll.
+struct PollRun {
+    acct: pb::AccountRef,
+    chat: String,
+    creator: String,
+    poll_id: String,
+    secret: Vec<u8>,
+    options: Vec<String>,
+}
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket = arg(1, "/tmp/wamux.sock");
-    let secs: u64 = arg(2, "180").parse().unwrap_or(180);
-    // Safety guard in code, not just convention: no hardcoded number, and no
-    // run at all without an operator-supplied destination.
-    let chat = std::env::var("WAMUX_LIVE_DEST").map_err(|_| {
-        anyhow::anyhow!(
-            "set WAMUX_LIVE_DEST to the destination JID (e.g. 5511999999999@s.whatsapp.net)"
-        )
-    })?;
-    let options: Vec<String> = ["Sim", "Não", "Talvez"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+async fn main() -> anyhow::Result<ExitCode> {
+    let external_ref: String = account_ref_from(&process_env)?;
+    let socket: String = socket_path_from(&process_env)?;
+    let chat: String = live_dest_from(&process_env)?;
+    let window: Duration = delivery_window_from(&process_env)?;
+    let expect: Option<String> = process_env("WAMUX_POLL_EXPECT");
+    let secs: u64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(180);
+    let options: Vec<String> = ["Sim", "Não", "Talvez"].map(String::from).to_vec();
 
-    let channel = connect_uds(socket).await?;
+    let channel = connect_uds(&socket).await?;
     let mut account = AccountServiceClient::new(channel.clone());
     let mut messaging = MessagingServiceClient::new(channel.clone());
     let mut events = EventServiceClient::new(channel);
-    let acct = pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::ExternalRef(
-            std::env::var("WAMUX_REF").unwrap_or_else(|_| DEFAULT_REF.to_string()),
-        )),
-    };
+    let acct = account_ref(&external_ref);
 
-    let creator = wait_connected(&mut account, &acct).await?;
+    let creator = wait_connected(&mut account, &acct, Duration::from_secs(30)).await?;
     println!("connected as {creator}");
     // A poll to self is the one case this validation cannot read: a note to
     // self gets no `delivered` receipt and no second party to vote (CLAUDE.md,
     // issue #4). Refuse it rather than print an inconclusive run.
-    if same_user(&creator, &chat) {
-        anyhow::bail!("WAMUX_LIVE_DEST ({chat}) is this account's own number; pick the other one");
-    }
+    refuse_own_number(&creator, &chat)?;
 
     // Subscribe BEFORE creating the poll: a vote cast fast would otherwise land
-    // before the stream attaches.
-    let mut stream = events
+    // before the stream attaches, and so would the delivered receipt.
+    let stream = events
         .subscribe_events(pb::SubscribeRequest {
             selector: Some(pb::subscribe_request::Selector::Account(acct.clone())),
             replay_from_ring: 0,
         })
         .await?
         .into_inner();
+    let tap = EventTap::spawn(stream);
+    let mut report = Report::new();
 
     let created = messaging
         .send_poll(pb::SendPollRequest {
@@ -93,99 +102,183 @@ async fn main() -> anyhow::Result<()> {
             options: options.clone(),
             selectable_count: 1,
         })
-        .await?
-        .into_inner();
-    let poll_id = created.key.map(|k| k.id).unwrap_or_default();
-    println!(
-        "poll {poll_id} created in {chat} (secret {} bytes); vote on the phone",
-        created.message_secret.len()
-    );
+        .await;
+    let Some(run) = judge_poll_created(
+        &mut report,
+        created,
+        &tap,
+        window,
+        PollRun {
+            acct,
+            chat,
+            creator,
+            poll_id: String::new(),
+            secret: Vec::new(),
+            options,
+        },
+    )
+    .await
+    else {
+        return Ok(report.finish());
+    };
+    vote_twice(&mut messaging, &mut report, &tap, window, &run).await;
+    let last = collect_votes(&mut messaging, &tap, &run, secs).await;
+    judge_tally(&mut report, last.as_ref(), expect.as_deref(), secs);
+    Ok(report.finish())
+}
 
-    // Vote through the RPC twice: the second must REPLACE the first on the phone.
+/// The poll itself is a send to someone else: reached the phone and delivered.
+async fn judge_poll_created(
+    report: &mut Report,
+    created: Result<tonic::Response<pb::SendPollResult>, tonic::Status>,
+    tap: &EventTap,
+    window: Duration,
+    mut run: PollRun,
+) -> Option<PollRun> {
+    let poll = created.map(tonic::Response::into_inner);
+    let as_send = poll.as_ref().map(|p| pb::SendResult {
+        key: p.key.clone(),
+        server_timestamp: 0,
+        recipient_fanout: p.recipient_fanout,
+    });
+    let secret: Vec<u8> = poll
+        .as_ref()
+        .map(|p| p.message_secret.clone())
+        .unwrap_or_default();
+    let id = judge_send(
+        report,
+        "Messaging.SendPoll",
+        as_send.map_err(|status| status.clone()),
+        tap,
+        window,
+    )
+    .await?;
+    println!(
+        "poll {id} created in {} (secret {} bytes); vote on the phone",
+        run.chat,
+        secret.len()
+    );
+    run.poll_id = id;
+    run.secret = secret;
+    Some(run)
+}
+
+/// Vote through the RPC twice: the second must REPLACE the first on the phone.
+async fn vote_twice(
+    messaging: &mut MessagingServiceClient<Channel>,
+    report: &mut Report,
+    tap: &EventTap,
+    window: Duration,
+    run: &PollRun,
+) {
     for choice in ["Sim", "Não"] {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let sent = messaging
             .send_poll_vote(pb::SendPollVoteRequest {
-                account: Some(acct.clone()),
+                account: Some(run.acct.clone()),
                 chat: Some(pb::Jid {
-                    value: chat.clone(),
+                    value: run.chat.clone(),
                 }),
-                poll_id: poll_id.clone(),
-                poll_creator_jid: creator.clone(),
-                message_secret: created.message_secret.clone(),
+                poll_id: run.poll_id.clone(),
+                poll_creator_jid: run.creator.clone(),
+                message_secret: run.secret.clone(),
                 options: vec![choice.to_string()],
             })
-            .await;
-        match sent {
-            Ok(r) => println!(
-                "✅ SendPollVote({choice}) -> {}",
-                r.into_inner().key.map(|k| k.id).unwrap_or_default()
-            ),
-            Err(e) => println!("❌ SendPollVote({choice}): {}", e.message()),
-        }
+            .await
+            .map(tonic::Response::into_inner);
+        let name = format!("Messaging.SendPollVote({choice})");
+        judge_send(report, &name, sent, tap, window).await;
     }
+}
 
-    // Collect the phone's votes, oldest first (the order IS the contract), and
-    // re-tally on every new one.
+/// Collect the phone's votes, oldest first (the order IS the contract), and
+/// re-tally on every new one. Returns the last tally.
+async fn collect_votes(
+    messaging: &mut MessagingServiceClient<Channel>,
+    tap: &EventTap,
+    run: &PollRun,
+    secs: u64,
+) -> Option<pb::PollTally> {
     let mut votes: Vec<pb::PollVote> = Vec::new();
+    let mut last: Option<pb::PollTally> = None;
+    let mut next = 0usize;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
-    println!("listening {secs}s for votes on poll {poll_id} ...");
+    println!("listening {secs}s for votes on poll {} ...", run.poll_id);
     while tokio::time::Instant::now() < deadline {
-        let Ok(Ok(Some(envelope))) =
-            tokio::time::timeout(Duration::from_secs(5), stream.message()).await
-        else {
-            continue;
-        };
-        let Some(pb::event_envelope::Event::Message(inbound)) = envelope.event else {
-            continue;
-        };
-        let Some(vote) = vote_in(&inbound, &poll_id, &creator) else {
-            continue;
-        };
-        println!(
-            "[vote] sender={} alt={} -> voting as {}",
-            inbound.sender, inbound.sender_alt, vote.voter_jid
-        );
-        votes.push(vote);
-        let tally = messaging
-            .aggregate_poll_votes(pb::AggregatePollVotesRequest {
-                account: Some(acct.clone()),
-                poll_id: poll_id.clone(),
-                poll_creator_jid: creator.clone(),
-                message_secret: created.message_secret.clone(),
-                options: options.clone(),
-                votes: votes.clone(),
-            })
-            .await;
-        match tally {
-            Ok(t) => print_tally(&t.into_inner()),
-            Err(e) => println!("❌ AggregatePollVotes: {}", e.message()),
+        let seen = tap.seen();
+        for envelope in &seen[next..] {
+            let Some(pb::event_envelope::Event::Message(inbound)) = &envelope.event else {
+                continue;
+            };
+            let Some(vote) = vote_in(inbound, &run.poll_id, &run.creator) else {
+                continue;
+            };
+            println!(
+                "[vote] sender={} alt={} -> voting as {}",
+                inbound.sender, inbound.sender_alt, vote.voter_jid
+            );
+            votes.push(vote);
+            last = aggregate(messaging, run, &votes).await.or(last);
+        }
+        next = seen.len();
+        tokio::time::sleep(TAP_POLL).await;
+    }
+    last
+}
+
+async fn aggregate(
+    messaging: &mut MessagingServiceClient<Channel>,
+    run: &PollRun,
+    votes: &[pb::PollVote],
+) -> Option<pb::PollTally> {
+    let tally = messaging
+        .aggregate_poll_votes(pb::AggregatePollVotesRequest {
+            account: Some(run.acct.clone()),
+            poll_id: run.poll_id.clone(),
+            poll_creator_jid: run.creator.clone(),
+            message_secret: run.secret.clone(),
+            options: run.options.clone(),
+            votes: votes.to_vec(),
+        })
+        .await;
+    match tally {
+        Ok(t) => {
+            let tally = t.into_inner();
+            print_tally(&tally);
+            Some(tally)
+        }
+        Err(e) => {
+            println!("AggregatePollVotes failed: {}", e.message());
+            None
         }
     }
-    if votes.is_empty() {
-        println!("❌ no vote arrived within {secs}s");
-    }
-    Ok(())
 }
 
-/// Same phone/lid user, ignoring the server field and any device suffix.
-fn same_user(one: &str, other: &str) -> bool {
-    let user = |jid: &str| {
-        jid.split('@')
-            .next()
-            .unwrap_or_default()
-            .split(':')
-            .next()
-            .unwrap_or_default()
-            .to_string()
+/// The last tally is the verdict: no vote at all, an unopened vote, or a vote
+/// under another option than the one the person was asked to pick all fail.
+fn judge_tally(report: &mut Report, last: Option<&pb::PollTally>, expect: Option<&str>, secs: u64) {
+    const NAME: &str = "Messaging.AggregatePollVotes";
+    let Some(tally) = last else {
+        return report.fail(NAME, format!("no vote arrived within {secs}s"));
     };
-    user(one) == user(other)
-}
-
-fn arg(index: usize, fallback: &str) -> String {
-    std::env::args()
-        .nth(index)
-        .unwrap_or_else(|| fallback.to_string())
+    if tally.undecryptable != 0 {
+        return report.fail(NAME, format!("undecryptable={}", tally.undecryptable));
+    }
+    let chosen: Vec<&str> = tally
+        .results
+        .iter()
+        .filter(|r| !r.voters.is_empty())
+        .map(|r| r.option.as_str())
+        .collect();
+    let ok = match expect {
+        Some(option) => chosen == [option],
+        None => chosen.len() == 1,
+    };
+    report.verify(
+        NAME,
+        ok,
+        format!("voted options {chosen:?}, expected {expect:?}, undecryptable=0"),
+    );
 }
 
 /// One vote out of an inbound message, if it belongs to this poll. The vote's
@@ -229,39 +322,4 @@ fn print_tally(tally: &pb::PollTally) {
     // The whole point of the count: an empty tally and a tally whose votes
     // never opened look identical without it.
     println!("  undecryptable={}", tally.undecryptable);
-}
-
-/// Connect the account and return its own jid (the poll's creator).
-async fn wait_connected(
-    account: &mut AccountServiceClient<Channel>,
-    acct: &pb::AccountRef,
-) -> anyhow::Result<String> {
-    account
-        .connect_account(pb::ConnectAccountRequest {
-            account: Some(acct.clone()),
-            backfill_history: false,
-        })
-        .await?;
-    for _ in 0..100 {
-        let status = account.get_account_status(acct.clone()).await?.into_inner();
-        if status.state == pb::ConnectionState::Connected as i32
-            && let Some(jid) = status.jid
-        {
-            return Ok(jid.value);
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-    anyhow::bail!("account did not reach Connected with a jid")
-}
-
-async fn connect_uds(path: String) -> anyhow::Result<Channel> {
-    let channel = Endpoint::try_from("http://[::1]:50051")?
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let path = path.clone();
-            async move {
-                Ok::<_, std::io::Error>(TokioIo::new(tokio::net::UnixStream::connect(path).await?))
-            }
-        }))
-        .await?;
-    Ok(channel)
 }

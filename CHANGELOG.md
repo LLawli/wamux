@@ -193,6 +193,41 @@ has to follow them.
 
 ### Changed
 
+- **The development binaries share one client and fail for real** (issue
+  #64). Nothing here is shipped and nothing changes on the wire or in the
+  daemon's config; this is for anyone running the tools in
+  `crates/wamux-tools`, whose runbook is now
+  `crates/wamux-tools/README.md` (what each one needs, reads, proves and
+  writes to WhatsApp).
+  - One library, `wamux_tools`, holds the socket connection (17 copies
+    before), the wait for CONNECTED, the env contract, the check report, the
+    delivery judgement, QR rendering, the media helpers and the in-process
+    Postgres bootstrap. A binary that cannot connect its account stops
+    instead of carrying on.
+  - Configuration is environment only, validated before anything is opened:
+    `WAMUX_SOCKET_PATH` (default the production socket,
+    `$HOME/.local/state/wamux/wamux.sock`, instead of `/tmp/wamux.sock`),
+    `WAMUX_REF` (required, no default account), and `WAMUX_LIVE_DEST`
+    (required by every binary that writes to someone else's chat, refusing
+    the legacy `@c.us` spelling and the account's own number). No phone number
+    is hard-coded as a default any more; `e2e_all`, `e2e` and `send_types`
+    used to send to one when given no destination.
+  - Every binary exits non-zero on a failed check. A check is `PASS` only when
+    a returned value was asserted, `ACCEPTED` for an RPC that answers nothing,
+    `FAIL` otherwise, and a run is green only with no failure and at least one
+    pass. A send to someone else passes on its fan-out reaching the phone and
+    a `delivered` receipt, never on the ack.
+  - `e2e_all` is non-destructive and runs unattended; the human reception
+    window is opt-in (`WAMUX_E2E_INBOUND=1`). Its old destructive phase is the
+    new `e2e_destructive`, which needs `WAMUX_E2E_DESTRUCTIVE=yes` and no
+    longer logs out or deletes the paired account (`logout_e2e` does that).
+  - Removed: `whois` and `e2e` (superseded, and `whois` existed to probe the
+    `@c.us` forms #4 retired), `validate1` (covered by `pair_socket`, `set_pfp`
+    and `recv_media`), and `send_group` (it opened a second connection on a
+    device the daemon already held).
+  - `scripts/ci.sh` runs the tools' suites (`cargo test -p wamux-tools`),
+    including the built binaries refusing a bad configuration.
+
 - **whatsapp-rust moves to git main `6f07e3ab`** (issue #86), same nightly,
   every crate of the family together. Brings upstream #1568, the fix for
   #1567: since #30 every connection's keepalive loop exited at its first tick,
