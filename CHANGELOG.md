@@ -258,6 +258,45 @@ has to follow them.
     without `stress`, is unchanged.
   - `scripts/check-service-coverage.py` pins MediaService at 1 RPC.
 
+- **NewsletterService is tested through the socket** (issue #70). All 6 RPCs
+  now run over a real Unix socket and tonic client, on both engines, with the
+  account logged in against the mock.
+  - The five reads (ListSubscribedNewsletters, GetNewsletterMetadata,
+    GetNewsletterMessages, GetMyNewsletterAddOns,
+    SubscribeNewsletterLiveUpdates) are answered with what WhatsApp's server
+    sent on 2026-10-02, together with its answers for a channel that does not
+    exist. The capture came from one public channel, was anonymized, and is
+    checked into `crates/wamux/tests/newsletter_service/`. A test proves the
+    transcription renders back to the captured stanzas.
+  - Each read is checked by value: every `Newsletter` field (a list entry
+    has no subscriber count and falls back to the preview picture), each
+    history row with its body in the event bus's shape and the server's
+    tallies, a cleared poll vote kept as a dated vote with no options, and the
+    live-update duration.
+  - The requests are checked on the wire. History goes to the server and
+    names the channel inside, and `before` 0 is left out. The add-ons query
+    carries its `limit`, and the subscription goes to the channel with an
+    empty `<live_updates/>`. The poll vote is checked against the stanza WA Web
+    sent on 2026-09-25 (#26). It was not captured again because a vote on a
+    real channel is a public write.
+  - Three table tests go through all 6 RPCs: an unknown account gets
+    `NotFound`, an account that is not connected gets `FailedPrecondition`,
+    and a missing account ref gets `InvalidArgument`. A server refusal (403)
+    comes back as `PermissionDenied` with the `wa-code` and `wa-text` trailers
+    on the five RPCs that use an IQ. The vote still returns its stanza id,
+    since the server's verdict on it arrives later as a `ServerAckEvent`.
+  - Each `InvalidArgument` branch has a test, and each confirms that nothing
+    reached the wire: an empty or malformed jid, a jid that is not a channel
+    (vote, add-ons, subscription), a vote with no poll, a hash that is not 32
+    bytes, a repeated option or 1001 options, and a page size of 0.
+  - The mock wire helpers and the capture comparison that #68 introduced now
+    live in `tests/common/mock_wire.rs`, shared by both suites.
+  - `scripts/check-service-coverage.py` pins NewsletterService at 6 RPCs.
+
+  GetNewsletterMetadata and GetNewsletterMessages still send a jid that is not
+  a channel to the server. This is pinned as it is today and is questioned in
+  #99.
+
 ### Fixed
 
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**

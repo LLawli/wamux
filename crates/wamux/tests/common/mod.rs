@@ -18,6 +18,10 @@ use wamux::storage::postgres::PgStorage;
 use wamux::storage::sqlite::SqliteStorage;
 use wamux::{server, transport};
 
+// `MockWaServer` exists only in a stress build.
+#[cfg(feature = "stress")]
+pub mod mock_wire;
+
 /// The dockerized test database (CLAUDE.md's wamux-pg on :5433) unless the
 /// environment points elsewhere — the single home of the default DSN.
 pub fn database_url() -> String {

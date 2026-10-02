@@ -7,7 +7,8 @@ use wacore_binary::{Node, NodeContent};
 use wamux::proto::v1 as pb;
 
 use crate::captured::{GROUP, GROUP_ID, INVITE_CODE, OWNER_LID, OWNER_PN, REQUESTER_PN};
-use crate::harness::{G2, PICTURE, attr, fixture, operation, participant_jids, sent_iq};
+use crate::common::mock_wire::{attr, operation, sent_iq};
+use crate::harness::{G2, PICTURE, fixture, participant_jids};
 
 fn op(iq: &Node) -> &Node {
     operation(iq).expect("the iq carries an operation")

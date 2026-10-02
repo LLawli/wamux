@@ -7,7 +7,8 @@ use wamux::proto::v1 as pb;
 use crate::captured::{
     self, GROUP, GROUP_ID, INVITE_CODE, OWNER_LID, OWNER_PN, REQUESTER_LID, SUBJECT,
 };
-use crate::harness::{G2, attr, fixture, operation, sent_iq};
+use crate::common::mock_wire::{attr, operation, sent_iq};
+use crate::harness::{G2, fixture};
 
 /// What GetGroupMetadata, PreviewInvite and ListGroups relay for the captured
 /// group: the roster keeps the `@lid` jid AND the phone number beside it, and

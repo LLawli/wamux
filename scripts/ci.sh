@@ -120,6 +120,10 @@ scripts/check-service-coverage.py GroupService crates/wamux/tests/group_service 
 stage "MediaService RPC coverage"
 scripts/check-service-coverage.py MediaService crates/wamux/tests/media_service.rs 1
 
+# #70: same net under NewsletterService (6 RPCs).
+stage "NewsletterService RPC coverage"
+scripts/check-service-coverage.py NewsletterService crates/wamux/tests/newsletter_service 6
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -210,6 +214,12 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test group_service
 stage "stress tests (media service)"
 must_run_tests --features stress --test media_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test media_service
+
+# NewsletterService through the socket (#70): the five reads replay answers
+# captured live, the vote is checked against the stanza measured in #26.
+stage "stress tests (newsletter service)"
+must_run_tests --features stress --test newsletter_service
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test newsletter_service
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
