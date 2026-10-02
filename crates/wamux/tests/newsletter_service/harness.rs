@@ -1,16 +1,13 @@
 //! One logged-in account behind a real socket, and the calls every
 //! NewsletterService test shares.
 
-use std::time::Duration;
-
 use tonic::transport::Channel;
-use wacore_binary::Node;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::newsletter_service_client::NewsletterServiceClient;
 use wamux::stress::MockWaServer;
 
 use crate::captured::{CHANNEL, VOTED_POLL};
-use crate::common::mock_wire::{account_ref, attr};
+use crate::common::mock_wire::account_ref;
 use crate::common::{self, LoggedIn};
 
 pub const NEWSLETTER: &str = "newsletter";
@@ -85,20 +82,6 @@ impl Fixture {
 /// `sha256(option)`, the name a channel poll vote gives an option.
 pub fn option_hash(option: &str) -> Vec<u8> {
     wacore::poll::compute_option_hash(option).to_vec()
-}
-
-/// The `<message>` the mock received with this id, waiting for it to land.
-pub async fn sent_message(mock: &MockWaServer, id: &str) -> Node {
-    common::poll_until(
-        &format!("the mock to receive a <message id={id}>"),
-        Duration::from_secs(5),
-        || async {
-            mock.client_messages()
-                .into_iter()
-                .find(|m| attr(m, "id").as_deref() == Some(id))
-        },
-    )
-    .await
 }
 
 /// Every one of the 6 RPCs, for `account`, with arguments valid in shape. The

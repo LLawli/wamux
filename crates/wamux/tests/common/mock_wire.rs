@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use wacore_binary::Node;
+use wacore_binary::builder::NodeBuilder;
 use wamux::proto::v1 as pb;
 use wamux::stress::MockWaServer;
 
@@ -45,6 +46,30 @@ pub async fn sent_iq(mock: &MockWaServer, xmlns: &str, iq_type: &str, child: &st
         },
     )
     .await
+}
+
+/// The `<message>` the client sent with this id, waiting for it to land.
+pub async fn sent_message(mock: &MockWaServer, id: &str) -> Node {
+    super::poll_until(
+        &format!("the mock to receive a <message id={id}>"),
+        Duration::from_secs(5),
+        || async {
+            mock.client_messages()
+                .into_iter()
+                .find(|m| attr(m, "id").as_deref() == Some(id))
+        },
+    )
+    .await
+}
+
+/// `<media_conn>` naming `host` (a `MockCdn`) as the one media host, as the
+/// server answers the `w:m` IQ (#69, shared since #71).
+pub fn media_conn(host: &str) -> Node {
+    NodeBuilder::new("media_conn")
+        .attr("auth", "mock-auth")
+        .attr("ttl", "300")
+        .children([NodeBuilder::new("host").attr("hostname", host).build()])
+        .build()
 }
 
 /// How many `<iq>` of a namespace the client has sent so far.

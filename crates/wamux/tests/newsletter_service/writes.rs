@@ -5,8 +5,8 @@
 use wacore_binary::{Node, NodeContent};
 
 use crate::captured::{self, CHANNEL, LIVE_SECONDS, VOTED_POLL};
-use crate::common::mock_wire::{attr, operation, sent_iq};
-use crate::harness::{NEWSLETTER, fixture, option_hash, sent_message};
+use crate::common::mock_wire::{attr, operation, sent_iq, sent_message};
+use crate::harness::{NEWSLETTER, fixture, option_hash};
 
 /// Two options of the poll WA Web voted in when the stanza was measured.
 fn good_morning() -> Vec<u8> {
