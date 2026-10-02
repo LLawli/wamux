@@ -98,7 +98,7 @@ wacore-noise = { workspace = true, optional = true }
 wacore-binary = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 # History-sync fixtures have to compress their payload: 0.7 keeps the chunk
 # zlib-compressed behind LazyHistorySync instead of handing over raw bytes.
 flate2 = "1"

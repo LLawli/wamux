@@ -12,14 +12,10 @@
 //! Requires the docker Postgres (DATABASE_URL).
 #![cfg(feature = "stress")]
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use wacore_binary::Node;
 use wacore_binary::builder::NodeBuilder;
 use wamux::domain::newsletters;
 use wamux::proto::v1 as pb;
-use wamux::state::AccountRegistry;
 use wamux::stress::MockWaServer;
 use whatsapp_rust::Client;
 use whatsapp_rust::buffa::Message as _;
@@ -154,24 +150,6 @@ fn history_request(count: u32) -> pb::GetNewsletterMessagesRequest {
     }
 }
 
-/// A client logged in against the mock. Same recipe as
-/// `stress_newsletter_parse`: logged in is all an IQ needs.
-async fn logged_in_client(mock: &MockWaServer) -> (Arc<AccountRegistry>, Arc<Client>) {
-    let (registry, handle) = common::registered_account(mock.ws_url(), "stress-nl-hist").await;
-    registry
-        .connect(&handle, None, true)
-        .await
-        .expect("connect");
-    let client = handle.client().await.expect("client after connect");
-    for _ in 0..100 {
-        if client.is_logged_in() {
-            return (registry, client);
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("client never logged in against the mock");
-}
-
 /// The core's answer to one page.
 async fn core_reads(
     client: &Client,
@@ -192,7 +170,9 @@ fn inbound(row: &pb::NewsletterMessage) -> &pb::InboundMessage {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_reads_the_captured_page() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix("stress_newsletter_history", "core_reads_the_captured_page");
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let rows = core_reads(&client, &mock, captured_rows()).await;
 
     let ids: Vec<u64> = rows.iter().map(|r| r.server_id).collect();
@@ -259,6 +239,7 @@ async fn core_reads_the_captured_page() {
         (rows[0].original_timestamp, rows[0].last_edit_timestamp),
         (0, 0)
     );
+    logged.cleanup().await;
 }
 
 // #1548 → #1558: an absent `type` relays as absence, not as the `text` the
@@ -266,7 +247,12 @@ async fn core_reads_the_captured_page() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_relays_an_absent_type_as_absent() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_history",
+        "core_relays_an_absent_type_as_absent",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let rows = vec![
         row("790", None)
             .children([plaintext(text_payload("sem tipo"))])
@@ -274,6 +260,7 @@ async fn core_relays_an_absent_type_as_absent() {
     ];
     let out = core_reads(&client, &mock, rows).await;
     assert_eq!(out[0].r#type, "");
+    logged.cleanup().await;
 }
 
 // #1548 → #1558: every `<meta polltype>` token relays, whether or not the
@@ -281,7 +268,12 @@ async fn core_relays_an_absent_type_as_absent() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_relays_every_polltype_token() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_history",
+        "core_relays_every_polltype_token",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let rows = vec![
         row("791", Some("poll"))
             .children([meta_polltype("future_stage"), plaintext(text_payload("?"))])
@@ -293,6 +285,7 @@ async fn core_relays_every_polltype_token() {
     let out = core_reads(&client, &mock, rows).await;
     assert_eq!(out[0].poll_type, "future_stage");
     assert_eq!(out[1].poll_type, "creation");
+    logged.cleanup().await;
 }
 
 // #43: "the server sent no count" is not "nobody picked this", and bytes that
@@ -300,7 +293,12 @@ async fn core_relays_every_polltype_token() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_skips_a_vote_without_a_count_or_a_32_byte_hash() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_history",
+        "core_skips_a_vote_without_a_count_or_a_32_byte_hash",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let rows = vec![
         row("793", Some("poll"))
             .children([
@@ -323,6 +321,7 @@ async fn core_skips_a_vote_without_a_count_or_a_32_byte_hash() {
         .map(|v| (v.option_hash.len(), v.count))
         .collect();
     assert_eq!(votes, vec![(32, 9)], "only the well-formed vote crosses");
+    logged.cleanup().await;
 }
 
 // #56: accepted change. The old path read an answer without `<messages>` as an
@@ -331,20 +330,32 @@ async fn core_skips_a_vote_without_a_count_or_a_32_byte_hash() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_fails_an_answer_without_messages() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_history",
+        "core_fails_an_answer_without_messages",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     mock.answer_newsletter_iq_with(NodeBuilder::new("unexpected").build());
 
     let err = newsletters::get_messages(&client, &history_request(20))
         .await
         .expect_err("an answer without <messages> is not an empty page");
     assert_eq!(tonic::Status::from(err).code(), tonic::Code::Unavailable);
+    logged.cleanup().await;
 }
 
 // A page with `<messages>` and no rows is what an empty channel looks like.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_reads_an_empty_page_as_no_rows() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_history",
+        "core_reads_an_empty_page_as_no_rows",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let out = core_reads(&client, &mock, Vec::new()).await;
     assert!(out.is_empty());
+    logged.cleanup().await;
 }

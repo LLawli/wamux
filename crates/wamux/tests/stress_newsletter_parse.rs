@@ -17,14 +17,9 @@
 //! Requires the docker Postgres (DATABASE_URL).
 #![cfg(feature = "stress")]
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use serde_json::{Value, json};
 use wamux::domain::newsletters;
-use wamux::state::AccountRegistry;
 use wamux::stress::MockWaServer;
-use whatsapp_rust::Client;
 
 #[allow(dead_code)]
 mod common;
@@ -63,29 +58,15 @@ fn answer_one_channel(mock: &MockWaServer, node: Value) {
     mock.answer_mex_with(&json!({ "data": { "xwa2_newsletter": node } }).to_string());
 }
 
-/// A client logged in against the mock. Not `wait_for_connected`: its Ready
-/// stage waits on post-login syncs the mock does not serve, and logged in is
-/// all a MEX query needs. The registry is returned so it outlives the test.
-async fn logged_in_client(mock: &MockWaServer) -> (Arc<AccountRegistry>, Arc<Client>) {
-    let (registry, handle) = common::registered_account(mock.ws_url(), "stress-nl").await;
-    registry
-        .connect(&handle, None, true)
-        .await
-        .expect("connect");
-    let client = handle.client().await.expect("client after connect");
-    for _ in 0..100 {
-        if client.is_logged_in() {
-            return (registry, client);
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("client never logged in against the mock");
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_relays_the_servers_tokens_lowercased() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_parse",
+        "core_relays_the_servers_tokens_lowercased",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
 
     let cases = [
         ("ACTIVE", "VERIFIED", "SUBSCRIBER"),
@@ -105,6 +86,7 @@ async fn core_relays_the_servers_tokens_lowercased() {
         assert_eq!(out.jid, CHANNEL);
         assert_eq!(out.name, "WhatsApp");
     }
+    logged.cleanup().await;
 }
 
 // #56: the test used to answer `null` here, which is not what the server sends,
@@ -112,7 +94,12 @@ async fn core_relays_the_servers_tokens_lowercased() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_answers_not_found_for_a_missing_channel() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_parse",
+        "core_answers_not_found_for_a_missing_channel",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
 
     for (label, node) in [("live", non_existing_node()), ("null", Value::Null)] {
         answer_one_channel(&mock, node);
@@ -125,6 +112,7 @@ async fn core_answers_not_found_for_a_missing_channel() {
             "{label}"
         );
     }
+    logged.cleanup().await;
 }
 
 // #56: an entry that stands for no channel is dropped, as WA Web drops it; the
@@ -132,7 +120,12 @@ async fn core_answers_not_found_for_a_missing_channel() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_skips_a_list_entry_without_an_id() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_parse",
+        "core_skips_a_list_entry_without_an_id",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
 
     let mut id_less = channel_node("ACTIVE", "VERIFIED", "SUBSCRIBER");
     id_less.as_object_mut().expect("node object").remove("id");
@@ -149,6 +142,7 @@ async fn core_skips_a_list_entry_without_an_id() {
         .expect("core list_subscribed");
     let jids: Vec<&str> = out.newsletters.iter().map(|n| n.jid.as_str()).collect();
     assert_eq!(jids, vec![CHANNEL]);
+    logged.cleanup().await;
 }
 
 // #56: measured in production on a channel the account does not follow. A MEX
@@ -156,7 +150,12 @@ async fn core_skips_a_list_entry_without_an_id() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_relays_a_mex_refusal_as_the_servers_code() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_parse",
+        "core_relays_a_mex_refusal_as_the_servers_code",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
 
     mock.answer_mex_with(
         &json!({
@@ -175,13 +174,19 @@ async fn core_relays_a_mex_refusal_as_the_servers_code() {
     );
     assert_eq!(status.code(), tonic::Code::PermissionDenied);
     assert_eq!(status.metadata().get("wa-code").expect("wa-code"), "405");
+    logged.cleanup().await;
 }
 
 // Accepted loss 1: a role the library has no variant for relays as absent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn accepted_an_unmodelled_role_relays_as_empty() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_parse",
+        "accepted_an_unmodelled_role_relays_as_empty",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
 
     answer_one_channel(&mock, channel_node("ACTIVE", "VERIFIED", "MODERATOR"));
     let out = newsletters::get_metadata(&client, CHANNEL)
@@ -191,6 +196,7 @@ async fn accepted_an_unmodelled_role_relays_as_empty() {
         out.role, "",
         "upstream now keeps an unknown role: relay the token"
     );
+    logged.cleanup().await;
 }
 
 // Accepted loss 2: an absent state or verification reads as the library's
@@ -198,7 +204,12 @@ async fn accepted_an_unmodelled_role_relays_as_empty() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn accepted_absent_state_and_verification_read_as_defaults() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_parse",
+        "accepted_absent_state_and_verification_read_as_defaults",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
 
     let mut node = channel_node("ACTIVE", "VERIFIED", "SUBSCRIBER");
     node.as_object_mut().expect("node object").remove("state");
@@ -215,4 +226,5 @@ async fn accepted_absent_state_and_verification_read_as_defaults() {
         ("active", "unverified"),
         "upstream now keeps absence: relay it as \"\""
     );
+    logged.cleanup().await;
 }

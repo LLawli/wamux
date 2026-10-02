@@ -33,7 +33,9 @@ async fn real_client_completes_handshake_against_mock() {
     let mock = MockWaServer::start().await.expect("start mock");
     let ws_url = mock.ws_url();
 
-    let engine = common::pg_engine(4).await;
+    let engine = common::test_engine().await;
+    let prefix = common::test_prefix("stress_handshake", "real_client_completes_handshake");
+    common::sweep_orphans(&engine, &prefix).await;
 
     let tuning = RegistryTuning {
         ws_url_override: Some(ws_url),
@@ -43,7 +45,7 @@ async fn real_client_completes_handshake_against_mock() {
 
     let tag = uuid::Uuid::new_v4();
     let handle = registry
-        .create_account(Some(&format!("stress-m1-{tag}")))
+        .create_account(Some(&format!("{prefix}{tag}")))
         .await
         .expect("create account");
 
@@ -54,14 +56,10 @@ async fn real_client_completes_handshake_against_mock() {
         .expect("connect");
 
     // Wait for the server to complete one handshake (decrypted ClientFinish).
-    let mut completed = false;
-    for _ in 0..100 {
-        if mock.handshakes_completed() >= 1 {
-            completed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let completed = wait_for("one handshake", Duration::from_secs(10), || {
+        mock.handshakes_completed() >= 1
+    })
+    .await;
 
     registry.disconnect(&handle).await;
     let _ = registry.delete(&handle).await;
@@ -77,7 +75,8 @@ async fn registered_client_logs_in_and_talks_over_transport() {
     init_tracing();
 
     let mock = MockWaServer::start().await.expect("start mock");
-    let (registry, handle) = common::registered_account(mock.ws_url(), "stress-m2").await;
+    let prefix = common::test_prefix("stress_handshake", "registered_client_logs_in");
+    let (registry, handle) = common::registered_account(mock.ws_url(), &prefix).await;
 
     registry
         .connect(&handle, None, true)
@@ -89,14 +88,10 @@ async fn registered_client_logs_in_and_talks_over_transport() {
     // directions work). We wait on `parsed_nodes`, not just `post_login_frames`:
     // a decrypted-but-unparsed frame (the B1 flag-byte bug) would still bump the
     // frame count, so asserting on parsed nodes is what catches that regression.
-    let mut parsed = false;
-    for _ in 0..100 {
-        if mock.parsed_nodes() >= 1 {
-            parsed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let parsed = wait_for("one parsed node", Duration::from_secs(10), || {
+        mock.parsed_nodes() >= 1
+    })
+    .await;
 
     registry.disconnect(&handle).await;
     let _ = registry.delete(&handle).await;
@@ -111,6 +106,40 @@ async fn registered_client_logs_in_and_talks_over_transport() {
     );
 }
 
+/// Bounded wait on a mock counter. Returns whether it was reached instead of
+/// panicking, so the caller still disconnects and deletes its account before
+/// the assertion that names what was missing.
+async fn wait_for(what: &str, timeout: Duration, reached: impl Fn() -> bool) -> bool {
+    let reached = &reached;
+    let waited = tokio::time::timeout(
+        timeout,
+        // The inner bound is looser so the outer one fires first and returns
+        // false instead of panicking inside poll_until.
+        common::poll_until(what, timeout * 2, || async move { reached().then_some(()) }),
+    )
+    .await;
+    waited.is_ok()
+}
+
+/// The M3 deliverable: the harness sustains `n` live connections concurrently,
+/// no client terminally exiting under load. Samples `connected_count()` for the
+/// whole window and fails on the first drop, instead of checking once at the end
+/// (a client that dropped and came back would pass an end-of-window check, #67).
+async fn hold_connected(registry: &AccountRegistry, n: usize) {
+    const WINDOW: Duration = Duration::from_secs(2);
+    const SAMPLE_EVERY: Duration = Duration::from_millis(100);
+    let end = tokio::time::Instant::now() + WINDOW;
+    while tokio::time::Instant::now() < end {
+        let connected = registry.connected_count();
+        assert_eq!(
+            connected, n,
+            "connections must stay live (no terminal exits under load)"
+        );
+        // not a sync point: the 2 s hold window is the object of this test, sampled while it elapses
+        tokio::time::sleep(SAMPLE_EVERY).await;
+    }
+}
+
 /// M2b: a server-pushed `<receipt>` must surface as a `ReceiptEvent` on the
 /// account's broadcast — i.e. a pushed stanza flows through the real client's
 /// node pipeline into wamux's event bridge, unchanged.
@@ -119,7 +148,8 @@ async fn pushed_receipt_surfaces_as_event() {
     init_tracing();
 
     let mock = MockWaServer::start().await.expect("start mock");
-    let (registry, handle) = common::registered_account(mock.ws_url(), "stress-m2b-rcpt").await;
+    let prefix = common::test_prefix("stress_handshake", "pushed_receipt_surfaces");
+    let (registry, handle) = common::registered_account(mock.ws_url(), &prefix).await;
 
     // Subscribe BEFORE connecting: the broadcast has no replay, so a late
     // subscriber would miss the receipt the mock pushes right after login.
@@ -168,8 +198,8 @@ async fn connection_survives_keepalive_window() {
     init_tracing();
 
     let mock = MockWaServer::start().await.expect("start mock");
-    let (registry, handle) =
-        common::registered_account(mock.ws_url(), "stress-m2b-keepalive").await;
+    let prefix = common::test_prefix("stress_handshake", "connection_survives_keepalive");
+    let (registry, handle) = common::registered_account(mock.ws_url(), &prefix).await;
 
     registry
         .connect(&handle, None, true)
@@ -177,14 +207,10 @@ async fn connection_survives_keepalive_window() {
         .expect("connect");
 
     // KEEP_ALIVE_INTERVAL_MAX is 30 s; give a margin for the ping to land.
-    let mut pinged = false;
-    for _ in 0..70 {
-        if mock.keepalive_pings() >= 1 {
-            pinged = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+    let pinged = wait_for("a keepalive ping", Duration::from_secs(35), || {
+        mock.keepalive_pings() >= 1
+    })
+    .await;
 
     // The mock answers every <iq>, so the keepalive succeeds and the dead-socket
     // watchdog never trips: exactly one handshake, no silent reconnect.
@@ -221,7 +247,9 @@ async fn connect_many_clients_against_mock() {
 
     let mock = MockWaServer::start().await.expect("start mock");
 
-    let engine = common::pg_engine(16).await;
+    let engine = common::test_engine_with(16).await;
+    let prefix = common::test_prefix("stress_handshake", "connect_many_clients");
+    common::sweep_orphans(&engine, &prefix).await;
 
     // Bounded graceful stop keeps the N-account teardown from dragging.
     let tuning = RegistryTuning {
@@ -237,7 +265,7 @@ async fn connect_many_clients_against_mock() {
     let mut handles = Vec::with_capacity(n);
     for i in 0..n {
         let handle = registry
-            .create_account(Some(&format!("stress-m3-{tag}-{i}")))
+            .create_account(Some(&format!("{prefix}{tag}-{i}")))
             .await
             .expect("create account");
         let mut device = Device::new();
@@ -263,14 +291,11 @@ async fn connect_many_clients_against_mock() {
     }
 
     // Wait until every client has completed its handshake against the mock.
-    let mut completed = 0usize;
-    for _ in 0..600 {
-        completed = mock.handshakes_completed();
-        if completed >= n {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_for("every handshake", Duration::from_secs(60), || {
+        mock.handshakes_completed() >= n
+    })
+    .await;
+    let completed = mock.handshakes_completed();
 
     assert!(
         completed >= n,
@@ -286,16 +311,10 @@ async fn connect_many_clients_against_mock() {
         "every client should send at least one decryptable post-login frame"
     );
 
-    // Hold briefly and re-check: no client terminally exited — the harness
-    // sustains N live connections concurrently (the M3 deliverable).
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(
-        registry.connected_count(),
-        n,
-        "connections must stay live (no terminal exits under load)"
-    );
+    hold_connected(&registry, n).await;
 
     for handle in &handles {
         let _ = registry.delete(handle).await;
     }
+    common::sweep_orphans(registry.storage(), &prefix).await;
 }

@@ -176,6 +176,31 @@ has to follow them.
   No code changed: every new test passed against the stores as they were. The
   methods the stores leave on the trait's default body are tracked in #93.
 
+- **The integration suites run on both engines, wait on conditions, and clean
+  up after themselves** (issue #67). The groundwork for the service suites
+  (#68 to #71):
+  - One `logged_in_client` and one Unix-socket connector in `tests/common`.
+    They replace three and three copies.
+  - The stress suites build their registry from `WAMUX_TEST_ENGINE`, so
+    `scripts/ci.sh` runs every stress stage on SQLite too, including the load
+    test and the 199-client scale test in `--full`. The SQLite pass skips the
+    tests that name their engine (`postgres_`, `sqlite_`, `both_engines_`),
+    because they already ran in the first pass.
+  - No test synchronizes on a fixed sleep. Retries go through one bounded
+    `poll_until`. Specific replacements:
+    - The poll-vote "nothing was sent" check now waits for a valid vote sent
+      after the malformed ones (a positive signal).
+    - The scale test samples its two-second hold instead of checking once at
+      the end.
+    - The shutdown tests run on a paused clock.
+
+    `scripts/check-test-sleeps.py`, run in both modes, fails on any `sleep(`
+    in a test that lacks a `not a sync point:` comment giving the reason.
+  - Every test that creates an account sweeps its own `<suite>/<test>/`
+    prefix first and deletes the account at the end. `scripts/ci.sh`
+    snapshots the shared Postgres before the first test and fails at the end
+    if any account or throwaway database created by the run survived.
+
 ### Fixed
 
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**

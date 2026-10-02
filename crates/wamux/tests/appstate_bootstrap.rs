@@ -51,10 +51,11 @@ fn answer(has_more_patches: bool) -> PatchList {
 }
 
 /// Seed the row on a fresh account, run one answer through the library, and
-/// return what the store holds afterwards.
-async fn stored_after(storage: Arc<dyn StorageEngine>, list: PatchList) -> HashState {
+/// return what the store holds afterwards. The account is deleted before
+/// returning, so the shared database keeps no `bootstrap` rows (#67).
+async fn stored_after(storage: Arc<dyn StorageEngine>, prefix: &str, list: PatchList) -> HashState {
     let account = storage
-        .create_account(Some(&format!("bootstrap-{}", uuid::Uuid::new_v4())))
+        .create_account(Some(&format!("{prefix}{}", uuid::Uuid::new_v4())))
         .await
         .expect("create account");
     let backend = storage.device_backend(account.device_id);
@@ -66,15 +67,20 @@ async fn stored_after(storage: Arc<dyn StorageEngine>, list: PatchList) -> HashS
         .process_patch_list(list, true)
         .await
         .expect("process the answer");
-    backend
+    let stored = backend
         .get_version(COLLECTION)
         .await
         .expect("read back")
-        .expect("the row is still there")
+        .expect("the row is still there");
+    storage
+        .delete_account(account.uuid)
+        .await
+        .expect("delete the test account");
+    stored
 }
 
-async fn a_baseline_at_the_head_gets_marked(storage: Arc<dyn StorageEngine>) {
-    let stored = stored_after(storage, answer(false)).await;
+async fn a_baseline_at_the_head_gets_marked(storage: Arc<dyn StorageEngine>, prefix: &str) {
+    let stored = stored_after(storage, prefix, answer(false)).await;
     assert!(
         stored.bootstrapped,
         "a final empty answer marks the baseline"
@@ -85,22 +91,26 @@ async fn a_baseline_at_the_head_gets_marked(storage: Arc<dyn StorageEngine>) {
 
 /// The control: a page is not the head, and must not be marked. Without it the
 /// test above would pass on a library that marks everything.
-async fn a_page_leaves_it_unmarked(storage: Arc<dyn StorageEngine>) {
-    let stored = stored_after(storage, answer(true)).await;
+async fn a_page_leaves_it_unmarked(storage: Arc<dyn StorageEngine>, prefix: &str) {
+    let stored = stored_after(storage, prefix, answer(true)).await;
     assert!(!stored.bootstrapped, "a page does not finish a bootstrap");
 }
 
 #[tokio::test]
 async fn postgres_marks_a_baseline_at_the_head() {
     let storage: Arc<dyn StorageEngine> = common::pg_engine(4).await;
-    a_baseline_at_the_head_gets_marked(storage.clone()).await;
-    a_page_leaves_it_unmarked(storage).await;
+    let prefix = common::test_prefix("appstate_bootstrap", "postgres_marks_a_baseline");
+    common::sweep_orphans(&storage, &prefix).await;
+    a_baseline_at_the_head_gets_marked(storage.clone(), &prefix).await;
+    a_page_leaves_it_unmarked(storage, &prefix).await;
 }
 
 #[tokio::test]
 async fn sqlite_marks_a_baseline_at_the_head() {
     let (storage, _dir) = common::sqlite_engine().await;
     let storage: Arc<dyn StorageEngine> = storage;
-    a_baseline_at_the_head_gets_marked(storage.clone()).await;
-    a_page_leaves_it_unmarked(storage).await;
+    let prefix = common::test_prefix("appstate_bootstrap", "sqlite_marks_a_baseline");
+    common::sweep_orphans(&storage, &prefix).await;
+    a_baseline_at_the_head_gets_marked(storage.clone(), &prefix).await;
+    a_page_leaves_it_unmarked(storage, &prefix).await;
 }
