@@ -2,13 +2,14 @@
 //! `127.0.0.1:0` that answers a GET for a registered `direct_path` with its
 //! bytes (the query string, which carries the auth and token, is ignored) and
 //! 404 for anything else. Every request target is recorded, so a test can
-//! assert what the client asked for.
+//! assert what the client asked for. A POST is an upload (#71): the body is
+//! kept, and a later GET of the `direct_path` it was answered with serves it.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 /// What the server shares with its connection tasks. `std` mutexes: every
@@ -17,6 +18,7 @@ use tokio::net::{TcpListener, TcpStream};
 struct CdnState {
     bodies: Mutex<HashMap<String, Vec<u8>>>,
     requests: Mutex<Vec<String>>,
+    uploads: Mutex<Vec<MockUpload>>,
 }
 
 /// A running mock CDN. Drop to stop accepting.
@@ -60,6 +62,25 @@ impl MockCdn {
     pub fn requests(&self) -> Vec<String> {
         lock(&self.state.requests).clone()
     }
+
+    /// Every upload (POST) received, oldest first (#71). Each one was answered
+    /// 200 with `{"url": .., "direct_path": <its direct_path>}`, the shape the
+    /// library's upload reads, and a later GET of that `direct_path` serves
+    /// the uploaded bytes back.
+    pub fn uploads(&self) -> Vec<MockUpload> {
+        lock(&self.state.uploads).clone()
+    }
+}
+
+/// One upload as the CDN received it.
+#[derive(Clone, Debug)]
+pub struct MockUpload {
+    /// The request path, without the query (`/mms/image/<token>`...).
+    pub path: String,
+    /// The body: the encrypted media plus its MAC, as the client sent it.
+    pub body: Vec<u8>,
+    /// The `direct_path` the CDN answered with; unique per upload.
+    pub direct_path: String,
 }
 
 /// Lock, recovering from poison: a panicked connection task must not hide the
@@ -76,38 +97,91 @@ async fn accept_loop(listener: TcpListener, state: Arc<CdnState>) {
     }
 }
 
+/// One request as read off the wire: the request line, and the body a POST
+/// declared with `Content-Length`.
+struct CdnRequest {
+    method: String,
+    target: String,
+    body: Vec<u8>,
+}
+
 /// Read one request, answer it, close. `Connection: close` gives ureq a body
 /// end that does not depend on keep-alive bookkeeping.
 async fn answer_one_request(stream: TcpStream, state: Arc<CdnState>) {
     let mut reader = BufReader::new(stream);
-    let Some(target) = read_request_target(&mut reader).await else {
+    let Some(request) = read_request(&mut reader).await else {
         return;
     };
-    let path = target.split('?').next().unwrap_or_default().to_string();
-    lock(&state.requests).push(target);
-    let body = lock(&state.bodies).get(&path).cloned();
+    let path = request
+        .target
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    lock(&state.requests).push(request.target.clone());
+    let answer = match request.method.as_str() {
+        "GET" => lock(&state.bodies).get(&path).cloned(),
+        "POST" => Some(answer_upload(&state, &path, &request)),
+        _ => None,
+    };
     let mut stream = reader.into_inner();
-    let _ = stream.write_all(&render_response(body)).await;
+    let _ = stream.write_all(&render_response(answer)).await;
     let _ = stream.shutdown().await;
 }
 
-/// The request-target of a GET, after draining the headers. `None` for
-/// anything that is not a well-formed GET request line.
-async fn read_request_target(reader: &mut BufReader<TcpStream>) -> Option<String> {
+/// What a POST gets back. The library's resume check (`&resume=1`, a POST with
+/// no body, upload.rs:84) is answered `{}`: nothing uploaded yet. Anything
+/// else is the upload itself: keep it, and name the `direct_path` it is served
+/// at, unique per upload so two uploads never read each other's bytes.
+fn answer_upload(state: &CdnState, path: &str, request: &CdnRequest) -> Vec<u8> {
+    if request.target.contains("resume=1") {
+        return b"{}".to_vec();
+    }
+    let mut uploads = lock(&state.uploads);
+    let direct_path = format!("/v/mock/upload-{}", uploads.len() + 1);
+    lock(&state.bodies).insert(direct_path.clone(), request.body.clone());
+    uploads.push(MockUpload {
+        path: path.to_string(),
+        body: request.body.clone(),
+        direct_path: direct_path.clone(),
+    });
+    // RawUploadResponse (upload.rs:363) reads exactly these two fields.
+    format!(r#"{{"url":"https://mock-cdn.invalid{direct_path}","direct_path":"{direct_path}"}}"#)
+        .into_bytes()
+}
+
+/// The request line, the headers and, for a body-carrying request, the body.
+/// `None` for anything that is not a well-formed request.
+async fn read_request(reader: &mut BufReader<TcpStream>) -> Option<CdnRequest> {
     let mut line = String::new();
     reader.read_line(&mut line).await.ok()?;
     let mut parts = line.split_whitespace();
-    let (method, target) = (parts.next()?, parts.next()?.to_string());
-    drain_headers(reader).await?;
-    (method == "GET").then_some(target)
+    let (method, target) = (parts.next()?.to_string(), parts.next()?.to_string());
+    let length = read_headers(reader).await?;
+    let mut body = vec![0u8; length];
+    reader.read_exact(&mut body).await.ok()?;
+    Some(CdnRequest {
+        method,
+        target,
+        body,
+    })
 }
 
-async fn drain_headers(reader: &mut BufReader<TcpStream>) -> Option<()> {
+/// Drain the headers; the `Content-Length` they declare, 0 when absent. The
+/// library's uploads always set it (ureq-client execute_upload, lib.rs:344),
+/// so a chunked body never reaches here.
+async fn read_headers(reader: &mut BufReader<TcpStream>) -> Option<usize> {
+    let mut length = 0;
     loop {
         let mut header = String::new();
         let read = reader.read_line(&mut header).await.ok()?;
         if read == 0 || header == "\r\n" || header == "\n" {
-            return Some(());
+            return Some(length);
+        }
+        if let Some((name, value)) = header.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse().ok()?;
         }
     }
 }

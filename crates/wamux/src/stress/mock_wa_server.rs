@@ -10,8 +10,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::iq_table::{self, IqAnswer, SharedIqAnswers};
-use super::wire_frames::{next_frame, send_frame};
+use super::iq_table::{IqAnswer, SharedIqAnswers};
+use super::peer_answers::PeerWorld;
+use super::post_login::{ConnCounters, Session, read_client_frames};
+use super::wire_frames::{next_frame, send_frame, send_node};
 use anyhow::{Context, anyhow};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_websockets::ServerBuilder;
@@ -19,8 +21,6 @@ use wacore::framing::FrameDecoder;
 use wacore::store::Device;
 use wacore_binary::builder::NodeBuilder;
 use wacore_binary::consts::{NOISE_PATTERN_XX, WA_CONN_HEADER};
-use wacore_binary::encoder::EncodeNode;
-use wacore_binary::marshal::{marshal, unmarshal_ref};
 use wacore_noise::NoiseHandshake;
 use wacore_noise::test_util::build_cert_chain_bytes;
 use whatsapp_rust::buffa;
@@ -43,16 +43,17 @@ pub struct MockWaServer {
     iq_answers: SharedIqAnswers,
     client_messages: SharedClientMessages,
     client_iqs: SharedClientIqs,
+    world: Arc<PeerWorld>,
     accept_task: tokio::task::JoinHandle<()>,
 }
 
 /// Every `<message>` a client sent after login, in arrival order: what a test
 /// asserts a send put on the wire (#26, the channel poll vote).
-type SharedClientMessages = Arc<std::sync::Mutex<Vec<wacore_binary::Node>>>;
+pub(super) type SharedClientMessages = Arc<std::sync::Mutex<Vec<wacore_binary::Node>>>;
 
 /// Every `<iq>` a client sent after login, in arrival order: what a write
 /// (a group subject, a leave) put on the wire (#68).
-type SharedClientIqs = Arc<std::sync::Mutex<Vec<wacore_binary::Node>>>;
+pub(super) type SharedClientIqs = Arc<std::sync::Mutex<Vec<wacore_binary::Node>>>;
 
 impl Drop for MockWaServer {
     fn drop(&mut self) {
@@ -63,6 +64,12 @@ impl Drop for MockWaServer {
 impl MockWaServer {
     /// Bind `127.0.0.1:0` and start accepting. Returns once the listener is up.
     pub async fn start() -> anyhow::Result<Self> {
+        Self::start_with(PeerWorld::default()).await
+    }
+
+    /// `start` over a given peer world: what `start_as` (#71) builds on.
+    pub(super) async fn start_with(world: PeerWorld) -> anyhow::Result<Self> {
+        let world = Arc::new(world);
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .context("bind mock server")?;
@@ -78,6 +85,7 @@ impl MockWaServer {
         let answers = iq_answers.clone();
         let messages = client_messages.clone();
         let iqs = client_iqs.clone();
+        let shared_world = world.clone();
         let hs = handshakes.clone();
         let plf = post_login_frames.clone();
         let pn = parsed_nodes.clone();
@@ -94,6 +102,7 @@ impl MockWaServer {
                             iq_answers: answers.clone(),
                             client_messages: messages.clone(),
                             client_iqs: iqs.clone(),
+                            world: shared_world.clone(),
                         };
                         tokio::spawn(async move {
                             if let Err(e) = serve_connection(stream, counters).await {
@@ -118,6 +127,7 @@ impl MockWaServer {
             iq_answers,
             client_messages,
             client_iqs,
+            world,
             accept_task,
         })
     }
@@ -170,7 +180,12 @@ impl MockWaServer {
         self.push_rule(xmlns, iq_type, child_tag, IqAnswer::Refusal { code, text });
     }
 
-    fn push_rule(&self, xmlns: &str, iq_type: &str, child_tag: &str, answer: IqAnswer) {
+    /// The peer world `serve_peer` and friends fill (#71).
+    pub(super) fn world(&self) -> &Arc<PeerWorld> {
+        &self.world
+    }
+
+    pub(super) fn push_rule(&self, xmlns: &str, iq_type: &str, child_tag: &str, answer: IqAnswer) {
         // Poisoning needs a panic while the lock is held; nothing here panics.
         if let Ok(mut answers) = self.iq_answers.lock() {
             answers.push(xmlns, iq_type, child_tag, answer);
@@ -230,17 +245,6 @@ impl MockWaServer {
     }
 }
 
-/// The per-connection counters handed to each spawned `serve_connection`.
-struct ConnCounters {
-    handshakes: Arc<AtomicUsize>,
-    post_login_frames: Arc<AtomicUsize>,
-    parsed_nodes: Arc<AtomicUsize>,
-    keepalive_pings: Arc<AtomicUsize>,
-    iq_answers: SharedIqAnswers,
-    client_messages: SharedClientMessages,
-    client_iqs: SharedClientIqs,
-}
-
 /// Unix seconds (server time) for the `<success t=...>` attribute.
 fn now_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -253,15 +257,8 @@ fn now_secs() -> u64 {
 /// One client connection: WS upgrade, the XX responder handshake, then the
 /// post-handshake `<success>` + read loop over the encrypted transport.
 async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::Result<()> {
-    let ConnCounters {
-        handshakes: counter,
-        post_login_frames: post_login,
-        parsed_nodes,
-        keepalive_pings,
-        iq_answers,
-        client_messages,
-        client_iqs,
-    } = counters;
+    let counter = counters.handshakes.clone();
+    let world = counters.world.clone();
     let (_req, mut ws) = ServerBuilder::new()
         .accept(stream)
         .await
@@ -360,16 +357,17 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
     // -> <success>: the client treats this as login success and flips
     // is_logged_in, then sends its post-login IQs over the encrypted transport.
     let mut send_ctr: u32 = 0;
-    let mut recv_ctr: u32 = 0;
-    let success = NodeBuilder::new("success")
-        .attr("t", now_secs().to_string())
-        .build();
-    let success_plain = marshal(&success).map_err(|e| anyhow!("marshal success: {e}"))?;
-    let success_ct = send_cipher
-        .encrypt_with_counter(send_ctr, &success_plain)
-        .map_err(|e| anyhow!("encrypt success: {e}"))?;
-    send_ctr += 1;
-    send_frame(&mut ws, &success_ct).await?;
+    let recv_ctr: u32 = 0;
+    // #71: teach the client who the served peers are before it reports being
+    // logged in; see `PeerWorld::contact_notifications`.
+    for notification in world.contact_notifications() {
+        send_node(&mut ws, &send_cipher, &mut send_ctr, &notification).await?;
+    }
+    let mut success = NodeBuilder::new("success").attr("t", now_secs().to_string());
+    if let Some(lid) = world.success_lid() {
+        success = success.attr("lid", lid);
+    }
+    send_node(&mut ws, &send_cipher, &mut send_ctr, &success.build()).await?;
 
     // -> push one <receipt>: a server-originated stanza that needs no Signal
     // session, so a logged-in client decodes it and dispatches Event::Receipt
@@ -380,77 +378,17 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
         .attr("type", "delivery")
         .attr("t", now_secs().to_string())
         .build();
-    let receipt_plain = marshal(&receipt).map_err(|e| anyhow!("marshal receipt: {e}"))?;
-    let receipt_ct = send_cipher
-        .encrypt_with_counter(send_ctr, &receipt_plain)
-        .map_err(|e| anyhow!("encrypt receipt: {e}"))?;
-    send_ctr += 1;
-    send_frame(&mut ws, &receipt_ct).await?;
+    send_node(&mut ws, &send_cipher, &mut send_ctr, &receipt).await?;
 
-    // Read the client's encrypted post-login frames. Decrypting even one proves
-    // the transport works both ways and the client logged in. We reply a minimal
-    // <iq type=result> to any <iq> so keepalive/login IQs don't immediately fail.
-    loop {
-        let frame = match next_frame(&mut ws, &mut decoder, &mut first_frame).await {
-            Ok(f) => f,
-            Err(_) => break,
-        };
-        let mut buf = frame.to_vec();
-        if recv_cipher
-            .decrypt_in_place_with_counter(recv_ctr, &mut buf)
-            .is_err()
-        {
-            tracing::warn!("post-login decrypt failed (counter desync?)");
-            break;
-        }
-        recv_ctr += 1;
-        post_login.fetch_add(1, Ordering::SeqCst);
-
-        // The decrypted payload is `[flag_byte][node]` (flag & 2 => zlib), the
-        // same envelope `wacore_binary::Encoder` writes on send. Without this
-        // unpack the leading flag byte derails `unmarshal_ref`, so the client's
-        // post-login IQs (e.g. usync) go unanswered, the waiter stays pending,
-        // and the keepalive loop skips its ping forever (#stress-m2b).
-        let payload = match wacore_binary::util::unpack(&buf) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(error = %e, "post-login unpack failed");
-                continue;
-            }
-        };
-
-        if let Ok(node) = unmarshal_ref(&payload) {
-            parsed_nodes.fetch_add(1, Ordering::SeqCst);
-            let tag = node.tag();
-            let xmlns_dbg = node.get_attr("xmlns").map(|v| v.to_string());
-            let type_dbg = node.get_attr("type").map(|v| v.to_string());
-            tracing::debug!(%tag, ?xmlns_dbg, ?type_dbg, "post-login node from client");
-            // Keepalive pings are `<iq xmlns="w:p" type="get">` (wacore
-            // KeepaliveSpec). Counting them proves the connection survived long
-            // enough for the client's 15-30 s keepalive loop to fire.
-            if tag == "iq"
-                && node.get_attr("xmlns").map(|v| v.to_string()).as_deref() == Some("w:p")
-            {
-                keepalive_pings.fetch_add(1, Ordering::SeqCst);
-            }
-            if tag == "message"
-                && let Ok(mut messages) = client_messages.lock()
-            {
-                messages.push(node.to_owned());
-            }
-            if tag == "iq" {
-                if let Ok(mut iqs) = client_iqs.lock() {
-                    iqs.push(node.to_owned());
-                }
-                if let Some(reply) = iq_table::iq_reply_for(&node, &iq_answers)
-                    && let Ok(plain) = marshal(&reply)
-                    && let Ok(ct) = send_cipher.encrypt_with_counter(send_ctr, &plain)
-                {
-                    send_ctr += 1;
-                    let _ = send_frame(&mut ws, &ct).await;
-                }
-            }
-        }
-    }
+    let session = Session {
+        ws,
+        decoder,
+        first_frame,
+        recv_cipher,
+        send_cipher,
+        send_ctr,
+        recv_ctr,
+    };
+    read_client_frames(session, counters).await;
     Ok(())
 }
