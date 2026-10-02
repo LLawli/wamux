@@ -2,19 +2,14 @@
 //! connection (the same path production uses). Runs against whichever engine
 //! WAMUX_TEST_ENGINE names (default Postgres, which needs the docker container).
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use wacore::store::traits::LidPnMappingEntry;
-use wamux::config::Config;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::admin_service_client::AdminServiceClient;
 use wamux::proto::v1::contact_service_client::ContactServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
-use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage::StorageEngine;
-use wamux::{server, transport};
 
 // Only a subset of the shared helpers is used per test binary.
 #[allow(dead_code)]
@@ -28,7 +23,7 @@ fn account_ref(uuid: &str) -> pb::AccountRef {
 
 #[tokio::test]
 async fn account_lifecycle_over_socket() {
-    let (channel, engine) = spawn_server().await;
+    let (channel, engine) = common::spawn_server().await;
     let prefix = common::test_prefix("grpc_server", "account_lifecycle_over_socket");
     common::sweep_orphans(&engine, &prefix).await;
     let mut client = AccountServiceClient::new(channel);
@@ -92,36 +87,9 @@ async fn account_lifecycle_over_socket() {
     assert_eq!(after.unwrap_err().code(), tonic::Code::NotFound);
 }
 
-/// Spin the server on a throwaway socket and return a connected channel plus
-/// the engine behind it (the LID-mapping suite writes through the same storage
-/// the RPC reads).
-async fn spawn_server() -> (tonic::transport::Channel, Arc<dyn StorageEngine>) {
-    let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
-    let socket = dir.path().join("wamux.sock");
-    let socket_str = socket.to_str().unwrap().to_string();
-
-    let engine = common::test_engine().await;
-    let registry = Arc::new(AccountRegistry::new(
-        engine.clone(),
-        RegistryTuning::with_ring(64),
-    ));
-    let config = Config {
-        socket_path: socket_str.clone(),
-        enable_reflection: false,
-        ..Config::default()
-    };
-    let stream = transport::uds_listener::bind(&socket_str, 0o660, None).expect("bind");
-    let router = server::build_router(registry, &config, transport::shutdown::Shutdown::new());
-    tokio::spawn(async move {
-        let _ = router.serve_with_incoming(stream).await;
-    });
-
-    (common::uds_channel(&socket).await, engine)
-}
-
 #[tokio::test]
 async fn admin_health_and_metrics_over_socket() {
-    let (channel, _engine) = spawn_server().await;
+    let (channel, _engine) = common::spawn_server().await;
     let mut admin = AdminServiceClient::new(channel);
 
     // Health: serving always true while answering; ready true since PG is up.
@@ -163,7 +131,7 @@ async fn admin_health_and_metrics_over_socket() {
 /// say so instead of lying with an empty answer.
 #[tokio::test]
 async fn lid_mappings_are_readable_over_socket() {
-    let (channel, engine) = spawn_server().await;
+    let (channel, engine) = common::spawn_server().await;
     let mut accounts = AccountServiceClient::new(channel.clone());
     let mut contacts = ContactServiceClient::new(channel);
 
@@ -245,7 +213,7 @@ async fn lid_mappings_are_readable_over_socket() {
 /// is enough, and the edge hears what to fix rather than "not connected".
 #[tokio::test]
 async fn status_revoke_is_refused_on_the_wrong_shape_over_socket() {
-    let (channel, engine) = spawn_server().await;
+    let (channel, engine) = common::spawn_server().await;
     let prefix = common::test_prefix("grpc_server", "status_revoke_is_refused");
     common::sweep_orphans(&engine, &prefix).await;
     let mut accounts = AccountServiceClient::new(channel.clone());

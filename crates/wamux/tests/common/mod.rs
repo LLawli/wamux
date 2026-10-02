@@ -10,11 +10,13 @@ use hyper_util::rt::TokioIo;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 use wacore::store::Device;
+use wamux::config::Config;
 use wamux::proto::v1 as pb;
 use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
 use wamux::storage::StorageEngine;
 use wamux::storage::postgres::PgStorage;
 use wamux::storage::sqlite::SqliteStorage;
+use wamux::{server, transport};
 
 /// The dockerized test database (CLAUDE.md's wamux-pg on :5433) unless the
 /// environment points elsewhere — the single home of the default DSN.
@@ -273,4 +275,40 @@ pub async fn logged_in_client(mock: &wamux::stress::MockWaServer, prefix: &str) 
         handle,
         client,
     }
+}
+
+/// Serve `registry` on a throwaway socket and return a channel to it (#68).
+/// The mock-backed service suites build the registry with
+/// `registered_account`/`logged_in_client`, so the account the RPCs name is
+/// the one connected to the mock. `spawn_server` (moved here from
+/// `grpc_server.rs`) is this over a fresh `test_engine()` registry.
+pub async fn serve_registry(registry: Arc<AccountRegistry>) -> Channel {
+    // Leaked on purpose, like the engine dir above: the socket has to outlive
+    // the server task and the process is about to exit anyway.
+    let dir = Box::leak(Box::new(tempfile::tempdir().expect("tempdir")));
+    let socket = dir.path().join("wamux.sock");
+    let socket_str = socket.to_str().expect("utf-8 socket path").to_string();
+    let config = Config {
+        socket_path: socket_str.clone(),
+        enable_reflection: false,
+        ..Config::default()
+    };
+    let stream = transport::uds_listener::bind(&socket_str, 0o660, None).expect("bind");
+    let router = server::build_router(registry, &config, transport::shutdown::Shutdown::new());
+    tokio::spawn(async move {
+        let _ = router.serve_with_incoming(stream).await;
+    });
+    uds_channel(&socket).await
+}
+
+/// Spin the server on a throwaway socket and return a connected channel plus
+/// the engine behind it (the LID-mapping suite writes through the same storage
+/// the RPC reads). Moved here from `grpc_server.rs` in #68.
+pub async fn spawn_server() -> (Channel, Arc<dyn StorageEngine>) {
+    let engine = test_engine().await;
+    let registry = Arc::new(AccountRegistry::new(
+        engine.clone(),
+        RegistryTuning::with_ring(64),
+    ));
+    (serve_registry(registry).await, engine)
 }
