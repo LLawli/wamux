@@ -7,7 +7,10 @@
 //! This is test infrastructure, gated behind the `stress` feature.
 
 mod iq_table;
+pub mod loopback_http;
+pub mod mock_cdn;
 pub mod mock_wa_server;
 mod wire_frames;
 
+pub use mock_cdn::MockCdn;
 pub use mock_wa_server::MockWaServer;
