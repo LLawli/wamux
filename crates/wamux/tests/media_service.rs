@@ -13,8 +13,6 @@
 use tonic::Code;
 use tonic::transport::Channel;
 use wacore::download::MediaType;
-use wacore_binary::Node;
-use wacore_binary::builder::NodeBuilder;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::media_service_client::MediaServiceClient;
 use wamux::stress::{MockCdn, MockWaServer};
@@ -34,22 +32,17 @@ struct Fixture {
     account: pb::AccountRef,
 }
 
-/// `<media_conn>` naming the loopback CDN as the one host, as the server
-/// answers the `w:m` IQ.
-fn media_conn(host: &str) -> Node {
-    NodeBuilder::new("media_conn")
-        .attr("auth", "mock-auth")
-        .attr("ttl", "300")
-        .children([NodeBuilder::new("host").attr("hostname", host).build()])
-        .build()
-}
-
 async fn fixture(test: &str) -> Fixture {
     let mock = MockWaServer::start().await.expect("start mock");
     let cdn = MockCdn::start().await.expect("start cdn");
     let prefix = common::test_prefix("media_service", test);
     let logged = common::logged_in_client(&mock, &prefix).await;
-    mock.answer_iq("w:m", "set", "media_conn", media_conn(&cdn.host()));
+    mock.answer_iq(
+        "w:m",
+        "set",
+        "media_conn",
+        common::mock_wire::media_conn(&cdn.host()),
+    );
     let channel = common::serve_registry(logged.registry.clone()).await;
     let account = pb::AccountRef {
         r#ref: Some(pb::account_ref::Ref::Uuid(logged.handle.uuid.to_string())),

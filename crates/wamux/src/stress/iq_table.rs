@@ -32,9 +32,17 @@ struct IqRule {
 pub(super) enum IqAnswer {
     /// `<iq type=result>` wrapping this node.
     Result(Box<wacore_binary::Node>),
+    /// `<iq type=result>` wrapping what the function builds from the request
+    /// (#71): a usync or prekey answer depends on the jids asked for, which a
+    /// fixed node cannot. `None` answers a bare result, like an unmatched IQ.
+    Computed(ComputedAnswer),
     /// `<iq type=error><error code text/></iq>`.
     Refusal { code: u16, text: String },
 }
+
+/// Builds the body of an answer from the `<iq>` it answers.
+pub(super) type ComputedAnswer =
+    Arc<dyn Fn(&wacore_binary::Node) -> Option<wacore_binary::Node> + Send + Sync>;
 
 /// The identifying parts of a client `<iq>`, taken once per stanza.
 struct IqShape {
@@ -90,7 +98,7 @@ pub(super) fn iq_reply_for(
         iq_type: node.get_attr("type").map(|v| v.to_string()),
         child_tag: first_child_tag(node),
     };
-    Some(iq_reply(&shape, answers))
+    Some(iq_reply(&shape, node, answers))
 }
 
 /// Tag of the IQ's first child, `""` when it has none (the group photo remove).
@@ -101,7 +109,11 @@ fn first_child_tag(node: &wacore_binary::NodeRef<'_>) -> String {
         .unwrap_or_default()
 }
 
-fn iq_reply(shape: &IqShape, answers: &SharedIqAnswers) -> wacore_binary::Node {
+fn iq_reply(
+    shape: &IqShape,
+    request: &wacore_binary::NodeRef<'_>,
+    answers: &SharedIqAnswers,
+) -> wacore_binary::Node {
     let bare = |kind: &str| {
         NodeBuilder::new("iq")
             .attr("type", kind)
@@ -112,6 +124,10 @@ fn iq_reply(shape: &IqShape, answers: &SharedIqAnswers) -> wacore_binary::Node {
     };
     match answers.find(shape) {
         Some(IqAnswer::Result(body)) => bare("result").children([(**body).clone()]).build(),
+        Some(IqAnswer::Computed(build)) => match build(&request.to_owned()) {
+            Some(body) => bare("result").children([body]).build(),
+            None => bare("result").build(),
+        },
         Some(IqAnswer::Refusal { code, text }) => {
             let error = NodeBuilder::new("error")
                 .attr("code", code.to_string())

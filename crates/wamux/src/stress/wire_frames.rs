@@ -56,3 +56,21 @@ where
         .context("ws send")?;
     Ok(())
 }
+
+/// Marshal `node`, seal it with the next send counter and put it on the wire.
+pub(super) async fn send_node<S>(
+    ws: &mut tokio_websockets::WebSocketStream<S>,
+    cipher: &wacore_noise::NoiseCipher,
+    counter: &mut u32,
+    node: &wacore_binary::Node,
+) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let plain = wacore_binary::marshal::marshal(node).map_err(|e| anyhow!("marshal: {e}"))?;
+    let sealed = cipher
+        .encrypt_with_counter(*counter, &plain)
+        .map_err(|e| anyhow!("encrypt: {e}"))?;
+    *counter += 1;
+    send_frame(ws, &sealed).await
+}

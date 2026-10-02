@@ -130,6 +130,18 @@ pub async fn registered_account(
     ws_url: String,
     prefix: &str,
 ) -> (Arc<AccountRegistry>, Arc<AccountHandle>) {
+    registered_account_as(ws_url, prefix, "5511999999999@s.whatsapp.net", |_| {}).await
+}
+
+/// `registered_account` with the device's own `pn` (a companion carries its
+/// device id, `user:7@s.whatsapp.net`) and a last touch on the `Device` before
+/// it is saved (#71).
+pub async fn registered_account_as(
+    ws_url: String,
+    prefix: &str,
+    pn: &str,
+    shape: impl FnOnce(&mut Device),
+) -> (Arc<AccountRegistry>, Arc<AccountHandle>) {
     let engine = test_engine().await;
     sweep_orphans(&engine, prefix).await;
     let tuning = RegistryTuning {
@@ -145,12 +157,9 @@ pub async fn registered_account(
         .expect("create account");
 
     let mut device = Device::new();
-    device.pn = Some(
-        "5511999999999@s.whatsapp.net"
-            .parse()
-            .expect("parse pn jid"),
-    );
+    device.pn = Some(pn.parse().expect("parse pn jid"));
     device.push_name = "Stress".to_string();
+    shape(&mut device);
     registry
         .storage()
         .device_backend(handle.device_id)
@@ -265,6 +274,56 @@ impl LoggedIn {
 #[cfg(feature = "stress")]
 pub async fn logged_in_client(mock: &wamux::stress::MockWaServer, prefix: &str) -> LoggedIn {
     let (registry, handle) = registered_account(mock.ws_url(), prefix).await;
+    log_in(registry, handle).await
+}
+
+/// The companion device the MessagingService suite logs in as (#71): device 7
+/// of `5511999999999`, whose phone (device 0) the suite serves as a
+/// `MockPeer`. A peer message (history on demand) goes to that phone, and
+/// every DM fans out to it, as it does for a real linked device.
+#[cfg(feature = "stress")]
+pub const COMPANION_PN: &str = "5511999999999:7@s.whatsapp.net";
+
+/// Log in as `COMPANION_PN` against a mock started with `start_as`, with what a
+/// paired companion holds that the plain test device does not: an ADV account
+/// identity (a zero-filled one, as the library's own CallFixture seeds: the
+/// client embeds it in a pkmsg and never verifies it) and app-state sync
+/// state, so a chat action sends its patch at once. Waits until the client
+/// has also taken its LID from `<success>`, which group and status sends need.
+#[cfg(feature = "stress")]
+pub async fn logged_in_companion(mock: &wamux::stress::MockWaServer, prefix: &str) -> LoggedIn {
+    let (registry, handle) = registered_account_as(mock.ws_url(), prefix, COMPANION_PN, |device| {
+        device.account = Some(Arc::new(zeroed_adv_identity()));
+    })
+    .await;
+    let backend = registry.storage().device_backend(handle.device_id);
+    wamux::stress::app_state_fixture::seed_app_state(backend.as_ref())
+        .await
+        .expect("seed app state");
+    let logged = log_in(registry, handle).await;
+    let client = logged.client.clone();
+    poll_until(
+        "the client to take its LID",
+        Duration::from_secs(10),
+        || async { client.lid().map(drop) },
+    )
+    .await;
+    logged
+}
+
+#[cfg(feature = "stress")]
+fn zeroed_adv_identity() -> whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity {
+    whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity {
+        details: Some(vec![0; 32]),
+        account_signature_key: Some(vec![0; 32]),
+        account_signature: Some(vec![0; 64]),
+        device_signature: Some(vec![0; 64]),
+    }
+}
+
+/// Connect a registered account and wait (bounded) until it is logged in.
+#[cfg(feature = "stress")]
+async fn log_in(registry: Arc<AccountRegistry>, handle: Arc<AccountHandle>) -> LoggedIn {
     registry
         .connect(&handle, None, true)
         .await
@@ -287,6 +346,12 @@ pub async fn logged_in_client(mock: &wamux::stress::MockWaServer, prefix: &str) 
 /// the one connected to the mock. `spawn_server` (moved here from
 /// `grpc_server.rs`) is this over a fresh `test_engine()` registry.
 pub async fn serve_registry(registry: Arc<AccountRegistry>) -> Channel {
+    serve_registry_with(registry, Config::default()).await
+}
+
+/// `serve_registry` with a config of the test's choosing (#71: a small
+/// `media_max_bytes`). The socket path and reflection are always the test's.
+pub async fn serve_registry_with(registry: Arc<AccountRegistry>, config: Config) -> Channel {
     // Leaked on purpose, like the engine dir above: the socket has to outlive
     // the server task and the process is about to exit anyway.
     let dir = Box::leak(Box::new(tempfile::tempdir().expect("tempdir")));
@@ -295,7 +360,7 @@ pub async fn serve_registry(registry: Arc<AccountRegistry>) -> Channel {
     let config = Config {
         socket_path: socket_str.clone(),
         enable_reflection: false,
-        ..Config::default()
+        ..config
     };
     let stream = transport::uds_listener::bind(&socket_str, 0o660, None).expect("bind");
     let router = server::build_router(registry, &config, transport::shutdown::Shutdown::new());
