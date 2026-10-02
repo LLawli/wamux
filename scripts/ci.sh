@@ -124,6 +124,10 @@ scripts/check-service-coverage.py MediaService crates/wamux/tests/media_service.
 stage "NewsletterService RPC coverage"
 scripts/check-service-coverage.py NewsletterService crates/wamux/tests/newsletter_service 6
 
+# #71: same net under MessagingService (23 RPCs).
+stage "MessagingService RPC coverage"
+scripts/check-service-coverage.py MessagingService crates/wamux/tests/messaging_service 23
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -220,6 +224,12 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test media_service
 stage "stress tests (newsletter service)"
 must_run_tests --features stress --test newsletter_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test newsletter_service
+
+# MessagingService through the socket (#71): every send is opened by a parked
+# Signal peer the mock serves, and chat actions are read back from the patch.
+stage "stress tests (messaging service)"
+must_run_tests --features stress --test messaging_service
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test messaging_service
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
