@@ -297,6 +297,61 @@ has to follow them.
   a channel to the server. This is pinned as it is today and is questioned in
   #99.
 
+- **MessagingService is tested through the socket** (issue #71). All 23 RPCs
+  now run over a real Unix socket and tonic client, on both engines, with a
+  companion account logged in against the mock. Before this, the only test was
+  a status-revoke shape check.
+  - **What a send put on the wire is checked by value.** The mock gained
+    `MockPeer`, a parked whatsapp-rust client with a real Signal identity, and
+    serves its devices and prekey bundle. The test then opens what the
+    client sent with the peer's own session and compares the message.
+  - **Covered this way:**
+    - text (plain and with mentions, quote, link preview and timer);
+    - reaction, edit, revoke, contact, interactive reply, poll and poll vote;
+    - the copy every DM sends to the account's own phone;
+    - a group send, opened by both members through the sender key;
+    - the status text, media and revoke, opened by each recipient.
+  - **Media** goes through a real upload: `MockCdn` now accepts POST. The
+    uploaded body is proved to be the plaintext encrypted with the media key
+    the peer opened.
+  - **The `media_max_bytes` cut-off** and the stream framing errors (no
+    header, a chunk first, a second header) are refused before anything is
+    uploaded.
+  - **Chat actions** (archive, pin, mute, star, mark read and unread, delete
+    chat, delete for me) are read back from the app-state patch with the
+    seeded sync key, MACs checked, and the mutation is asserted.
+  - **Other wire checks:**
+    - `MarkRead` sends one read receipt listing every id;
+    - `SendPresence` sends the right `<presence>` or `<chatstate>`;
+    - `FetchMessageHistory` sends the on-demand request to the account's
+      own phone as a peer message, and the session id it returns is that
+      stanza's id;
+    - `AggregatePollVotes` tallies the vote this account sent.
+  - **Statuses:** an unknown account gets `NotFound`, an account that is not
+    connected gets `FailedPrecondition`, and a missing account ref gets
+    `InvalidArgument`, across all 23 RPCs. Each `InvalidArgument` branch has a
+    test that also proves nothing reached the wire.
+  - **The live capture.** Four DM sends between the owner's own accounts
+    (text, reaction, edit, revoke) were captured live on 2026-10-02 and
+    anonymized. A test holds the stanzas the client sends the mock to their
+    skeleton.
+  - **Mock changes:** `start_as` ends offline delivery, so a send does not
+    wait the library's 60 s timeout. Before `<success>`, it sends a contacts
+    notification for each served peer, which is how the server teaches a
+    client a LID. This matters because a status resolves its recipients from
+    local state only. The mock now answers usync and prekey queries per jid,
+    answers group metadata, and records receipts, presences and chat states.
+    The app-state fixture seeds and opens patches.
+  - `scripts/check-service-coverage.py` pins MessagingService at 23 RPCs.
+
+  Pinned as it is today and questioned in #101:
+  - a malformed poll (including the proto3 default `selectable_count` 0), a
+    mute deadline in the past, and a status with no recipients come back as
+    `Unavailable`;
+  - a delete-for-me checks the account before the jid;
+  - a status recipient given by phone number whose LID the client does not
+    know is dropped without a word.
+
 ### Fixed
 
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
