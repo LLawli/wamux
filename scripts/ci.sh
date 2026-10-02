@@ -106,6 +106,11 @@ scripts/check-third-party.sh
 stage "store method coverage"
 scripts/check-store-coverage.py
 
+# #67: a sleep in a test is a synchronization bug unless it says why it is not
+# one. Pure text check over the sources, so both modes run it.
+stage "test sleeps are marked"
+scripts/check-test-sleeps.py
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -131,6 +136,15 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   exit 0
 fi
 
+# #67: remember what the shared database holds before any test touches it, so
+# the last stage can prove the run left nothing behind. Not "the table is
+# empty": the database is also the dev one and may hold rows of its own.
+ACCOUNT_SNAPSHOT="$(mktemp)"
+export WAMUX_ACCOUNT_SNAPSHOT="$ACCOUNT_SNAPSHOT"
+trap 'rm -f "$ACCOUNT_SNAPSHOT"' EXIT
+stage "account snapshot (before the first database test)"
+must_run_tests --test account_leftovers -- --ignored --exact snapshot_accounts_before_the_run
+
 # The root manifest is virtual with default-members = wamux, so a bare `cargo
 # test` would only test the daemon. The daemon's stages say `-p wamux` and the
 # tools' stage says `-p wamux-tools` (#64); wamux-proto has no tests and is
@@ -139,36 +153,47 @@ stage "tests (unit + integration, postgres engine)"
 cargo test -p wamux
 
 # Same suite, SQLite engine. The service-level suites honor WAMUX_TEST_ENGINE,
-# so this re-runs them against the other backend; storage_backend.rs exercises
-# both engines in either pass (parity is only testable with both present).
+# so this re-runs them against the other backend. Convention (#67): a test that
+# names its engine in its own name (prefix `postgres_`, `sqlite_` or
+# `both_engines_`) builds that engine itself, so it already ran in the pass
+# above, with both engines available, and is skipped here. `--skip` matches
+# substrings, so no other test may contain those fragments in its name (the
+# gate for #67 checks the skip removes exactly the prefixed tests).
 stage "tests (sqlite engine)"
-WAMUX_TEST_ENGINE=sqlite cargo test -p wamux
+WAMUX_TEST_ENGINE=sqlite cargo test -p wamux -- --skip postgres_ --skip sqlite_ --skip both_engines_
 
 stage "tests (wamux-tools)"
 must_run_pkg_tests wamux-tools --test '*'
 
+# Every stress stage runs on both engines (#67): the registry under test is
+# built from WAMUX_TEST_ENGINE, the mock stays the same.
 stage "stress tests (fast: M1/M2a/M2b)"
 cargo test -p wamux --features stress --test stress_handshake
+WAMUX_TEST_ENGINE=sqlite cargo test -p wamux --features stress --test stress_handshake
 
 # Channel metadata through the real library, against answers the mock plays
 # back (#56): the relayed tokens, NotFound, the list skip, the MEX refusal, and
 # canaries on the two losses accepted when the core stopped querying itself.
 stage "stress tests (newsletter metadata)"
 must_run_tests --features stress --test stress_newsletter_parse
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newsletter_parse
 
 # Channel history through the real library over captured pages (#56): every
 # edge case #40, #43, #44 and #51 pinned, asserted by value.
 stage "stress tests (newsletter history)"
 must_run_tests --features stress --test stress_newsletter_history
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newsletter_history
 
 # The channel poll vote, own add-ons and live-update subscription (#26): the
 # stanza a vote puts on the wire, and the captured answers the reads relay.
 stage "stress tests (newsletter poll vote)"
 must_run_tests --features stress --test stress_newsletter_poll_vote
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newsletter_poll_vote
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
   must_run_tests --test load_multi_account -- --ignored
+  WAMUX_TEST_ENGINE=sqlite must_run_tests --test load_multi_account -- --ignored
 
   stage "FULL: keepalive longevity (~25s)"
   must_run_tests --features stress --test stress_handshake \
@@ -177,6 +202,13 @@ if [[ "$FULL" == 1 ]]; then
   stage "FULL: M3 scale (${STRESS_ACCOUNTS:-199} clients vs mock)"
   must_run_tests --features stress --test stress_handshake \
     connect_many_clients_against_mock -- --ignored
+  WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_handshake \
+    connect_many_clients_against_mock -- --ignored
 fi
+
+# #67: last, so it sees everything the run created. Fails on any account or
+# throwaway database that did not exist when the snapshot was taken.
+stage "no account outlives the run"
+must_run_tests --test account_leftovers -- --ignored --exact no_account_outlives_the_run
 
 if [[ "$FULL" == 1 ]]; then stage "CI PASSED (full)"; else stage "CI PASSED"; fi
