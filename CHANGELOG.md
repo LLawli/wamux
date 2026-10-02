@@ -352,6 +352,21 @@ has to follow them.
   - a status recipient given by phone number whose LID the client does not
     know is dropped without a word.
 
+- **The two engines' migrations keep one numbering from now on** (issue #66).
+  Postgres 0002 has no SQLite counterpart, so the same change carried
+  different numbers (Postgres 0003/0004 are SQLite 0002/0003), and anyone
+  comparing the engines had to work out the mapping by hand.
+  - No applied migration is renumbered: sqlx stores each one's version and
+    checksum.
+  - From 0005 on, a change has the same number and name in both
+    directories. A change for one engine gets a no-op file of the same name
+    on the other, so SQLite's next migration is 0005.
+  - `tests/migration_alignment`, run by every `cargo test` with no database,
+    fails when a migration exists in only one directory, carries two numbers,
+    reuses a historical number, or when the applied history is edited. The
+    historical offset is its one named exception.
+  - The rule is written in CLAUDE.md.
+
 ### Fixed
 
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
