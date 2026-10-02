@@ -150,6 +150,32 @@ has to follow them.
   The core still never rewrites a JID onto the other namespace and never
   invents a pair: an unknown jid answers `found=false`.
 
+- **Every store method is tested on both engines, and CI keeps it that way**
+  (issue #60). The Postgres and SQLite stores implement 59 methods of the
+  wacore traits, the Signal, app-state and protocol state of every account;
+  41 of them were never called by a test. Before the storage rewrite (#65)
+  touches that SQL, `crates/wamux/tests/store_parity/` pins what it does
+  today:
+  - Each behavior runs as a `postgres_` / `sqlite_` pair asserting the same
+    values: round-trip, overwrite, delete, and that one account never sees or
+    removes another's rows. Edge semantics are pinned too: the expiry sweeps
+    and their cut-off comparisons, `take_sent_message` consuming what it
+    returns, the three sender-key clears and their scopes,
+    `mark_prekeys_uploaded` never resurrecting a consumed prekey, the most
+    recent LID winning for a phone number, the latest sync key id in byte
+    order, and a `messageSecret` redelivery never shortening its retention.
+  - Three `both_engines_*` tests write the same state through both engines
+    and compare the stored columns byte for byte, for every table that holds
+    a blob, plus the device registry's JSON. The device blob already had one.
+  - `scripts/check-store-coverage.py`, run by `scripts/ci.sh` in both modes,
+    fails when a method of either engine's `*_store.rs` is never called
+    from `crates/wamux/tests/`, when the two engines declare different
+    methods, or when it finds fewer than 59, so a parser that finds nothing
+    cannot pass. `scripts/ci.sh --no-postgres` runs the `sqlite_` half.
+
+  No code changed: every new test passed against the stores as they were. The
+  methods the stores leave on the trait's default body are tracked in #93.
+
 ### Fixed
 
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
