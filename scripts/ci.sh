@@ -116,6 +116,10 @@ scripts/check-test-sleeps.py
 stage "GroupService RPC coverage"
 scripts/check-service-coverage.py GroupService crates/wamux/tests/group_service 21
 
+# #69: same net under MediaService, whose one RPC is DownloadMedia.
+stage "MediaService RPC coverage"
+scripts/check-service-coverage.py MediaService crates/wamux/tests/media_service.rs 1
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -200,6 +204,12 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newslett
 stage "stress tests (group service)"
 must_run_tests --features stress --test group_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test group_service
+
+# MediaService through the socket (#69): DownloadMedia against a loopback CDN,
+# reached by the production ureq client behind a loopback-only https rewrite.
+stage "stress tests (media service)"
+must_run_tests --features stress --test media_service
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test media_service
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
