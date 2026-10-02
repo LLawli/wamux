@@ -234,6 +234,30 @@ has to follow them.
   - a 409 on the description loses its code;
   - membership requests carry their `jid` as an object, not a string.
 
+- **DownloadMedia is tested through the socket** (issue #69). It is the one
+  MediaService RPC, and it now runs over a real Unix socket and tonic client,
+  on both engines. The media comes from `MockCdn`, a real HTTP server on
+  loopback, and is fetched by the production HTTP client.
+  - The stream is checked by value. A 150 000-byte file arrives as the meta
+    frame (mime, length) followed by chunks of 65 536, 65 536 and 18 928
+    bytes, equal to the plaintext.
+  - Every media type decrypts: image, video, audio, document, sticker, and
+    the two sticker-pack types from #58. Channel media without a key is
+    verified against `file_sha256` (#6).
+  - A tampered ciphertext, a keyless file whose hash does not match, and a
+    CDN 404 each end the call without a single frame.
+  - An unknown account gets `NotFound`, an account that is not connected
+    gets `FailedPrecondition`, and a missing descriptor or an unknown
+    `media_type` gets `InvalidArgument`. In all four cases nothing reaches
+    the CDN.
+  - The library always builds `https://` media URLs. Builds with the
+    `stress` feature therefore use `LoopbackHttpClient`, the same ureq
+    client with `https://` sent as `http://` only when the host is
+    `127.0.0.1`, `localhost` or `[::1]`. A lookalike host such as
+    `127.0.0.1.evil.example` is left alone. The production daemon, built
+    without `stress`, is unchanged.
+  - `scripts/check-service-coverage.py` pins MediaService at 1 RPC.
+
 ### Fixed
 
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
