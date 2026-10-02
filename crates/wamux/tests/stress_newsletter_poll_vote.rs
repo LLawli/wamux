@@ -8,7 +8,6 @@
 //! Requires the docker Postgres (DATABASE_URL).
 #![cfg(feature = "stress")]
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use wacore_binary::Node;
@@ -16,9 +15,7 @@ use wacore_binary::builder::NodeBuilder;
 use wamux::domain::newsletters;
 use wamux::error::WamuxError;
 use wamux::proto::v1 as pb;
-use wamux::state::AccountRegistry;
 use wamux::stress::MockWaServer;
-use whatsapp_rust::Client;
 
 #[allow(dead_code)]
 mod common;
@@ -38,24 +35,6 @@ fn mondays() -> Vec<u8> {
     hash("\u{1F636}\u{200D}\u{1F32B}\u{FE0F} Mondays should be illegal.")
 }
 
-/// A client logged in against the mock. Same recipe as
-/// `stress_newsletter_history`: logged in is all these calls need.
-async fn logged_in_client(mock: &MockWaServer) -> (Arc<AccountRegistry>, Arc<Client>) {
-    let (registry, handle) = common::registered_account(mock.ws_url(), "stress-nl-vote").await;
-    registry
-        .connect(&handle, None, true)
-        .await
-        .expect("connect");
-    let client = handle.client().await.expect("client after connect");
-    for _ in 0..100 {
-        if client.is_logged_in() {
-            return (registry, client);
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("client never logged in against the mock");
-}
-
 fn vote_request(option_hashes: Vec<Vec<u8>>) -> pb::SendNewsletterPollVoteRequest {
     pb::SendNewsletterPollVoteRequest {
         account: None,
@@ -67,17 +46,16 @@ fn vote_request(option_hashes: Vec<Vec<u8>>) -> pb::SendNewsletterPollVoteReques
 
 /// The `<message>` the mock received with this id, waiting for it to land.
 async fn sent_message(mock: &MockWaServer, id: &str) -> Node {
-    for _ in 0..50 {
-        let found = mock
-            .client_messages()
-            .into_iter()
-            .find(|m| attr(m, "id").as_deref() == Some(id));
-        if let Some(message) = found {
-            return message;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("the mock never received a <message id={id}>");
+    common::poll_until(
+        &format!("the mock to receive a <message id={id}>"),
+        Duration::from_secs(5),
+        || async {
+            mock.client_messages()
+                .into_iter()
+                .find(|m| attr(m, "id").as_deref() == Some(id))
+        },
+    )
+    .await
 }
 
 fn attr(node: &Node, key: &str) -> Option<String> {
@@ -105,7 +83,12 @@ fn vote_payloads(message: &Node) -> Vec<Vec<u8>> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_vote_puts_the_measured_stanza_on_the_wire() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_poll_vote",
+        "a_vote_puts_the_measured_stanza_on_the_wire",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let answer =
         newsletters::send_poll_vote(&client, &vote_request(vec![good_morning(), mondays()]))
             .await
@@ -129,18 +112,25 @@ async fn a_vote_puts_the_measured_stanza_on_the_wire() {
     assert_eq!(attr(meta, "polltype").as_deref(), Some("vote"));
     assert_eq!(attr(meta, "contenttype"), None);
     assert_eq!(vote_payloads(&message), vec![good_morning(), mondays()]);
+    logged.cleanup().await;
 }
 
 // Removing a vote is the same stanza with an empty `<votes/>`, as measured.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_empty_selection_sends_an_empty_votes() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_poll_vote",
+        "an_empty_selection_sends_an_empty_votes",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let answer = newsletters::send_poll_vote(&client, &vote_request(Vec::new()))
         .await
         .expect("remove the vote");
     let message = sent_message(&mock, &answer.stanza_id).await;
     assert!(vote_payloads(&message).is_empty());
+    logged.cleanup().await;
 }
 
 // A malformed request is the caller's mistake: InvalidArgument, and nothing
@@ -148,7 +138,12 @@ async fn an_empty_selection_sends_an_empty_votes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_malformed_vote_is_refused_before_anything_is_sent() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_poll_vote",
+        "a_malformed_vote_is_refused_before_anything_is_sent",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let short = vote_request(vec![vec![0u8; 31]]);
     let mut not_a_channel = vote_request(vec![good_morning()]);
     not_a_channel.jid = "120363041234567890@g.us".to_string();
@@ -160,8 +155,21 @@ async fn a_malformed_vote_is_refused_before_anything_is_sent() {
             .expect_err("malformed");
         assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(mock.client_messages().is_empty(), "nothing may be sent");
+    // The negative assertion needs a positive signal (#67): a valid vote sent
+    // after the malformed ones. The websocket is ordered, so once it reaches
+    // the mock, anything the malformed ones had sent would be there too, and
+    // the valid vote must be the only message.
+    let answer = newsletters::send_poll_vote(&client, &vote_request(vec![good_morning()]))
+        .await
+        .expect("a valid vote");
+    sent_message(&mock, &answer.stanza_id).await;
+    let received = mock.client_messages();
+    assert_eq!(
+        received.len(),
+        1,
+        "nothing but the valid vote may be sent, got {received:?}"
+    );
+    logged.cleanup().await;
 }
 
 /// `<my_addons>` as captured, plus a removed vote and a reaction.
@@ -205,7 +213,12 @@ fn my_addons_answer() -> Node {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn my_addons_relay_the_servers_record() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_poll_vote",
+        "my_addons_relay_the_servers_record",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     mock.answer_newsletter_iq_with(my_addons_answer());
     let request = pb::GetMyNewsletterAddOnsRequest {
         account: None,
@@ -231,12 +244,18 @@ async fn my_addons_relay_the_servers_record() {
     let reaction = list[2].reaction.as_ref().expect("778 reacted");
     assert_eq!(reaction.code, "\u{1F44D}");
     assert_eq!(reaction.timestamp, 1_790_340_100_000);
+    logged.cleanup().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn my_addons_refuse_a_zero_limit() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_poll_vote",
+        "my_addons_refuse_a_zero_limit",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     let request = pb::GetMyNewsletterAddOnsRequest {
         account: None,
         jid: CHANNEL.to_string(),
@@ -246,13 +265,19 @@ async fn my_addons_refuse_a_zero_limit() {
         .await
         .expect_err("limit 0");
     assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
+    logged.cleanup().await;
 }
 
 // The subscription answers the server's duration (90 s, measured live).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn live_updates_answer_the_servers_duration() {
     let mock = MockWaServer::start().await.expect("start mock");
-    let (_registry, client) = logged_in_client(&mock).await;
+    let prefix = common::test_prefix(
+        "stress_newsletter_poll_vote",
+        "live_updates_answer_the_servers_duration",
+    );
+    let logged = common::logged_in_client(&mock, &prefix).await;
+    let client = logged.client.clone();
     mock.answer_newsletter_iq_with(
         NodeBuilder::new("live_updates")
             .attr("duration", "90")
@@ -262,4 +287,5 @@ async fn live_updates_answer_the_servers_duration() {
         .await
         .expect("subscribe");
     assert_eq!(answer.duration_seconds, 90);
+    logged.cleanup().await;
 }

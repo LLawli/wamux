@@ -7,18 +7,15 @@
 //!
 //! Runs on SQLite, so it needs no container.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hyper_util::rt::TokioIo;
 use tokio_stream::StreamExt;
-use tonic::transport::{Channel, Endpoint, Uri};
+use tonic::transport::Channel;
 use tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient;
 use tonic_reflection::pb::v1::server_reflection_request::MessageRequest;
 use tonic_reflection::pb::v1::server_reflection_response::MessageResponse;
 use tonic_reflection::pb::v1::{ServerReflectionRequest, ServerReflectionResponse};
-use tower::service_fn;
 
 use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
@@ -40,27 +37,6 @@ const EXPECTED_SERVICES: [&str; 9] = [
     "wamux.v1.MessagingService",
     "wamux.v1.NewsletterService",
 ];
-
-async fn connect(path: PathBuf) -> Channel {
-    for _ in 0..40 {
-        let path = path.clone();
-        let attempt = Endpoint::try_from("http://[::1]:50051")
-            .unwrap()
-            .connect_with_connector(service_fn(move |_: Uri| {
-                let path = path.clone();
-                async move {
-                    let stream = tokio::net::UnixStream::connect(path).await?;
-                    Ok::<_, std::io::Error>(TokioIo::new(stream))
-                }
-            }))
-            .await;
-        if let Ok(channel) = attempt {
-            return channel;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("server never accepted a connection");
-}
 
 /// A daemon with reflection on, served on a throwaway socket. The temp dir is
 /// returned so the socket outlives the test body.
@@ -85,7 +61,7 @@ async fn reflection_client() -> (ServerReflectionClient<Channel>, tempfile::Temp
         shutdown,
         Duration::from_secs(5),
     ));
-    let client = ServerReflectionClient::new(connect(socket).await);
+    let client = ServerReflectionClient::new(common::uds_channel(&socket).await);
     (client, dir)
 }
 

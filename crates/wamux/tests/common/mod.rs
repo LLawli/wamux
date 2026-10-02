@@ -1,8 +1,14 @@
 //! Shared helpers for the integration-test binaries (each test file compiles
 //! as its own crate and pulls this in via `mod common;`).
 
+use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use hyper_util::rt::TokioIo;
+use tonic::transport::{Channel, Endpoint, Uri};
+use tower::service_fn;
 use wacore::store::Device;
 use wamux::proto::v1 as pb;
 use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
@@ -47,9 +53,15 @@ pub async fn sqlite_engine() -> (Arc<SqliteStorage>, tempfile::TempDir) {
 /// handle the socket dir: the database has to outlive the server task that
 /// keeps using it, and the process is about to exit anyway.
 pub async fn test_engine() -> Arc<dyn StorageEngine> {
+    test_engine_with(5).await
+}
+
+/// `test_engine()` with a pool size: the M3 scale test needs more than 5 (#67).
+/// SQLite ignores `max_conns`.
+pub async fn test_engine_with(max_conns: u32) -> Arc<dyn StorageEngine> {
     let requested = std::env::var("WAMUX_TEST_ENGINE").unwrap_or_else(|_| "postgres".into());
     match requested.as_str() {
-        "postgres" => pg_engine(5).await,
+        "postgres" => pg_engine(max_conns).await,
         "sqlite" => {
             let (engine, dir) = sqlite_engine().await;
             Box::leak(Box::new(dir));
@@ -102,15 +114,18 @@ pub async fn sweep_orphans(storage: &Arc<dyn StorageEngine>, prefix: &str) -> u6
 }
 
 /// Build a registry pointed at a mock WhatsApp endpoint (`ws_url`) and create
-/// an account whose device is already *registered* (pn set + persisted), so
+/// an account (`external_ref` = `prefix` + a fresh uuid, after sweeping `prefix`
+/// of leftovers; `prefix` comes from `test_prefix`, #67) whose device is
+/// already *registered* (pn set + persisted), so
 /// `connect` makes the client send a LOGIN payload and treat the mock's
 /// `<success>` as auth success. Returns the registry and the (not-yet-connected)
 /// account handle. Shared by the stress suites.
 pub async fn registered_account(
     ws_url: String,
-    tag_prefix: &str,
+    prefix: &str,
 ) -> (Arc<AccountRegistry>, Arc<AccountHandle>) {
-    let engine = pg_engine(4).await;
+    let engine = test_engine().await;
+    sweep_orphans(&engine, prefix).await;
     let tuning = RegistryTuning {
         ws_url_override: Some(ws_url),
         ..RegistryTuning::default()
@@ -119,7 +134,7 @@ pub async fn registered_account(
 
     let tag = uuid::Uuid::new_v4();
     let handle = registry
-        .create_account(Some(&format!("{tag_prefix}-{tag}")))
+        .create_account(Some(&format!("{prefix}{tag}")))
         .await
         .expect("create account");
 
@@ -138,4 +153,124 @@ pub async fn registered_account(
         .expect("save registered device");
 
     (registry, handle)
+}
+
+/// The external_ref prefix of one test's accounts: `<suite>/<test>/` (#67).
+/// The trailing `/` is what keeps one prefix from matching another: with `-`,
+/// sweeping `stress-nl-` also swept `stress-nl-hist-` (the bug #60 hit). Panics
+/// if either part contains a `/`.
+pub fn test_prefix(suite: &str, test: &str) -> String {
+    assert!(
+        !suite.contains('/') && !test.contains('/'),
+        "test_prefix parts must not contain '/': suite={suite:?} test={test:?}"
+    );
+    format!("{suite}/{test}/")
+}
+
+/// Pause between probes of `poll_until`.
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// The one bounded wait on a condition (#67): calls `probe` until it returns
+/// `Some`, and panics naming `what` once `timeout` has passed. Every retry loop
+/// in the suites goes through here, so no test synchronizes on a fixed sleep.
+pub async fn poll_until<T, F, Fut>(what: &str, timeout: Duration, mut probe: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Option<T>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Some(found) = probe().await {
+            return found;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out after {timeout:?} waiting for {what}"
+        );
+        // not a sync point: the pause between two probes of a bounded wait; the condition is what is awaited
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Wait (bounded) until the account's broadcast has a live receiver: forwarder
+/// attachment is async, and a `broadcast::send` with zero receivers is lost,
+/// so pushing before attachment would race (#67).
+pub async fn await_forwarder_attached(
+    events_tx: &tokio::sync::broadcast::Sender<pb::EventEnvelope>,
+    which: &str,
+) {
+    poll_until(
+        &format!("a forwarder attached to the {which} account"),
+        Duration::from_secs(5),
+        || async { (events_tx.receiver_count() > 0).then_some(()) },
+    )
+    .await;
+}
+
+/// A tonic channel over the daemon's Unix socket, retrying (bounded) while the
+/// server task binds it. The one connector the socket suites share (#67).
+pub async fn uds_channel(path: &Path) -> Channel {
+    poll_until(
+        "the server to accept a connection",
+        Duration::from_secs(5),
+        || connect_uds_once(path.to_path_buf()),
+    )
+    .await
+}
+
+async fn connect_uds_once(path: PathBuf) -> Option<Channel> {
+    Endpoint::try_from("http://[::1]:50051")
+        .expect("static endpoint uri")
+        .connect_with_connector(service_fn(move |_: Uri| {
+            let path = path.clone();
+            async move {
+                let stream = tokio::net::UnixStream::connect(path).await?;
+                Ok::<_, std::io::Error>(TokioIo::new(stream))
+            }
+        }))
+        .await
+        .ok()
+}
+
+/// A client logged in against the mock, and what it takes to clean it up.
+#[cfg(feature = "stress")]
+pub struct LoggedIn {
+    pub registry: Arc<AccountRegistry>,
+    pub handle: Arc<AccountHandle>,
+    pub client: Arc<whatsapp_rust::Client>,
+}
+
+#[cfg(feature = "stress")]
+impl LoggedIn {
+    /// Disconnect and delete the account, so the run leaves no row behind.
+    pub async fn cleanup(self) {
+        self.registry.disconnect(&self.handle).await;
+        self.registry
+            .delete(&self.handle)
+            .await
+            .expect("delete the test account");
+    }
+}
+
+/// Register an account under `prefix`, connect it to the mock and wait until
+/// it is logged in. Not `wait_for_connected`: its Ready stage waits on
+/// post-login syncs the mock does not serve, and logged in is all these
+/// suites need. The one definition the stress suites share (#67).
+#[cfg(feature = "stress")]
+pub async fn logged_in_client(mock: &wamux::stress::MockWaServer, prefix: &str) -> LoggedIn {
+    let (registry, handle) = registered_account(mock.ws_url(), prefix).await;
+    registry
+        .connect(&handle, None, true)
+        .await
+        .expect("connect");
+    let client = handle.client().await.expect("client after connect");
+    poll_until("the client to log in", Duration::from_secs(10), || async {
+        client.is_logged_in().then_some(())
+    })
+    .await;
+    LoggedIn {
+        registry,
+        handle,
+        client,
+    }
 }

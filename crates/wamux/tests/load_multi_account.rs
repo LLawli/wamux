@@ -44,7 +44,7 @@ fn live_event(seq: i64) -> pb::EventEnvelope {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "scale/stress test; run explicitly with --ignored"]
 async fn no_head_of_line_blocking_and_gap_under_load() {
-    let engine = common::pg_engine(8).await;
+    let engine = common::test_engine_with(8).await;
 
     // Realistic broadcast: the modest probe burst fits cleanly, while the slow
     // account's heavy flood still overruns it and forces a lag → gap.
@@ -55,11 +55,12 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
     };
     let registry = Arc::new(AccountRegistry::new(engine, tuning));
 
-    // Self-heal before provisioning: clear any `load-%` rows an aborted prior run
-    // left behind (the registry is fresh, so this doesn't touch live handles).
-    let swept = common::sweep_orphans(registry.storage(), "load-").await;
+    // Self-heal before provisioning: clear any rows an aborted prior run left
+    // behind (the registry is fresh, so this doesn't touch live handles).
+    let prefix = common::test_prefix("load_multi_account", "no_head_of_line_blocking");
+    let swept = common::sweep_orphans(registry.storage(), &prefix).await;
     if swept > 0 {
-        eprintln!("(swept {swept} orphan load- account(s) from a prior run)");
+        eprintln!("(swept {swept} orphan {prefix} account(s) from a prior run)");
     }
 
     let tag = uuid::Uuid::new_v4();
@@ -67,7 +68,7 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
     for i in 0..ACCOUNTS {
         handles.push(
             registry
-                .create_account(Some(&format!("load-{tag}-{i}")))
+                .create_account(Some(&format!("{prefix}{tag}-{i}")))
                 .await
                 .expect("create account"),
         );
@@ -96,8 +97,10 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
         .expect("healthy subscribe")
         .into_inner();
 
-    // Give the per-account forward tasks a moment to attach their receivers.
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    // The forward tasks attach their receivers asynchronously; a send before
+    // that is lost, so wait on the receiver count rather than on a fixed delay.
+    common::await_forwarder_attached(&slow_acct.events_tx, "slow").await;
+    common::await_forwarder_attached(&probe_acct.events_tx, "healthy").await;
 
     // Flood the slow account hard; nobody drains `slow` fast, so it must lag.
     let slow_tx = slow_acct.events_tx.clone();
@@ -105,7 +108,8 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
         for seq in 0..20_000i64 {
             let _ = slow_tx.send(live_event(seq));
             if seq % 1000 == 0 {
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                // Let the subscribers run between bursts without a timed pause.
+                tokio::task::yield_now().await;
             }
         }
     });
@@ -159,5 +163,5 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
     // Tidy on success with a single sweep (not 200 sequential deletes that an
     // earlier panic could leave half-run). An aborted run is caught by the next
     // run's setup-sweep, so orphans never accumulate past one run (B5).
-    let _ = common::sweep_orphans(registry.storage(), "load-").await;
+    let _ = common::sweep_orphans(registry.storage(), &prefix).await;
 }

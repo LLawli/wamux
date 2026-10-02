@@ -4,6 +4,12 @@
 //! The Postgres case needs the docker container (`DATABASE_URL`); the SQLite
 //! case needs nothing — it builds a fresh database file in a temp dir.
 
+// Engine convention (#67): a test that names its engine (`postgres_`, `sqlite_`
+// or `both_engines_` prefix) runs once, in the default pass, where both engines
+// are available. The `WAMUX_TEST_ENGINE=sqlite` pass of scripts/ci.sh skips them
+// by that prefix, so the Postgres cases are not re-run for nothing. No other
+// test may carry those fragments in its name: `--skip` matches substrings.
+
 use std::sync::Arc;
 
 use bytes::Bytes;

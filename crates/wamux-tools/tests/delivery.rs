@@ -137,6 +137,7 @@ async fn the_tap_finds_a_receipt_that_arrives_during_the_wait() {
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     let tap = EventTap::spawn(tokio_stream::wrappers::ReceiverStream::new(rx));
     tokio::spawn(async move {
+        // not a sync point: the paused clock stands in for the receipt arriving 2 s into the wait, in virtual time
         tokio::time::sleep(Duration::from_secs(2)).await;
         let _ = tx.send(Ok(receipt("delivered", &["ABC"]))).await;
     });

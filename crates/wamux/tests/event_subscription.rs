@@ -30,23 +30,6 @@ fn subscribe_all() -> pb::SubscribeRequest {
     }
 }
 
-/// Wait (bounded) until the account's broadcast has a live receiver: forwarder
-/// attachment is async, and a `broadcast::send` with zero receivers is lost,
-/// so pushing before attachment would race. Polling the receiver count is
-/// deterministic where a fixed sleep would be flaky.
-async fn await_forwarder_attached(
-    events_tx: &tokio::sync::broadcast::Sender<pb::EventEnvelope>,
-    which: &str,
-) {
-    for _ in 0..200 {
-        if events_tx.receiver_count() > 0 {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("no forwarder attached to the {which} account within 2s");
-}
-
 async fn expect_event_from(
     stream: &mut ReceiverStream<Result<pb::EventEnvelope, Status>>,
     account_uuid: &str,
@@ -65,15 +48,16 @@ async fn expect_event_from(
 async fn all_accounts_subscription_includes_later_created_accounts() {
     let engine = common::test_engine().await;
     let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(8)));
-    let swept = common::sweep_orphans(registry.storage(), "evsub-").await;
+    let prefix = common::test_prefix("event_subscription", "all_accounts_includes_later_created");
+    let swept = common::sweep_orphans(registry.storage(), &prefix).await;
     if swept > 0 {
-        eprintln!("(swept {swept} orphan evsub- account(s) from a prior run)");
+        eprintln!("(swept {swept} orphan {prefix} account(s) from a prior run)");
     }
 
     // One account exists BEFORE the subscribe: covers the snapshot path.
     let tag = uuid::Uuid::new_v4();
     let before = registry
-        .create_account(Some(&format!("evsub-{tag}-before")))
+        .create_account(Some(&format!("{prefix}{tag}-before")))
         .await
         .expect("create before-account");
 
@@ -85,7 +69,7 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
         .into_inner();
 
     // Snapshot path intact: the pre-existing account still delivers.
-    await_forwarder_attached(&before.events_tx, "before").await;
+    common::await_forwarder_attached(&before.events_tx, "before").await;
     let before_uuid = before.uuid.to_string();
     let _ = before
         .events_tx
@@ -96,10 +80,10 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
     // before Sprint 5 it never got a forwarder (and with zero accounts at
     // subscribe time the stream would already be closed).
     let after = registry
-        .create_account(Some(&format!("evsub-{tag}-after")))
+        .create_account(Some(&format!("{prefix}{tag}-after")))
         .await
         .expect("create after-account");
-    await_forwarder_attached(&after.events_tx, "after").await;
+    common::await_forwarder_attached(&after.events_tx, "after").await;
     let after_uuid = after.uuid.to_string();
     let _ = after
         .events_tx
@@ -110,7 +94,7 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
     // (an aborted run is caught by the next run's setup-sweep).
     registry.delete(&before).await.expect("delete before");
     registry.delete(&after).await.expect("delete after");
-    let _ = common::sweep_orphans(registry.storage(), "evsub-").await;
+    let _ = common::sweep_orphans(registry.storage(), &prefix).await;
 }
 
 // Regression (code-review 2026-06-11): an event dispatched between
@@ -119,13 +103,14 @@ async fn all_accounts_subscription_includes_later_created_accounts() {
 // dispatch path pushes to the ring BEFORE broadcasting and the
 // created-follower replays a created account's FULL ring, so the event is
 // recovered — and forward()'s seq filter keeps it exactly-once when the live
-// copy also lands. Distinct prefix: the other test's setup-sweep runs in
-// parallel and must not reap this test's rows.
+// copy also lands. Distinct prefix (test_prefix, #67): the other test's setup-sweep
+// runs in parallel and must not reap this test's rows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn created_account_event_before_attach_is_recovered_from_ring() {
     let engine = common::test_engine().await;
     let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(8)));
-    let _ = common::sweep_orphans(registry.storage(), "evsubring-").await;
+    let prefix = common::test_prefix("event_subscription", "created_account_event_before_attach");
+    let _ = common::sweep_orphans(registry.storage(), &prefix).await;
 
     let svc = EventSvc::new(registry.clone());
     let mut stream = svc
@@ -136,7 +121,7 @@ async fn created_account_event_before_attach_is_recovered_from_ring() {
 
     let tag = uuid::Uuid::new_v4();
     let account = registry
-        .create_account(Some(&format!("evsubring-{tag}")))
+        .create_account(Some(&format!("{prefix}{tag}")))
         .await
         .expect("create account");
     let uuid = account.uuid.to_string();
@@ -157,5 +142,5 @@ async fn created_account_event_before_attach_is_recovered_from_ring() {
     assert!(extra.is_err(), "event delivered twice: {extra:?}");
 
     registry.delete(&account).await.expect("delete account");
-    let _ = common::sweep_orphans(registry.storage(), "evsubring-").await;
+    let _ = common::sweep_orphans(registry.storage(), &prefix).await;
 }

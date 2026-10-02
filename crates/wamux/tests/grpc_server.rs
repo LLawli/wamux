@@ -5,10 +5,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use hyper_util::rt::TokioIo;
-use tonic::transport::{Endpoint, Uri};
-use tower::service_fn;
-
 use wacore::store::traits::LidPnMappingEntry;
 use wamux::config::Config;
 use wamux::proto::v1 as pb;
@@ -32,61 +28,13 @@ fn account_ref(uuid: &str) -> pb::AccountRef {
 
 #[tokio::test]
 async fn account_lifecycle_over_socket() {
-    // --- server ---
-    let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("wamux.sock");
-    let socket_str = socket.to_str().unwrap().to_string();
-
-    let engine = common::test_engine().await;
-    let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(64)));
-    let config = Config {
-        socket_path: socket_str.clone(),
-        enable_reflection: false,
-        ..Config::default()
-    };
-    let stream = transport::uds_listener::bind(&socket_str, 0o660, None).expect("bind");
-    let router = server::build_router(registry, &config, transport::shutdown::Shutdown::new());
-    tokio::spawn(async move {
-        let _ = router.serve_with_incoming(stream).await;
-    });
-
-    // --- client over the UDS ---
-    let connect_path = socket.clone();
-    let channel = {
-        let mut attempt = Endpoint::try_from("http://[::1]:50051")
-            .unwrap()
-            .connect_with_connector(service_fn(move |_: Uri| {
-                let path = connect_path.clone();
-                async move {
-                    let stream = tokio::net::UnixStream::connect(path).await?;
-                    Ok::<_, std::io::Error>(TokioIo::new(stream))
-                }
-            }))
-            .await;
-        // small retry while the server task spins up
-        for _ in 0..10 {
-            if attempt.is_ok() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            let path = socket.clone();
-            attempt = Endpoint::try_from("http://[::1]:50051")
-                .unwrap()
-                .connect_with_connector(service_fn(move |_: Uri| {
-                    let path = path.clone();
-                    async move {
-                        let stream = tokio::net::UnixStream::connect(path).await?;
-                        Ok::<_, std::io::Error>(TokioIo::new(stream))
-                    }
-                }))
-                .await;
-        }
-        attempt.expect("connect over uds")
-    };
+    let (channel, engine) = spawn_server().await;
+    let prefix = common::test_prefix("grpc_server", "account_lifecycle_over_socket");
+    common::sweep_orphans(&engine, &prefix).await;
     let mut client = AccountServiceClient::new(channel);
 
     // create
-    let external = format!("grpc-test-{}", uuid::Uuid::new_v4());
+    let external = format!("{prefix}{}", uuid::Uuid::new_v4());
     let created = client
         .create_account(pb::CreateAccountRequest {
             external_ref: Some(external.clone()),
@@ -168,24 +116,7 @@ async fn spawn_server() -> (tonic::transport::Channel, Arc<dyn StorageEngine>) {
         let _ = router.serve_with_incoming(stream).await;
     });
 
-    for _ in 0..10 {
-        let path = socket.clone();
-        let attempt = Endpoint::try_from("http://[::1]:50051")
-            .unwrap()
-            .connect_with_connector(service_fn(move |_: Uri| {
-                let path = path.clone();
-                async move {
-                    let stream = tokio::net::UnixStream::connect(path).await?;
-                    Ok::<_, std::io::Error>(TokioIo::new(stream))
-                }
-            }))
-            .await;
-        if let Ok(channel) = attempt {
-            return (channel, engine);
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("server never came up");
+    (common::uds_channel(&socket).await, engine)
 }
 
 #[tokio::test]
@@ -201,23 +132,28 @@ async fn admin_health_and_metrics_over_socket() {
 
     // Metrics: real Prometheus render. Gauges are set synchronously in the
     // handler; the per-request counter is fed by the observability layer when a
-    // response body drops, which can lag the client slightly, so poll a few
-    // times for it (each render is itself another counted request).
-    let mut last = String::new();
-    for _ in 0..20 {
-        last = admin
-            .get_metrics(pb::Empty {})
-            .await
-            .expect("get_metrics")
-            .into_inner()
-            .prometheus;
-        assert!(last.contains("wamux_accounts_total"));
-        if last.contains("wamux_grpc_requests_total") && last.contains("AdminService") {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    panic!("per-request metrics never appeared:\n{last}");
+    // response body drops, which can lag the client slightly, so poll for it
+    // (each render is itself another counted request).
+    let prometheus = common::poll_until(
+        "per-request metrics to appear",
+        Duration::from_secs(5),
+        || {
+            let mut admin = admin.clone();
+            async move {
+                let text = admin
+                    .get_metrics(pb::Empty {})
+                    .await
+                    .expect("get_metrics")
+                    .into_inner()
+                    .prometheus;
+                assert!(text.contains("wamux_accounts_total"));
+                (text.contains("wamux_grpc_requests_total") && text.contains("AdminService"))
+                    .then_some(text)
+            }
+        },
+    )
+    .await;
+    assert!(prometheus.contains("AdminService"));
 }
 
 /// issue #1: the LID<->PN pairs the library persists have to be reachable over
@@ -231,7 +167,9 @@ async fn lid_mappings_are_readable_over_socket() {
     let mut accounts = AccountServiceClient::new(channel.clone());
     let mut contacts = ContactServiceClient::new(channel);
 
-    let external = format!("lid-map-test-{}", uuid::Uuid::new_v4());
+    let prefix = common::test_prefix("grpc_server", "lid_mappings_are_readable");
+    common::sweep_orphans(&engine, &prefix).await;
+    let external = format!("{prefix}{}", uuid::Uuid::new_v4());
     let created = accounts
         .create_account(pb::CreateAccountRequest {
             external_ref: Some(external.clone()),
@@ -307,12 +245,14 @@ async fn lid_mappings_are_readable_over_socket() {
 /// is enough, and the edge hears what to fix rather than "not connected".
 #[tokio::test]
 async fn status_revoke_is_refused_on_the_wrong_shape_over_socket() {
-    let (channel, _engine) = spawn_server().await;
+    let (channel, engine) = spawn_server().await;
+    let prefix = common::test_prefix("grpc_server", "status_revoke_is_refused");
+    common::sweep_orphans(&engine, &prefix).await;
     let mut accounts = AccountServiceClient::new(channel.clone());
     let mut messaging = MessagingServiceClient::new(channel);
     let created = accounts
         .create_account(pb::CreateAccountRequest {
-            external_ref: Some(format!("revoke-status-{}", uuid::Uuid::new_v4())),
+            external_ref: Some(format!("{prefix}{}", uuid::Uuid::new_v4())),
         })
         .await
         .expect("create_account")
