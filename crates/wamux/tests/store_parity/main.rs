@@ -1,8 +1,9 @@
 //! Engine parity for every method the two stores implement (#60).
 //!
-//! The Postgres and SQLite stores each implement 59 methods of the wacore
-//! traits. This is the crypto-critical state of every account, and #65 is about
-//! to rewrite all of it: these tests are the safety net that rewrite runs
+//! The Postgres and SQLite stores each implement 63 methods of the wacore
+//! traits (59 until #93 overrode four wrong defaults). This is the
+//! crypto-critical state of every account, and #65 is about to rewrite all of
+//! it: these tests are the safety net that rewrite runs
 //! against. A divergence in sender keys, base keys or tc-tokens would otherwise
 //! show up only as a failed decrypt on a live account.
 //!
@@ -26,4 +27,5 @@ mod harness;
 mod msg_secret;
 mod protocol;
 mod protocol_cache;
+mod protocol_overrides;
 mod signal;

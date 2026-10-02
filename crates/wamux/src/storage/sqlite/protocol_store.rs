@@ -10,6 +10,7 @@ use wacore::store::traits::{
 };
 
 use super::SqliteBackend;
+use super::tc_token_sql;
 use crate::storage::blob_codec::now_secs;
 use crate::storage::sqlx_error::db;
 
@@ -438,5 +439,51 @@ impl ProtocolStore for SqliteBackend {
             .await
             .map_err(db)?;
         Ok(res.rows_affected() as u32)
+    }
+
+    // --- Trait defaults overridden in #93 (docs/store-trait-defaults.md) ---
+
+    async fn get_sent_message(&self, chat_jid: &str, message_id: &str) -> Result<Option<Vec<u8>>> {
+        // Read-only on purpose: `take_sent_message` consumes, this must not.
+        sqlx::query_scalar(
+            "SELECT payload FROM sent_messages
+             WHERE chat_jid = ? AND message_id = ? AND device_id = ?",
+        )
+        .bind(chat_jid)
+        .bind(message_id)
+        .bind(self.device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)
+    }
+
+    async fn delete_expired_base_keys(&self, cutoff_timestamp: i64) -> Result<u32> {
+        // The keepalive sweep calls this every cycle; the trait default was Ok(0),
+        // so base_keys grew without bound.
+        let res = sqlx::query("DELETE FROM base_keys WHERE created_at < ? AND device_id = ?")
+            .bind(cutoff_timestamp)
+            .bind(self.device_id)
+            .execute(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(res.rows_affected() as u32)
+    }
+
+    async fn touch_tc_token_sender_timestamp(
+        &self,
+        jid: &str,
+        sender_timestamp: i64,
+    ) -> Result<()> {
+        tc_token_sql::touch_sender_timestamp(&self.pool, self.device_id, jid, sender_timestamp)
+            .await
+    }
+
+    async fn store_received_tc_token(
+        &self,
+        jid: &str,
+        token: &[u8],
+        token_timestamp: i64,
+    ) -> Result<()> {
+        tc_token_sql::store_received(&self.pool, self.device_id, jid, token, token_timestamp).await
     }
 }

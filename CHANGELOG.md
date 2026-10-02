@@ -369,6 +369,29 @@ has to follow them.
 
 ### Fixed
 
+- **The stores override the wacore trait defaults that were wrong for them**
+  (issue #93). Both engines left every trait method with a default body on
+  that default, and four of those defaults do something other than what the
+  trait asks of a real backend. Now, on Postgres and SQLite alike:
+  - `get_sent_message` reads the sent-message row without consuming it. The
+    default errored, so a group repair or resend that missed the in-memory
+    cache logged a warning and found no payload.
+  - `delete_expired_base_keys` prunes `base_keys` older than the keepalive's
+    one-hour cutoff. The default deleted nothing, so the table only grew.
+  - `touch_tc_token_sender_timestamp` and `store_received_tc_token` are each
+    one upsert, atomic against each other as the trait requires. The default
+    read-modify-write let a concurrent history sync and send path drop one
+    writer's field: in the parity test, 63 (Postgres) and 64 (SQLite) of 64
+    contacts lost one.
+  - `docs/store-trait-defaults.md` classifies all 36 trait defaults: 5
+    overridden, 31 kept, each with the reason. `scripts/check-store-defaults.py`,
+    run by `scripts/ci.sh` in both modes, reads the pinned wacore and fails on
+    a default the table does not classify, which is how a whatsapp-rust bump
+    that adds one is caught. The throughput defaults (batches, `commit_patch`,
+    SQLite maintenance) are #104.
+
+  No migration and no wire change.
+
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
   (issue #83). The file in the image and the tarball still listed the
   whatsapp-rust family at 0.6.0, and since the workspace split (#62) its
