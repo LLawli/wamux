@@ -1,8 +1,6 @@
 //! One logged-in account behind a real socket, and the wire helpers every
 //! GroupService test shares.
 
-use std::time::Duration;
-
 use tonic::transport::Channel;
 use wacore_binary::Node;
 use wamux::proto::v1 as pb;
@@ -10,6 +8,7 @@ use wamux::proto::v1::group_service_client::GroupServiceClient;
 use wamux::stress::MockWaServer;
 
 use crate::captured::{GROUP, INVITE_CODE, REQUESTER_PN};
+use crate::common::mock_wire::{account_ref, attr};
 use crate::common::{self, LoggedIn};
 
 pub const G2: &str = "w:g2";
@@ -56,52 +55,6 @@ impl Fixture {
             participants: participants.iter().map(|p| p.to_string()).collect(),
         }
     }
-}
-
-pub fn account_ref(uuid: &str) -> pb::AccountRef {
-    pb::AccountRef {
-        r#ref: Some(pb::account_ref::Ref::Uuid(uuid.to_string())),
-    }
-}
-
-pub fn attr(node: &Node, key: &str) -> Option<String> {
-    node.attrs.get(key).map(|value| value.as_str().into_owned())
-}
-
-/// The first child of an `<iq>`: the operation it carries.
-pub fn operation(iq: &Node) -> Option<&Node> {
-    iq.children().and_then(|children| children.first())
-}
-
-fn is_iq(iq: &Node, xmlns: &str, iq_type: &str, child: &str) -> bool {
-    let tag = operation(iq).map(|c| c.tag.as_ref()).unwrap_or("");
-    attr(iq, "xmlns").as_deref() == Some(xmlns)
-        && attr(iq, "type").as_deref() == Some(iq_type)
-        && tag == child
-}
-
-/// The newest `<iq>` the client sent with this namespace, type and first
-/// child (`""` for an IQ with no child), waiting for it to reach the mock.
-pub async fn sent_iq(mock: &MockWaServer, xmlns: &str, iq_type: &str, child: &str) -> Node {
-    common::poll_until(
-        &format!("an <iq xmlns={xmlns} type={iq_type}><{child}>"),
-        Duration::from_secs(5),
-        || async {
-            mock.client_iqs()
-                .into_iter()
-                .rev()
-                .find(|iq| is_iq(iq, xmlns, iq_type, child))
-        },
-    )
-    .await
-}
-
-/// How many `<iq>` of a namespace the client has sent so far.
-pub fn iqs_in(mock: &MockWaServer, xmlns: &str) -> usize {
-    mock.client_iqs()
-        .iter()
-        .filter(|iq| attr(iq, "xmlns").as_deref() == Some(xmlns))
-        .count()
 }
 
 /// The `jid` of every `<participant>` under the operation, in order.

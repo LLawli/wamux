@@ -9,7 +9,8 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::group_service_client::GroupServiceClient;
 
 use crate::captured::GROUP;
-use crate::harness::{G2, attr, fixture, operation, participant_jids, sent_iq};
+use crate::common::mock_wire::{attr, operation, sent_iq};
+use crate::harness::{G2, fixture, participant_jids};
 
 const ACCEPTED: &str = "5511900000003@s.whatsapp.net";
 const REFUSED: &str = "5511900000004@s.whatsapp.net";

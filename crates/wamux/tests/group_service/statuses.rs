@@ -8,7 +8,8 @@ use wamux::proto::v1 as pb;
 
 use crate::captured::{GROUP, GROUP_ID, REQUESTER_PN};
 use crate::common;
-use crate::harness::{Fixture, G2, PICTURE, account_ref, call_every_rpc, fixture, iqs_in, sent_iq};
+use crate::common::mock_wire::{account_ref, iqs_in, sent_iq};
+use crate::harness::{Fixture, G2, PICTURE, call_every_rpc, fixture};
 
 fn assert_every(statuses: &[(&str, tonic::Status)], code: Code) {
     assert_eq!(statuses.len(), 21, "all 21 RPCs");
