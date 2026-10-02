@@ -6,6 +6,8 @@
 //! (`wacore-noise` keeps `WA_CERT_PUB_KEY` unused so an e2e mock can stand in).
 //! This is test infrastructure, gated behind the `stress` feature.
 
+mod iq_table;
 pub mod mock_wa_server;
+mod wire_frames;
 
 pub use mock_wa_server::MockWaServer;

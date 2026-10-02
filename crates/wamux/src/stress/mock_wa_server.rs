@@ -10,12 +10,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::iq_table::{self, IqAnswer, SharedIqAnswers};
+use super::wire_frames::{next_frame, send_frame};
 use anyhow::{Context, anyhow};
-use bytes::{Bytes, BytesMut};
-use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_websockets::{Message, ServerBuilder};
-use wacore::framing::{FrameDecoder, encode_frame};
+use tokio_websockets::ServerBuilder;
+use wacore::framing::FrameDecoder;
 use wacore::store::Device;
 use wacore_binary::builder::NodeBuilder;
 use wacore_binary::consts::{NOISE_PATTERN_XX, WA_CONN_HEADER};
@@ -42,26 +42,17 @@ pub struct MockWaServer {
     keepalive_pings: Arc<AtomicUsize>,
     iq_answers: SharedIqAnswers,
     client_messages: SharedClientMessages,
+    client_iqs: SharedClientIqs,
     accept_task: tokio::task::JoinHandle<()>,
 }
-
-/// What the mock answers an IQ with, by namespace, standing in for the server.
-/// An unset slot answers a bare `<iq type=result>` like any other IQ. Shared
-/// with every connection, so a test sets it before the call it wants answered.
-#[derive(Default)]
-struct IqAnswers {
-    /// The `{"data":...}` JSON for every `<iq xmlns="w:mex">` (the GraphQL answer).
-    mex: Option<String>,
-    /// The children of the result for every `<iq xmlns="newsletter">`, e.g. the
-    /// `<messages>` page a channel-history query gets back (#40).
-    newsletter: Option<wacore_binary::Node>,
-}
-
-type SharedIqAnswers = Arc<std::sync::Mutex<IqAnswers>>;
 
 /// Every `<message>` a client sent after login, in arrival order: what a test
 /// asserts a send put on the wire (#26, the channel poll vote).
 type SharedClientMessages = Arc<std::sync::Mutex<Vec<wacore_binary::Node>>>;
+
+/// Every `<iq>` a client sent after login, in arrival order: what a write
+/// (a group subject, a leave) put on the wire (#68).
+type SharedClientIqs = Arc<std::sync::Mutex<Vec<wacore_binary::Node>>>;
 
 impl Drop for MockWaServer {
     fn drop(&mut self) {
@@ -82,9 +73,11 @@ impl MockWaServer {
         let keepalive_pings = Arc::new(AtomicUsize::new(0));
         let iq_answers: SharedIqAnswers = Arc::default();
         let client_messages: SharedClientMessages = Arc::default();
+        let client_iqs: SharedClientIqs = Arc::default();
 
         let answers = iq_answers.clone();
         let messages = client_messages.clone();
+        let iqs = client_iqs.clone();
         let hs = handshakes.clone();
         let plf = post_login_frames.clone();
         let pn = parsed_nodes.clone();
@@ -100,6 +93,7 @@ impl MockWaServer {
                             keepalive_pings: kap.clone(),
                             iq_answers: answers.clone(),
                             client_messages: messages.clone(),
+                            client_iqs: iqs.clone(),
                         };
                         tokio::spawn(async move {
                             if let Err(e) = serve_connection(stream, counters).await {
@@ -123,28 +117,74 @@ impl MockWaServer {
             keepalive_pings,
             iq_answers,
             client_messages,
+            client_iqs,
             accept_task,
         })
     }
 
     /// Answer every later MEX query with this `{"data":...}` JSON, as the
     /// server would. Lets a test feed the library's own response parsing a
-    /// server answer of its choosing.
+    /// server answer of its choosing. A shortcut over `answer_iq` (#68).
     pub fn answer_mex_with(&self, json: &str) {
-        // Poisoning needs a panic while the lock is held; nothing here panics.
-        if let Ok(mut answers) = self.iq_answers.lock() {
-            answers.mex = Some(json.to_string());
-        }
+        let body = NodeBuilder::new("result")
+            .bytes(json.as_bytes().to_vec())
+            .build();
+        self.answer_iq("w:mex", "*", "*", body);
     }
 
     /// Answer every later `<iq xmlns="newsletter">` with `<iq type=result>`
     /// wrapping this node, as the server would. Lets a test feed the library's
-    /// channel-history parser the page of its choosing (#40).
+    /// channel-history parser the page of its choosing (#40). A shortcut over
+    /// `answer_iq` (#68).
     pub fn answer_newsletter_iq_with(&self, body: wacore_binary::Node) {
+        self.answer_iq("newsletter", "*", "*", body);
+    }
+
+    /// Answer every later `<iq>` whose `xmlns`, `type` and first child tag
+    /// match with `<iq type=result>` wrapping `body` (#68). `"*"` in
+    /// `iq_type` or `child_tag` matches any value; an IQ without a child has
+    /// tag `""`. The newest matching answer wins; an IQ nothing matches still
+    /// gets a bare result, as before.
+    pub fn answer_iq(
+        &self,
+        xmlns: &str,
+        iq_type: &str,
+        child_tag: &str,
+        body: wacore_binary::Node,
+    ) {
+        self.push_rule(xmlns, iq_type, child_tag, IqAnswer::Result(Box::new(body)));
+    }
+
+    /// Like `answer_iq`, but the server refuses: `<iq type=error>` carrying
+    /// `<error code=.. text=..>`, the shape the library turns into
+    /// `IqError::ServerError` (#68).
+    pub fn answer_iq_error(
+        &self,
+        xmlns: &str,
+        iq_type: &str,
+        child_tag: &str,
+        code: u16,
+        text: &str,
+    ) {
+        let text = text.to_string();
+        self.push_rule(xmlns, iq_type, child_tag, IqAnswer::Refusal { code, text });
+    }
+
+    fn push_rule(&self, xmlns: &str, iq_type: &str, child_tag: &str, answer: IqAnswer) {
         // Poisoning needs a panic while the lock is held; nothing here panics.
         if let Ok(mut answers) = self.iq_answers.lock() {
-            answers.newsletter = Some(body);
+            answers.push(xmlns, iq_type, child_tag, answer);
         }
+    }
+
+    /// Every `<iq>` clients have sent after login, oldest first: what a write
+    /// put on the wire (#68).
+    pub fn client_iqs(&self) -> Vec<wacore_binary::Node> {
+        // Poisoning needs a panic while the lock is held; nothing here panics.
+        self.client_iqs
+            .lock()
+            .map(|iqs| iqs.clone())
+            .unwrap_or_default()
     }
 
     /// The `<message>` stanzas clients have sent so far, oldest first.
@@ -198,6 +238,7 @@ struct ConnCounters {
     keepalive_pings: Arc<AtomicUsize>,
     iq_answers: SharedIqAnswers,
     client_messages: SharedClientMessages,
+    client_iqs: SharedClientIqs,
 }
 
 /// Unix seconds (server time) for the `<success t=...>` attribute.
@@ -219,6 +260,7 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
         keepalive_pings,
         iq_answers,
         client_messages,
+        client_iqs,
     } = counters;
     let (_req, mut ws) = ServerBuilder::new()
         .accept(stream)
@@ -396,12 +438,12 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
             {
                 messages.push(node.to_owned());
             }
-            if tag == "iq"
-                && let Some(id) = node.get_attr("id").map(|v| v.to_string())
-            {
-                let xmlns = node.get_attr("xmlns").map(|v| v.to_string());
-                let reply = iq_reply(id, xmlns.as_deref(), &iq_answers);
-                if let Ok(plain) = marshal(&reply)
+            if tag == "iq" {
+                if let Ok(mut iqs) = client_iqs.lock() {
+                    iqs.push(node.to_owned());
+                }
+                if let Some(reply) = iq_table::iq_reply_for(&node, &iq_answers)
+                    && let Ok(plain) = marshal(&reply)
                     && let Ok(ct) = send_cipher.encrypt_with_counter(send_ctr, &plain)
                 {
                     send_ctr += 1;
@@ -410,76 +452,5 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
             }
         }
     }
-    Ok(())
-}
-
-/// A minimal `<iq type=result>`, carrying the answer a test set for the
-/// query's namespace (`MockWaServer::answer_mex_with`,
-/// `MockWaServer::answer_newsletter_iq_with`), if any.
-fn iq_reply(id: String, xmlns: Option<&str>, answers: &SharedIqAnswers) -> wacore_binary::Node {
-    let reply = NodeBuilder::new("iq").attr("type", "result").attr("id", id);
-    let Ok(answers) = answers.lock() else {
-        return reply.build();
-    };
-    let body = match xmlns {
-        Some("w:mex") => answers
-            .mex
-            .clone()
-            .map(|json| NodeBuilder::new("result").bytes(json.into_bytes()).build()),
-        Some("newsletter") => answers.newsletter.clone(),
-        _ => None,
-    };
-    match body {
-        Some(child) => reply.children([child]).build(),
-        None => reply.build(),
-    }
-}
-
-/// Pull the next WhatsApp frame, stripping the 4-byte `WA_CONN_HEADER` that
-/// prefixes only the very first client frame.
-async fn next_frame<S>(
-    ws: &mut tokio_websockets::WebSocketStream<S>,
-    decoder: &mut FrameDecoder,
-    first_frame: &mut bool,
-) -> anyhow::Result<BytesMut>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    loop {
-        if let Some(frame) = decoder.decode_frame() {
-            return Ok(frame);
-        }
-        let msg = ws
-            .next()
-            .await
-            .ok_or_else(|| anyhow!("connection closed before frame"))?
-            .context("ws read")?;
-        if !msg.is_binary() {
-            continue;
-        }
-        let payload = msg.into_payload();
-        let bytes: &[u8] = payload.as_ref();
-        if *first_frame {
-            // First frame carries the WA connection header before the length.
-            *first_frame = false;
-            decoder.feed(&bytes[WA_CONN_HEADER.len()..]);
-        } else {
-            decoder.feed(bytes);
-        }
-    }
-}
-
-/// Frame a payload (3-byte length prefix) and send it as one WS binary message.
-async fn send_frame<S>(
-    ws: &mut tokio_websockets::WebSocketStream<S>,
-    payload: &[u8],
-) -> anyhow::Result<()>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    let framed = encode_frame(payload, None).map_err(|e| anyhow!("encode frame: {e}"))?;
-    ws.send(Message::binary(Bytes::from(framed)))
-        .await
-        .context("ws send")?;
     Ok(())
 }

@@ -111,6 +111,11 @@ scripts/check-store-coverage.py
 stage "test sleeps are marked"
 scripts/check-test-sleeps.py
 
+# #68: an RPC of GroupService no socket test calls is an RPC nobody pinned. The
+# count (21) makes a new RPC fail here until it gets a test. Pure text check.
+stage "GroupService RPC coverage"
+scripts/check-service-coverage.py GroupService crates/wamux/tests/group_service 21
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -189,6 +194,12 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newslett
 stage "stress tests (newsletter poll vote)"
 must_run_tests --features stress --test stress_newsletter_poll_vote
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newsletter_poll_vote
+
+# GroupService through the socket (#68): the five reads replay answers captured
+# live, the writes are built in the shape the library's parser accepts.
+stage "stress tests (group service)"
+must_run_tests --features stress --test group_service
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test group_service
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
