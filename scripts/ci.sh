@@ -101,6 +101,11 @@ if ! grep -qE '^Ran [1-9][0-9]* tests? in ' <<<"$out"; then
 fi
 scripts/check-third-party.sh
 
+# #60: a store method no test calls is a hole the storage rewrite (#65) would cross
+# with no net. Pure text check over the sources, so both modes run it.
+stage "store method coverage"
+scripts/check-store-coverage.py
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -117,6 +122,7 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   stage "no-postgres: sqlite-only storage cases"
   must_run_tests --test storage_backend sqlite_
   must_run_tests --test bincode_upgrade sqlite_
+  must_run_tests --test store_parity sqlite_
 
   stage "no-postgres: wamux-tools (sqlite daemon fixture)"
   must_run_pkg_tests wamux-tools "${TOOLS_NO_PG_SUITES[@]}"
