@@ -201,6 +201,39 @@ has to follow them.
     snapshots the shared Postgres before the first test and fails at the end
     if any account or throwaway database created by the run survived.
 
+- **GroupService is tested through the socket** (issue #68). All 21 RPCs now
+  run over a real Unix socket and tonic client, on both engines, with the
+  account logged in against the mock. Before this they were only ever run by
+  hand.
+  - Each RPC has a success test that checks the relayed payload by value. For
+    the writes, it also checks the stanza the call put on the wire.
+  - Three table tests go through all 21 RPCs: an unknown account gets
+    `NotFound`, an account that is not connected gets `FailedPrecondition`,
+    and a server refusal (403) comes back as `PermissionDenied` with the
+    `wa-code` and `wa-text` trailers.
+  - Each `InvalidArgument` branch the core has today has its own test: an
+    empty or malformed group, a malformed participant, a subject over 100
+    characters, and a description over 2048.
+  - The five reads (GetGroupMetadata, GetInviteLink, GetMembershipRequests,
+    PreviewInvite, ListGroups) are answered with what WhatsApp's server sent
+    on 2026-10-02. The capture came from a throwaway group between the
+    owner's own two accounts, was anonymized, and is checked into
+    `crates/wamux/tests/group_service/`. A test proves the transcription
+    renders back to the captured stanzas. The writes are answered with the
+    shapes the whatsapp-rust parser accepts.
+  - The mock answers any IQ by namespace, type and first child, can answer
+    with a server error, and records every IQ a client sends. #69 to #71
+    reuse it.
+  - `scripts/check-service-coverage.py`, run in both modes, fails if an RPC
+    of the service is never called by its suite, or if the service's RPC
+    count changes from the 21 it pins.
+
+  Some behavior is pinned as it is today and is questioned in #96:
+  - a group RPC accepts any JID as the group;
+  - an empty invite code comes back as `Unavailable`;
+  - a 409 on the description loses its code;
+  - membership requests carry their `jid` as an object, not a string.
+
 ### Fixed
 
 - **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
