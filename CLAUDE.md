@@ -239,6 +239,18 @@ Ten more minutes of grep would have caught each one.
   fails before the fix.
 - F.I.R.S.T: fast, independent, repeatable, self-validating, timely.
 
+## Migrations (two engines, one numbering)
+- `crates/wamux/migrations/` (Postgres) and `crates/wamux/migrations_sqlite/` take the
+  **same number and the same name** for the same change, from 0005 on. The next migration
+  is `0005_<name>.sql` in both directories, so SQLite skips 0004.
+- A change that only one engine needs still gets a file on the other: same number, same
+  name, a no-op whose comment says why. That keeps the numbers aligned for good.
+- Never renumber or edit an applied migration. sqlx stores each one's version and
+  checksum, and a changed file breaks every existing store.
+- The one exception is history, pinned by name: Postgres 0002 (`drop_connection_policy`)
+  has no SQLite counterpart, so Postgres 0003/0004 are SQLite 0002/0003.
+- `tests/migration_alignment` enforces all of this on every `cargo test` (#66).
+
 ## Formatting & lint
 - `cargo fmt` is law. Don't discuss style.
 - `cargo clippy --workspace --all-targets -- -D warnings` must pass clean. Fix the lint, don't
