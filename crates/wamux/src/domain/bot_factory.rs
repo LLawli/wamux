@@ -10,6 +10,7 @@ use whatsapp_rust::bot::Bot;
 use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::store::traits::Backend;
 use whatsapp_rust_tokio_transport::{Connector, TokioWebSocketTransportFactory};
+#[cfg(not(feature = "stress"))]
 use whatsapp_rust_ureq_http_client::UreqHttpClient;
 
 use crate::state::event_bridge::{self, EventCtx};
@@ -48,7 +49,7 @@ pub async fn build_bot(
         // engine hands us, one per account) goes through the `_arc` form.
         .with_backend_arc(backend)
         .with_transport_factory(transport)
-        .with_http_client(UreqHttpClient::new())
+        .with_http_client(media_http_client())
         .with_runtime(TokioRuntime)
         .with_noise_cert_policy(cert_policy)
         .on_event(move |event, client| {
@@ -66,6 +67,20 @@ pub async fn build_bot(
     }
 
     builder.build().await.map_err(|e| anyhow::anyhow!(e))
+}
+
+/// The HTTP client for media transfers. A `stress` build wraps the production
+/// `UreqHttpClient` so a loopback `https://` CDN (the mock) is reached over
+/// plain http (#69); the rewrite only fires for a loopback host, which a real
+/// CDN never is. Production keeps `UreqHttpClient::new()` untouched.
+#[cfg(feature = "stress")]
+fn media_http_client() -> crate::stress::loopback_http::LoopbackHttpClient {
+    crate::stress::loopback_http::LoopbackHttpClient::new()
+}
+
+#[cfg(not(feature = "stress"))]
+fn media_http_client() -> UreqHttpClient {
+    UreqHttpClient::new()
 }
 
 /// A build carrying the `stress` feature can skip the Noise server-certificate
