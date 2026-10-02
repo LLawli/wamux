@@ -106,6 +106,12 @@ scripts/check-third-party.sh
 stage "store method coverage"
 scripts/check-store-coverage.py
 
+# #93: a wacore trait default nobody classified is behavior the engines inherit
+# unseen. A whatsapp-rust bump that adds one fails here until it is classified in
+# the store defaults doc. Needs cargo (metadata, offline), not the database.
+stage "store trait defaults"
+scripts/check-store-defaults.py
+
 # #67: a sleep in a test is a synchronization bug unless it says why it is not
 # one. Pure text check over the sources, so both modes run it.
 stage "test sleeps are marked"

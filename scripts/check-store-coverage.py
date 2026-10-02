@@ -19,7 +19,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ENGINES = ("postgres", "sqlite")
-MIN_STORE_METHODS = 59
+MIN_STORE_METHODS = 63
 ASYNC_FN = re.compile(r"\basync\s+fn\s+(\w+)")
 CALL = re.compile(r"\.\s*(\w+)\s*\(")
 
