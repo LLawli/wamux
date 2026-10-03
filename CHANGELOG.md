@@ -469,6 +469,30 @@ has to follow them.
 
 ### Changed
 
+- **The stores write batches in one transaction and read them in one query
+  per hundred** (issue #104). Seventeen wacore store methods that were left on
+  their default, a loop over the one-row method, are now overridden on both
+  engines. Nothing changes on the wire, in the config or in the stored bytes.
+  - Batch writes (identities, sessions, prekeys, sender keys, LID mappings,
+    device lists) run the same one-row statement in one transaction: one
+    connection and one commit instead of one per row, and all or nothing. The
+    signal cache flush already treats a failed batch as wholly unwritten.
+  - Batch reads (sessions, prekeys, mutation MACs, device lists, tc-tokens)
+    send one query per 100 values with a fixed-size `IN` list.
+  - `commit_patch` writes the app-state version, the removed MACs and the
+    added MACs in one transaction. A crash between them could leave a new
+    version next to old MACs, and the next patch's ltHash was then computed
+    from the wrong set.
+  - `maintenance`, which the keepalive calls about hourly, now refreshes
+    SQLite's planner statistics (`PRAGMA optimize`) and truncates the `-wal`
+    file, which otherwise only grows between checkpoints. A busy checkpoint is
+    skipped, not failed. On Postgres it does nothing (autovacuum).
+  - Measured on a dev machine (release build): on Postgres a 200-session
+    flush, a 256-user device-list write and 100 `commit_patch` calls each took
+    300 to 650 ms, one commit per row. On SQLite, which runs in process on one
+    connection, the same work took 10 to 30 ms. See the PR for the numbers
+    after the change.
+
 - **The storage SQL is written once for Postgres and SQLite** (issue #65).
   Nothing changes on the wire, in the config or in the stored bytes: an
   existing database or file opens as it is, with no migration and no
