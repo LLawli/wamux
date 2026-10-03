@@ -452,6 +452,32 @@ has to follow them.
 
 ### Changed
 
+- **The storage SQL is written once for Postgres and SQLite** (issue #65).
+  Nothing changes on the wire, in the config or in the stored bytes: an
+  existing database or file opens as it is, with no migration and no
+  re-pairing. This is for anyone using the `wamux` crate as a library (today
+  `crates/wamux-tools`).
+  - `storage/postgres/` and `storage/sqlite/` were the same code written twice
+    (about 1,400 lines each). They are now one family, `storage::sql`:
+    `SqlStore` (the `StorageEngine`), `SqlBackend` (the per-account wacore
+    backend) and `SqlPool { Pg, Sqlite }`. `PgStorage`, `SqliteStorage`,
+    `PgBackend` and `SqliteBackend` are gone, with no aliases. The engine is
+    still picked by the `database_url` scheme.
+  - Each statement is one `$N` string that runs on both drivers: sqlx-sqlite
+    binds `$N` by number, which a test pins. The dialect differences became
+    portable SQL (`CASE` instead of `GREATEST`/`MAX`, `length` instead of
+    `octet_length`, the empty blob passed as a bind). Three statements are
+    still written per driver, side by side: the prekey array update, the
+    `blob_format` row lock and the `accounts` uuid (UUID on Postgres, TEXT on
+    SQLite).
+  - `StorageEngine` stays the only plug point. A non-sqlx engine is a family
+    of its own behind it, and #106 adds Turso that way. The CI checks of store
+    coverage and trait defaults now count families, and fail on a
+    `*_store.rs` outside every listed family.
+  - `tests/existing_store` opens a store written by `0f40e34`, before this
+    change, on each engine, and reads every table back. The fixture is in
+    `crates/wamux/tests/fixtures/store-0f40e34/`.
+
 - **The development binaries share one client and fail for real** (issue
   #64). Nothing here is shipped and nothing changes on the wire or in the
   daemon's config; this is for anyone running the tools in
