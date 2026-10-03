@@ -14,6 +14,33 @@ has to follow them.
 
 ### Added
 
+- **An experimental Turso storage engine, behind the `turso` cargo feature**
+  (issue #106). `database_url = "turso://<path>"` opens the store through the
+  native async `turso` crate (pinned `=0.8.1`, no default features), a second
+  engine family behind `StorageEngine` next to the sqlx one. Nothing changes
+  on the wire, and nothing changes for a build without the feature: it refuses
+  `turso://` with an error that names the feature, and the shipped daemon does
+  not carry the crate. See `docs/DEPLOYMENT.md`, "Turso (experimental)".
+  - A wamux SQLite file opens with `turso://` as it is, and a file Turso wrote
+    opens again with `sqlite://`: Turso applies `migrations_sqlite/` and
+    records them in `_sqlx_migrations` exactly as sqlx does, checksums
+    included, then runs the same bincode upgrade. Both directions are tested,
+    and were run live on a production store.
+  - Every store statement is now written once, in `storage::statements`, and
+    both families run that text. turso binds `$N` by order of first
+    appearance, not by number, which put values in the wrong columns with no
+    error; the Turso family rewrites `$N` to `?N`, and a test pins the upstream
+    behavior. `scripts/check-store-sql-shared.py` keeps SQL out of the
+    families.
+  - One connection behind a mutex, `foreign_keys` on (checked at open),
+    `synchronous = FULL`, a 30 s busy timeout. `maintenance` is the WAL
+    checkpoint alone: turso accepts `optimize` and does nothing with it.
+  - CI runs the engine-parity suite, the existing-store fixture, the bincode
+    upgrade and the service suites on Turso as well (`WAMUX_TEST_ENGINE=turso`).
+  - Adding the crate to `Cargo.lock` moved some crates the shipped daemon
+    already uses to newer compatible versions (`cc` 1.6, `icu_*` 2.3,
+    `zerovec` 0.11.8), because turso 0.8.1 requires them.
+
 - **A received sticker pack can be opened** (issue #58). A
   `stickerPackMessage` reached the socket with no `MediaDescriptor`, and
   `DownloadMedia` had no type that could fetch it: an edge saw that a pack
