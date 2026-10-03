@@ -62,11 +62,13 @@ pub enum BincodeUpgradeError {
     /// A marker this build does not know, e.g. written by a newer build.
     #[error("blob_format is '{0}', expected '{BLOB_FORMAT_BINCODE}' or '{BLOB_FORMAT_PROTOBUF}'")]
     UnknownFormat(String),
+    /// Boxed because the family that ran the statement owns the error type
+    /// (sqlx, or turso, #106); the conversion is the same neutral code for all.
     #[error("{context}: {source}")]
     Database {
         context: &'static str,
         #[source]
-        source: sqlx::Error,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 }
 
@@ -218,9 +220,16 @@ pub fn needs_bincode_upgrade(format: &str) -> Result<bool, BincodeUpgradeError> 
     }
 }
 
-/// Wraps a raw `sqlx::Error` with what was being attempted.
-pub fn upgrade_db_error(context: &'static str) -> impl FnOnce(sqlx::Error) -> BincodeUpgradeError {
-    move |source| BincodeUpgradeError::Database { context, source }
+/// Wraps a raw driver error (`sqlx::Error`, `turso::Error`) with what was being
+/// attempted.
+pub fn upgrade_db_error<E>(context: &'static str) -> impl FnOnce(E) -> BincodeUpgradeError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    move |source| BincodeUpgradeError::Database {
+        context,
+        source: Box::new(source),
+    }
 }
 
 /// One line per conversion, counts only.

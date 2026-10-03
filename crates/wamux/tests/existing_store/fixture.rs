@@ -34,6 +34,19 @@ pub async fn sqlite() -> (SqlStore, tempfile::TempDir) {
     (store, dir)
 }
 
+/// A copy of the SQLite fixture, opened by the Turso engine (#106): a store
+/// sqlx wrote, migrated and read by the other family.
+#[cfg(feature = "turso")]
+pub async fn turso() -> (wamux::storage::turso::TursoStore, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let copy = dir.path().join("wamux.db");
+    std::fs::copy(fixture_file("wamux.db"), &copy).expect("copy the sqlite fixture");
+    let store = wamux::storage::turso::TursoStore::open(&format!("turso://{}", copy.display()))
+        .await
+        .expect("open the 0f40e34 sqlite store with turso");
+    (store, dir)
+}
+
 /// A throwaway database holding the Postgres fixture.
 pub struct ThrowawayPg {
     name: String,

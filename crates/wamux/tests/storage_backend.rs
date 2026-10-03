@@ -4,9 +4,9 @@
 //! The Postgres case needs the docker container (`DATABASE_URL`); the SQLite
 //! case needs nothing — it builds a fresh database file in a temp dir.
 
-// Engine convention (#67): a test that names its engine (`postgres_`, `sqlite_`
-// or `both_engines_` prefix) runs once, in the default pass, where both engines
-// are available. The `WAMUX_TEST_ENGINE=sqlite` pass of scripts/ci.sh skips them
+// Engine convention (#67): a test that names its engine (`postgres_`, `sqlite_`,
+// `turso_` or `both_engines_` prefix) runs once, in the default pass, where both engines
+// are available (the `turso_` ones in the `--features turso` pass, #106). The `WAMUX_TEST_ENGINE=sqlite` pass of scripts/ci.sh skips them
 // by that prefix, so the Postgres cases are not re-run for nothing. No other
 // test may carry those fragments in its name: `--skip` matches substrings.
 
@@ -26,6 +26,11 @@ mod common;
 fn _assert_backend<T: Backend>() {}
 const _: () = {
     let _ = _assert_backend::<SqlBackend>;
+};
+// Same proof for the Turso family (#106).
+#[cfg(feature = "turso")]
+const _: () = {
+    let _ = _assert_backend::<wamux::storage::turso::TursoBackend>;
 };
 
 /// The shared body: two accounts on one engine must never see each other's
@@ -100,6 +105,44 @@ async fn postgres_round_trips_and_isolates_by_device_id() {
 async fn sqlite_round_trips_and_isolates_by_device_id() {
     let (storage, _dir) = common::sqlite_engine().await;
     round_trips_and_isolates(storage).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_round_trips_and_isolates_by_device_id() {
+    let (storage, _dir) = common::turso_engine().await;
+    round_trips_and_isolates(storage).await;
+}
+
+/// Turso defaults `foreign_keys` OFF too, and the pragma is per connection
+/// (#106, probe on turso 0.8.1): same trap, same proof below the trait.
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_account_delete_cascades_to_scoped_rows() {
+    let (storage, _dir) = common::turso_engine().await;
+    let account = storage
+        .create_account(Some("cascade-probe"))
+        .await
+        .expect("create account");
+    storage
+        .device_backend(account.device_id)
+        .put_identity("alice@s.whatsapp.net", [3u8; 32])
+        .await
+        .expect("put identity");
+    let count = || common::turso_rows(&storage, "SELECT COUNT(*) FROM identities", vec![]);
+    assert_eq!(
+        count().await,
+        vec![vec![turso::Value::Integer(1)]],
+        "identity must be persisted before the delete"
+    );
+
+    assert!(storage.delete_account(account.uuid).await.unwrap());
+
+    assert_eq!(
+        count().await,
+        vec![vec![turso::Value::Integer(0)]],
+        "cascade must remove the account's Signal rows"
+    );
 }
 
 /// Regression for the SQLite-only trap: `PRAGMA foreign_keys` defaults to OFF,
@@ -187,6 +230,44 @@ async fn both_engines_persist_byte_identical_device_blobs() {
     assert!(pg.delete_account(pg_account.uuid).await.unwrap());
 }
 
+/// The device blob is byte-identical between SQLite and Turso too (#106); with
+/// the test above, all three engines.
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_and_sqlite_persist_byte_identical_device_blobs() {
+    let (lite, _lite_dir) = common::sqlite_engine().await;
+    let (turso, _turso_dir) = common::turso_engine().await;
+    let lite_account = lite.create_account(Some("parity")).await.unwrap();
+    let turso_account = turso.create_account(Some("parity")).await.unwrap();
+
+    let lite_backend = lite.device_backend(lite_account.device_id);
+    lite_backend.create().await.expect("create device");
+    let device = lite_backend.load().await.unwrap().expect("device present");
+    turso
+        .device_backend(turso_account.device_id)
+        .save(&device)
+        .await
+        .expect("save through turso");
+
+    let lite_blob: Vec<u8> = sqlx::query_scalar("SELECT data FROM device WHERE device_id = ?")
+        .bind(lite_account.device_id)
+        .fetch_one(common::lite_pool(&lite))
+        .await
+        .expect("read sqlite blob");
+    let turso_rows = common::turso_rows(
+        &turso,
+        "SELECT data FROM device WHERE device_id = ?1",
+        vec![turso::Value::Integer(turso_account.device_id.into())],
+    )
+    .await;
+    assert!(!lite_blob.is_empty(), "device blob must not be empty");
+    assert_eq!(
+        turso_rows,
+        vec![vec![turso::Value::Blob(lite_blob)]],
+        "engines must persist identical device bytes"
+    );
+}
+
 /// whatsapp-rust main (#30) made the absence of an app-state version part of
 /// the contract: WA Web treats "no record" as "bootstrap from a snapshot", and a
 /// collection that synced and is legitimately empty sits at version 0 WITH a
@@ -259,6 +340,13 @@ async fn sqlite_app_state_versions_distinguish_absent_from_empty() {
     app_state_versions_distinguish_absent_from_empty(storage).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_app_state_versions_distinguish_absent_from_empty() {
+    let (storage, _dir) = common::turso_engine().await;
+    app_state_versions_distinguish_absent_from_empty(storage).await;
+}
+
 /// `DeviceListRecord` moved to `Arc<str>` / `Box<[DeviceInfo]>` /
 /// `Option<Box<str>>` and `DeviceInfo` packed its fields behind accessors (#30).
 /// The persisted JSON is meant to be unchanged; this pins what reads back,
@@ -309,5 +397,12 @@ async fn postgres_device_registry_round_trips_every_field() {
 #[tokio::test]
 async fn sqlite_device_registry_round_trips_every_field() {
     let (storage, _dir) = common::sqlite_engine().await;
+    device_registry_round_trips_every_field(storage).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_device_registry_round_trips_every_field() {
+    let (storage, _dir) = common::turso_engine().await;
     device_registry_round_trips_every_field(storage).await;
 }

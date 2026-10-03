@@ -17,15 +17,7 @@ use wacore::store::error::Result;
 use super::SqlPool;
 use crate::storage::engine::AccountRow;
 use crate::storage::sqlx_error::db;
-
-const INSERT_ACCOUNT: &str = "INSERT INTO accounts (uuid, external_ref)
-     VALUES ($1, $2)
-     RETURNING uuid, external_ref, device_id, push_name, created_at";
-
-const LIST_ACCOUNTS: &str = "SELECT uuid, external_ref, device_id, push_name, created_at
-     FROM accounts ORDER BY device_id";
-
-const DELETE_ACCOUNT: &str = "DELETE FROM accounts WHERE uuid = $1";
+use crate::storage::statements::accounts::{DELETE_ACCOUNT, INSERT_ACCOUNT, LIST_ACCOUNTS};
 
 /// Decode a Postgres row into the neutral `AccountRow`: `uuid` from UUID,
 /// `created_at` from BIGINT.

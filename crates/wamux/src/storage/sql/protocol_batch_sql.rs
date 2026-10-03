@@ -3,48 +3,17 @@
 //! its 500-line cap.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 use wacore::store::error::Result;
 use wacore::store::traits::{DeviceListRecord, LidPnMappingEntry, TcTokenEntry};
 
-use super::batch_sql::{READ_CHUNK, in_placeholders, padded_chunks};
-use super::protocol_rows::{self, DeviceListRow};
 use super::{SqlPool, SqlTx};
+use crate::storage::batch_chunks::padded_chunks;
 use crate::storage::blob_codec::now_secs;
-
-pub(super) const PUT_LID_MAPPING: &str = "INSERT INTO lid_pn_mapping
-        (lid, phone_number, created_at, learning_source, updated_at, device_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (lid, device_id) DO UPDATE SET
-        phone_number = EXCLUDED.phone_number,
-        learning_source = EXCLUDED.learning_source,
-        updated_at = EXCLUDED.updated_at";
-pub(super) const UPDATE_DEVICE_LIST: &str = "INSERT INTO device_registry
-        (user_id, devices_json, timestamp, phash, device_id, updated_at, raw_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (user_id, device_id) DO UPDATE SET
-        devices_json = EXCLUDED.devices_json,
-        timestamp = EXCLUDED.timestamp,
-        phash = EXCLUDED.phash,
-        updated_at = EXCLUDED.updated_at,
-        raw_id = EXCLUDED.raw_id";
-
-// Same text on every call and never varies by deployment: built once.
-static SELECT_DEVICES: LazyLock<String> = LazyLock::new(|| {
-    let list = in_placeholders(2, READ_CHUNK);
-    format!(
-        "SELECT user_id, devices_json, timestamp, phash, raw_id
-         FROM device_registry WHERE device_id = $1 AND user_id IN ({list})"
-    )
-});
-static SELECT_TC_TOKENS: LazyLock<String> = LazyLock::new(|| {
-    let list = in_placeholders(2, READ_CHUNK);
-    format!(
-        "SELECT jid, token, token_timestamp, sender_timestamp
-         FROM tc_tokens WHERE device_id = $1 AND jid IN ({list})"
-    )
-});
+use crate::storage::protocol_rows::{self, DeviceListRow};
+use crate::storage::statements::protocol::{
+    PUT_LID_MAPPING, SELECT_DEVICES, SELECT_TC_TOKENS, UPDATE_DEVICE_LIST,
+};
 
 pub(super) async fn put_lid_mappings(
     pool: &SqlPool,

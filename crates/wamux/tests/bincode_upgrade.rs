@@ -4,6 +4,9 @@
 //! converted and loadable, every field carried over as it was (`bootstrapped`
 //! included: since #36 the library marks a collection at the head itself).
 //!
+//! The Turso cases (#106) open the same legacy SQLite file with the other
+//! family: the conversion is the same neutral code on every engine.
+//!
 //! The Postgres cases run in a throwaway database of their own: the conversion
 //! is store-wide, so the shared test database cannot hold a legacy store.
 
@@ -247,6 +250,94 @@ async fn sqlite_one_unreadable_row_aborts_the_conversion_and_changes_nothing() {
 async fn sqlite_fresh_store_is_marked_protobuf() {
     let (engine, _dir) = common::sqlite_engine().await;
     assert_eq!(sqlite_marker(common::lite_pool(&engine)).await, "protobuf");
+}
+
+// --- Turso (#106): the same legacy SQLite file, opened by the other family ---
+
+#[cfg(feature = "turso")]
+mod turso_half {
+    use std::sync::Arc;
+
+    use turso::Value;
+    use wamux::storage::turso::TursoStore;
+
+    use super::*;
+
+    fn turso_url(dir: &tempfile::TempDir) -> String {
+        format!("turso://{}", dir.path().join("legacy.db").display())
+    }
+
+    async fn turso_marker(store: &TursoStore) -> Value {
+        let sql = "SELECT format FROM blob_format WHERE id = 1";
+        common::turso_rows(store, sql, vec![])
+            .await
+            .remove(0)
+            .remove(0)
+    }
+
+    async fn turso_device_blob(store: &TursoStore, device_id: i32) -> Value {
+        let sql = "SELECT data FROM device WHERE device_id = ?1";
+        let params = vec![Value::Integer(device_id.into())];
+        common::turso_rows(store, sql, params)
+            .await
+            .remove(0)
+            .remove(0)
+    }
+
+    #[tokio::test]
+    async fn turso_legacy_store_is_converted_on_open() {
+        let legacy = legacy_account();
+        let (_url, dir, device_id) = legacy_sqlite(&legacy, false).await;
+
+        let engine = Arc::new(
+            TursoStore::open(&turso_url(&dir))
+                .await
+                .expect("open converts"),
+        );
+        assert_eq!(turso_marker(&engine).await, Value::Text("protobuf".into()));
+        let converted = turso_device_blob(&engine, device_id).await;
+        assert_converted(engine.clone(), device_id, &legacy).await;
+        let engine = Arc::try_unwrap(engine)
+            .ok()
+            .expect("no backend outlives the checks");
+        engine.close().await.unwrap();
+
+        // Idempotent: a second open finds 'protobuf' and writes nothing.
+        let again = TursoStore::open(&turso_url(&dir)).await.expect("reopen");
+        assert_eq!(turso_device_blob(&again, device_id).await, converted);
+    }
+
+    #[tokio::test]
+    async fn turso_one_unreadable_row_aborts_the_conversion_and_changes_nothing() {
+        let legacy = legacy_account();
+        let (url, dir, device_id) = legacy_sqlite(&legacy, true).await;
+
+        let err = TursoStore::open(&turso_url(&dir))
+            .await
+            .err()
+            .expect("open must refuse");
+        let chain = format!("{:?}", anyhow::Error::from(err));
+        assert!(chain.contains("not readable as bincode"), "{chain}");
+
+        // Read back through sqlx: the failed open must have let go of the file.
+        let pool = sql::connect_sqlite(&url).await.unwrap();
+        assert_eq!(
+            sqlite_marker(&pool).await,
+            "bincode",
+            "the marker did not move"
+        );
+        assert_eq!(
+            sqlite_device_blob(&pool, device_id).await,
+            legacy.device_bincode,
+            "the good row is still the bincode it was"
+        );
+    }
+
+    #[tokio::test]
+    async fn turso_fresh_store_is_marked_protobuf() {
+        let (engine, _dir) = common::turso_engine().await;
+        assert_eq!(turso_marker(&engine).await, Value::Text("protobuf".into()));
+    }
 }
 
 // --- Postgres ---

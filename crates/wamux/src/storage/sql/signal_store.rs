@@ -8,11 +8,14 @@ use bytes::Bytes;
 use wacore::store::error::{Result, StoreError};
 use wacore::store::traits::SignalStore;
 
-use super::signal_sql::{
-    self, DELETE_IDENTITY, DELETE_PREKEY, DELETE_SENDER_KEY, DELETE_SESSION, PUT_IDENTITY,
-    PUT_SENDER_KEY, PUT_SESSION, STORE_PREKEY,
-};
+use super::signal_sql;
 use super::{SqlBackend, prekeys_sql};
+use crate::storage::statements::signal::{
+    DELETE_IDENTITY, DELETE_PREKEY, DELETE_SENDER_KEY, DELETE_SESSION, GET_SENDER_KEY, GET_SESSION,
+    LOAD_ALL_SIGNED_PREKEYS, LOAD_IDENTITY, LOAD_PREKEY, LOAD_SIGNED_PREKEY, MAX_PREKEY_ID,
+    PUT_IDENTITY, PUT_SENDER_KEY, PUT_SESSION, REMOVE_SIGNED_PREKEY, STORE_PREKEY,
+    STORE_SIGNED_PREKEY,
+};
 
 #[async_trait]
 impl SignalStore for SqlBackend {
@@ -24,13 +27,8 @@ impl SignalStore for SqlBackend {
     }
 
     async fn load_identity(&self, address: &str) -> Result<Option<[u8; 32]>> {
-        let row = scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT key FROM identities WHERE address = $1 AND device_id = $2",
-            address,
-            self.device_id
-        )?;
+        let row =
+            scalar_optional_sql!(Vec<u8>, &self.pool, LOAD_IDENTITY, address, self.device_id)?;
         match row {
             None => Ok(None),
             Some(bytes) => {
@@ -50,13 +48,7 @@ impl SignalStore for SqlBackend {
     // --- Sessions ---
 
     async fn get_session(&self, address: &str) -> Result<Option<Bytes>> {
-        let row = scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT record FROM sessions WHERE address = $1 AND device_id = $2",
-            address,
-            self.device_id
-        )?;
+        let row = scalar_optional_sql!(Vec<u8>, &self.pool, GET_SESSION, address, self.device_id)?;
         Ok(row.map(Bytes::from))
     }
 
@@ -94,13 +86,8 @@ impl SignalStore for SqlBackend {
     }
 
     async fn load_prekey(&self, id: u32) -> Result<Option<Bytes>> {
-        let row = scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT key FROM prekeys WHERE id = $1 AND device_id = $2",
-            id as i32,
-            self.device_id
-        )?;
+        let row =
+            scalar_optional_sql!(Vec<u8>, &self.pool, LOAD_PREKEY, id as i32, self.device_id)?;
         Ok(row.map(Bytes::from))
     }
 
@@ -110,12 +97,7 @@ impl SignalStore for SqlBackend {
     }
 
     async fn get_max_prekey_id(&self) -> Result<u32> {
-        let max = scalar_one_sql!(
-            i32,
-            &self.pool,
-            "SELECT COALESCE(MAX(id), 0) FROM prekeys WHERE device_id = $1",
-            self.device_id
-        )?;
+        let max = scalar_one_sql!(i32, &self.pool, MAX_PREKEY_ID, self.device_id)?;
         Ok(max as u32)
     }
 
@@ -124,8 +106,7 @@ impl SignalStore for SqlBackend {
     async fn store_signed_prekey(&self, id: u32, record: &[u8]) -> Result<()> {
         execute_sql!(
             &self.pool,
-            "INSERT INTO signed_prekeys (id, record, device_id) VALUES ($1, $2, $3)
-             ON CONFLICT (id, device_id) DO UPDATE SET record = EXCLUDED.record",
+            STORE_SIGNED_PREKEY,
             id as i32,
             record,
             self.device_id
@@ -137,7 +118,7 @@ impl SignalStore for SqlBackend {
         scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
-            "SELECT record FROM signed_prekeys WHERE id = $1 AND device_id = $2",
+            LOAD_SIGNED_PREKEY,
             id as i32,
             self.device_id
         )
@@ -147,19 +128,14 @@ impl SignalStore for SqlBackend {
         let rows = row_all_sql!(
             (i32, Vec<u8>),
             &self.pool,
-            "SELECT id, record FROM signed_prekeys WHERE device_id = $1",
+            LOAD_ALL_SIGNED_PREKEYS,
             self.device_id
         )?;
         Ok(rows.into_iter().map(|(id, rec)| (id as u32, rec)).collect())
     }
 
     async fn remove_signed_prekey(&self, id: u32) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM signed_prekeys WHERE id = $1 AND device_id = $2",
-            id as i32,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, REMOVE_SIGNED_PREKEY, id as i32, self.device_id)?;
         Ok(())
     }
 
@@ -171,13 +147,7 @@ impl SignalStore for SqlBackend {
     }
 
     async fn get_sender_key(&self, address: &str) -> Result<Option<Vec<u8>>> {
-        scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT record FROM sender_keys WHERE address = $1 AND device_id = $2",
-            address,
-            self.device_id
-        )
+        scalar_optional_sql!(Vec<u8>, &self.pool, GET_SENDER_KEY, address, self.device_id)
     }
 
     async fn delete_sender_key(&self, address: &str) -> Result<()> {

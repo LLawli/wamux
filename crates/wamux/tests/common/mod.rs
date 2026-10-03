@@ -67,8 +67,46 @@ pub async fn sqlite_engine() -> (Arc<SqlStore>, tempfile::TempDir) {
     (Arc::new(engine), dir)
 }
 
+/// A fresh Turso engine in a throwaway directory (#106), like `sqlite_engine`.
+#[cfg(feature = "turso")]
+pub async fn turso_engine() -> (Arc<wamux::storage::turso::TursoStore>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let url = format!("turso://{}", dir.path().join("wamux-test.db").display());
+    let engine = wamux::storage::turso::TursoStore::open(&url)
+        .await
+        .expect("open turso storage");
+    (Arc::new(engine), dir)
+}
+
+/// Every row of a raw statement on a Turso store, each as its column values.
+/// Raw SQL in tests writes `?N`: the `$N` rewrite is the engine's, not theirs.
+#[cfg(feature = "turso")]
+pub async fn turso_rows(
+    store: &wamux::storage::turso::TursoStore,
+    sql: &str,
+    params: Vec<turso::Value>,
+) -> Vec<Vec<turso::Value>> {
+    let conn = store.connection().lock().await;
+    let mut rows = conn
+        .query(sql, params)
+        .await
+        .unwrap_or_else(|e| panic!("turso query {sql:?}: {e}"));
+    let mut out = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .unwrap_or_else(|e| panic!("turso step {sql:?}: {e}"))
+    {
+        let values = (0..row.column_count())
+            .map(|i| row.get_value(i).expect("turso column"))
+            .collect();
+        out.push(values);
+    }
+    out
+}
+
 /// The engine under test, selected by `WAMUX_TEST_ENGINE` (`postgres` — the
-/// default — or `sqlite`). This is what lets scripts/ci.sh run the whole suite
+/// default — `sqlite`, or `turso` in a `--features turso` build). This is what lets scripts/ci.sh run the whole suite
 /// twice, once per engine, and the SQLite pass needs no Postgres container.
 ///
 /// The SQLite temp dir is leaked on purpose, matching how these tests already
@@ -89,7 +127,16 @@ pub async fn test_engine_with(max_conns: u32) -> Arc<dyn StorageEngine> {
             Box::leak(Box::new(dir));
             engine
         }
-        other => panic!("unknown WAMUX_TEST_ENGINE '{other}' (expected postgres or sqlite)"),
+        #[cfg(feature = "turso")]
+        "turso" => {
+            let (engine, dir) = turso_engine().await;
+            Box::leak(Box::new(dir));
+            engine
+        }
+        other => panic!(
+            "unknown WAMUX_TEST_ENGINE '{other}' (expected postgres, sqlite, or turso \
+             in a --features turso build)"
+        ),
     }
 }
 

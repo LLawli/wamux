@@ -5,10 +5,18 @@ use async_trait::async_trait;
 use wacore::store::error::Result;
 use wacore::store::traits::{DeviceListRecord, LidPnMappingEntry, ProtocolStore, TcTokenEntry};
 
-use super::protocol_batch_sql::{self, PUT_LID_MAPPING, UPDATE_DEVICE_LIST};
-use super::protocol_rows::{self, DeviceListRow, LidMappingRow};
+use super::protocol_batch_sql;
 use super::{SqlBackend, SqlTx, tc_token_sql};
 use crate::storage::blob_codec::now_secs;
+use crate::storage::protocol_rows::{self, DeviceListRow, LidMappingRow};
+use crate::storage::statements::protocol::{
+    CLEAR_ALL_SENDER_KEY_DEVICES, CLEAR_SENDER_KEY_DEVICES, DELETE_BASE_KEY, DELETE_DEVICES,
+    DELETE_EXPIRED_BASE_KEYS, DELETE_EXPIRED_SENT_MESSAGES, DELETE_EXPIRED_TC_TOKENS,
+    DELETE_SENDER_KEY_DEVICE_ROW, DELETE_SENT_MESSAGE, DELETE_TC_TOKEN, GET_ALL_LID_MAPPINGS,
+    GET_ALL_TC_TOKEN_JIDS, GET_BASE_KEY, GET_DEVICES, GET_LID_MAPPING, GET_PN_MAPPING,
+    GET_SENDER_KEY_DEVICES, GET_SENT_MESSAGE, GET_TC_TOKEN, PUT_LID_MAPPING, PUT_TC_TOKEN,
+    SAVE_BASE_KEY, SET_SENDER_KEY_STATUS, STORE_SENT_MESSAGE, UPDATE_DEVICE_LIST,
+};
 
 #[async_trait]
 impl ProtocolStore for SqlBackend {
@@ -18,8 +26,7 @@ impl ProtocolStore for SqlBackend {
         let rows = row_all_sql!(
             (String, i32),
             &self.pool,
-            "SELECT device_jid, has_key FROM sender_key_devices
-             WHERE group_jid = $1 AND device_id = $2",
+            GET_SENDER_KEY_DEVICES,
             group_jid,
             self.device_id
         )?;
@@ -32,10 +39,7 @@ impl ProtocolStore for SqlBackend {
         for (device_jid, has_key) in entries {
             execute_sql!(
                 in tx,
-                "INSERT INTO sender_key_devices (group_jid, device_jid, has_key, device_id, updated_at)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (group_jid, device_jid, device_id)
-                 DO UPDATE SET has_key = EXCLUDED.has_key, updated_at = EXCLUDED.updated_at",
+                SET_SENDER_KEY_STATUS,
                 group_jid,
                 device_jid,
                 i32::from(*has_key),
@@ -49,7 +53,7 @@ impl ProtocolStore for SqlBackend {
     async fn clear_sender_key_devices(&self, group_jid: &str) -> Result<()> {
         execute_sql!(
             &self.pool,
-            "DELETE FROM sender_key_devices WHERE group_jid = $1 AND device_id = $2",
+            CLEAR_SENDER_KEY_DEVICES,
             group_jid,
             self.device_id
         )?;
@@ -61,7 +65,7 @@ impl ProtocolStore for SqlBackend {
         for device_jid in device_jids {
             execute_sql!(
                 in tx,
-                "DELETE FROM sender_key_devices WHERE device_jid = $1 AND device_id = $2",
+                DELETE_SENDER_KEY_DEVICE_ROW,
                 device_jid,
                 self.device_id
             )?;
@@ -70,11 +74,7 @@ impl ProtocolStore for SqlBackend {
     }
 
     async fn clear_all_sender_key_devices(&self) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM sender_key_devices WHERE device_id = $1",
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, CLEAR_ALL_SENDER_KEY_DEVICES, self.device_id)?;
         Ok(())
     }
 
@@ -84,8 +84,7 @@ impl ProtocolStore for SqlBackend {
         let row = row_optional_sql!(
             LidMappingRow,
             &self.pool,
-            "SELECT lid, phone_number, created_at, learning_source, updated_at
-             FROM lid_pn_mapping WHERE lid = $1 AND device_id = $2",
+            GET_LID_MAPPING,
             lid,
             self.device_id
         )?;
@@ -96,9 +95,7 @@ impl ProtocolStore for SqlBackend {
         let row = row_optional_sql!(
             LidMappingRow,
             &self.pool,
-            "SELECT lid, phone_number, created_at, learning_source, updated_at
-             FROM lid_pn_mapping WHERE phone_number = $1 AND device_id = $2
-             ORDER BY updated_at DESC LIMIT 1",
+            GET_PN_MAPPING,
             phone,
             self.device_id
         )?;
@@ -123,8 +120,7 @@ impl ProtocolStore for SqlBackend {
         let rows = row_all_sql!(
             LidMappingRow,
             &self.pool,
-            "SELECT lid, phone_number, created_at, learning_source, updated_at
-             FROM lid_pn_mapping WHERE device_id = $1",
+            GET_ALL_LID_MAPPINGS,
             self.device_id
         )?;
         Ok(rows.into_iter().map(protocol_rows::lid_entry).collect())
@@ -135,9 +131,7 @@ impl ProtocolStore for SqlBackend {
     async fn save_base_key(&self, address: &str, message_id: &str, base_key: &[u8]) -> Result<()> {
         execute_sql!(
             &self.pool,
-            "INSERT INTO base_keys (address, message_id, base_key, device_id, created_at)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (address, message_id, device_id) DO UPDATE SET base_key = EXCLUDED.base_key",
+            SAVE_BASE_KEY,
             address,
             message_id,
             base_key,
@@ -156,8 +150,7 @@ impl ProtocolStore for SqlBackend {
         let row = scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
-            "SELECT base_key FROM base_keys
-             WHERE address = $1 AND message_id = $2 AND device_id = $3",
+            GET_BASE_KEY,
             address,
             message_id,
             self.device_id
@@ -168,7 +161,7 @@ impl ProtocolStore for SqlBackend {
     async fn delete_base_key(&self, address: &str, message_id: &str) -> Result<()> {
         execute_sql!(
             &self.pool,
-            "DELETE FROM base_keys WHERE address = $1 AND message_id = $2 AND device_id = $3",
+            DELETE_BASE_KEY,
             address,
             message_id,
             self.device_id
@@ -197,24 +190,12 @@ impl ProtocolStore for SqlBackend {
     }
 
     async fn get_devices(&self, user: &str) -> Result<Option<DeviceListRecord>> {
-        let row = row_optional_sql!(
-            DeviceListRow,
-            &self.pool,
-            "SELECT user_id, devices_json, timestamp, phash, raw_id
-             FROM device_registry WHERE user_id = $1 AND device_id = $2",
-            user,
-            self.device_id
-        )?;
+        let row = row_optional_sql!(DeviceListRow, &self.pool, GET_DEVICES, user, self.device_id)?;
         row.map(protocol_rows::device_list_record).transpose()
     }
 
     async fn delete_devices(&self, user: &str) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM device_registry WHERE user_id = $1 AND device_id = $2",
-            user,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, DELETE_DEVICES, user, self.device_id)?;
         Ok(())
     }
 
@@ -224,8 +205,7 @@ impl ProtocolStore for SqlBackend {
         let row = row_optional_sql!(
             (Vec<u8>, i64, Option<i64>),
             &self.pool,
-            "SELECT token, token_timestamp, sender_timestamp
-             FROM tc_tokens WHERE jid = $1 AND device_id = $2",
+            GET_TC_TOKEN,
             jid,
             self.device_id
         )?;
@@ -241,14 +221,7 @@ impl ProtocolStore for SqlBackend {
     async fn put_tc_token(&self, jid: &str, entry: &TcTokenEntry) -> Result<()> {
         execute_sql!(
             &self.pool,
-            "INSERT INTO tc_tokens
-                (jid, token, token_timestamp, sender_timestamp, device_id, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (jid, device_id) DO UPDATE SET
-                token = EXCLUDED.token,
-                token_timestamp = EXCLUDED.token_timestamp,
-                sender_timestamp = EXCLUDED.sender_timestamp,
-                updated_at = EXCLUDED.updated_at",
+            PUT_TC_TOKEN,
             jid,
             entry.token.as_slice(),
             entry.token_timestamp,
@@ -260,22 +233,12 @@ impl ProtocolStore for SqlBackend {
     }
 
     async fn delete_tc_token(&self, jid: &str) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM tc_tokens WHERE jid = $1 AND device_id = $2",
-            jid,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, DELETE_TC_TOKEN, jid, self.device_id)?;
         Ok(())
     }
 
     async fn get_all_tc_token_jids(&self) -> Result<Vec<String>> {
-        scalar_all_sql!(
-            String,
-            &self.pool,
-            "SELECT jid FROM tc_tokens WHERE device_id = $1",
-            self.device_id
-        )
+        scalar_all_sql!(String, &self.pool, GET_ALL_TC_TOKEN_JIDS, self.device_id)
     }
 
     /// Two independent windows, both of which must be stale before the row goes:
@@ -287,10 +250,7 @@ impl ProtocolStore for SqlBackend {
     async fn delete_expired_tc_tokens(&self, token_cutoff: i64, sender_cutoff: i64) -> Result<u32> {
         let deleted = execute_sql!(
             &self.pool,
-            "DELETE FROM tc_tokens
-             WHERE (length(token) = 0 OR token_timestamp < $1)
-               AND (sender_timestamp IS NULL OR sender_timestamp < $2)
-               AND device_id = $3",
+            DELETE_EXPIRED_TC_TOKENS,
             token_cutoff,
             sender_cutoff,
             self.device_id
@@ -309,10 +269,7 @@ impl ProtocolStore for SqlBackend {
         // REPLACE semantics in the reference reset created_at; mirror that.
         execute_sql!(
             &self.pool,
-            "INSERT INTO sent_messages (chat_jid, message_id, payload, device_id, created_at)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (chat_jid, message_id, device_id)
-             DO UPDATE SET payload = EXCLUDED.payload, created_at = EXCLUDED.created_at",
+            STORE_SENT_MESSAGE,
             chat_jid,
             message_id,
             payload,
@@ -327,8 +284,7 @@ impl ProtocolStore for SqlBackend {
         let payload = scalar_optional_sql!(
             Vec<u8>,
             in tx,
-            "SELECT payload FROM sent_messages
-             WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3",
+            GET_SENT_MESSAGE,
             chat_jid,
             message_id,
             self.device_id
@@ -336,8 +292,7 @@ impl ProtocolStore for SqlBackend {
         if payload.is_some() {
             execute_sql!(
                 in tx,
-                "DELETE FROM sent_messages
-                 WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3",
+                DELETE_SENT_MESSAGE,
                 chat_jid,
                 message_id,
                 self.device_id
@@ -350,7 +305,7 @@ impl ProtocolStore for SqlBackend {
     async fn delete_expired_sent_messages(&self, cutoff_timestamp: i64) -> Result<u32> {
         let deleted = execute_sql!(
             &self.pool,
-            "DELETE FROM sent_messages WHERE created_at < $1 AND device_id = $2",
+            DELETE_EXPIRED_SENT_MESSAGES,
             cutoff_timestamp,
             self.device_id
         )?;
@@ -364,8 +319,7 @@ impl ProtocolStore for SqlBackend {
         scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
-            "SELECT payload FROM sent_messages
-             WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3",
+            GET_SENT_MESSAGE,
             chat_jid,
             message_id,
             self.device_id
@@ -377,7 +331,7 @@ impl ProtocolStore for SqlBackend {
         // so base_keys grew without bound.
         let deleted = execute_sql!(
             &self.pool,
-            "DELETE FROM base_keys WHERE created_at < $1 AND device_id = $2",
+            DELETE_EXPIRED_BASE_KEYS,
             cutoff_timestamp,
             self.device_id
         )?;

@@ -8,28 +8,18 @@ use wacore::store::traits::DeviceStore;
 
 use super::{SqlBackend, maintenance_sql};
 use crate::storage::blob_codec::{decode_device, encode_device};
+use crate::storage::statements::device::{CREATE_DEVICE, DEVICE_EXISTS, LOAD_DEVICE, SAVE_DEVICE};
 
 #[async_trait]
 impl DeviceStore for SqlBackend {
     async fn save(&self, device: &Device) -> Result<()> {
         let data = encode_device(device);
-        execute_sql!(
-            &self.pool,
-            "INSERT INTO device (device_id, data) VALUES ($1, $2)
-             ON CONFLICT (device_id) DO UPDATE SET data = EXCLUDED.data",
-            self.device_id,
-            &data
-        )?;
+        execute_sql!(&self.pool, SAVE_DEVICE, self.device_id, &data)?;
         Ok(())
     }
 
     async fn load(&self) -> Result<Option<Device>> {
-        let row = scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT data FROM device WHERE device_id = $1",
-            self.device_id
-        )?;
+        let row = scalar_optional_sql!(Vec<u8>, &self.pool, LOAD_DEVICE, self.device_id)?;
         match row {
             None => Ok(None),
             // decode_device restores the runtime-only fields (device_props
@@ -39,23 +29,12 @@ impl DeviceStore for SqlBackend {
     }
 
     async fn exists(&self) -> Result<bool> {
-        scalar_one_sql!(
-            bool,
-            &self.pool,
-            "SELECT EXISTS(SELECT 1 FROM device WHERE device_id = $1)",
-            self.device_id
-        )
+        scalar_one_sql!(bool, &self.pool, DEVICE_EXISTS, self.device_id)
     }
 
     async fn create(&self) -> Result<i32> {
         let data = encode_device(&Device::new());
-        execute_sql!(
-            &self.pool,
-            "INSERT INTO device (device_id, data) VALUES ($1, $2)
-             ON CONFLICT (device_id) DO NOTHING",
-            self.device_id,
-            &data
-        )?;
+        execute_sql!(&self.pool, CREATE_DEVICE, self.device_id, &data)?;
         Ok(self.device_id)
     }
 

@@ -5,7 +5,8 @@
 //!
 //! A drift here fails nothing else: each engine keeps reading back what it
 //! wrote. What breaks is the claim that a store can move between engines.
-//! Needs both engines at once, so these run only in the Postgres pass.
+//! `both_engines_` (Postgres against SQLite) run only in the Postgres pass;
+//! `turso_and_sqlite_` (#106) need no server. Together they cover all three.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -58,11 +59,19 @@ async fn both_sides(tag: &str) -> (Side, Side) {
     (pg, lite)
 }
 
+/// SQLite and Turso, each in a file of its own: needs no Postgres (#106).
+#[cfg(feature = "turso")]
+async fn sqlite_and_turso(tag: &str) -> (Side, Side) {
+    let lite = Side::new(harness::sqlite().await, tag).await;
+    let turso = Side::new(harness::turso().await, tag).await;
+    (lite, turso)
+}
+
 /// Compare one BLOB column across engines; an empty column proves nothing.
-async fn assert_same_bytes(pg: &Side, lite: &Side, table: &str, column: &str) {
+async fn assert_same_bytes(one: &Side, other: &Side, table: &str, column: &str) {
     let (left, right) = (
-        pg.bytes(table, column).await,
-        lite.bytes(table, column).await,
+        one.bytes(table, column).await,
+        other.bytes(table, column).await,
     );
     assert!(
         !left.is_empty(),
@@ -85,10 +94,9 @@ async fn write_signal_state(b: &dyn Backend) {
         .unwrap();
 }
 
-#[tokio::test]
-async fn both_engines_persist_byte_identical_signal_blobs() {
-    let (pg, lite) = both_sides("blobs-signal").await;
-    for side in [&pg, &lite] {
+/// Same signal writes on two engines, same bytes in every column.
+async fn signal_blobs_match(left: Side, right: Side) {
+    for side in [&left, &right] {
         write_signal_state(&**side.backend()).await;
     }
     for (table, column) in [
@@ -98,10 +106,24 @@ async fn both_engines_persist_byte_identical_signal_blobs() {
         ("signed_prekeys", "record"),
         ("sender_keys", "record"),
     ] {
-        assert_same_bytes(&pg, &lite, table, column).await;
+        assert_same_bytes(&left, &right, table, column).await;
     }
-    pg.drop().await;
-    lite.drop().await;
+    left.drop().await;
+    right.drop().await;
+}
+
+#[tokio::test]
+async fn both_engines_persist_byte_identical_signal_blobs() {
+    let (pg, lite) = both_sides("blobs-signal").await;
+    signal_blobs_match(pg, lite).await;
+}
+
+/// With `both_engines_` (Postgres against SQLite), closes the three engines.
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_and_sqlite_persist_byte_identical_signal_blobs() {
+    let (lite, turso) = sqlite_and_turso("blobs-signal").await;
+    signal_blobs_match(lite, turso).await;
 }
 
 /// A multi-entry `index_value_map` on purpose: the protobuf blob is only
@@ -133,10 +155,9 @@ async fn write_app_sync_state(b: &dyn Backend) {
     b.put_mutation_macs("regular_low", 42, &macs).await.unwrap();
 }
 
-#[tokio::test]
-async fn both_engines_persist_byte_identical_app_sync_blobs() {
-    let (pg, lite) = both_sides("blobs-app-sync").await;
-    for side in [&pg, &lite] {
+/// Same app_sync writes on two engines, same bytes in every column.
+async fn app_sync_blobs_match(left: Side, right: Side) {
+    for side in [&left, &right] {
         write_app_sync_state(&**side.backend()).await;
     }
     for (table, column) in [
@@ -146,10 +167,24 @@ async fn both_engines_persist_byte_identical_app_sync_blobs() {
         ("app_state_mutation_macs", "index_mac"),
         ("app_state_mutation_macs", "value_mac"),
     ] {
-        assert_same_bytes(&pg, &lite, table, column).await;
+        assert_same_bytes(&left, &right, table, column).await;
     }
-    pg.drop().await;
-    lite.drop().await;
+    left.drop().await;
+    right.drop().await;
+}
+
+#[tokio::test]
+async fn both_engines_persist_byte_identical_app_sync_blobs() {
+    let (pg, lite) = both_sides("blobs-app-sync").await;
+    app_sync_blobs_match(pg, lite).await;
+}
+
+/// With `both_engines_` (Postgres against SQLite), closes the three engines.
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_and_sqlite_persist_byte_identical_app_sync_blobs() {
+    let (lite, turso) = sqlite_and_turso("blobs-app-sync").await;
+    app_sync_blobs_match(lite, turso).await;
 }
 
 async fn write_protocol_state(b: &dyn Backend) {
@@ -189,10 +224,9 @@ async fn write_protocol_state(b: &dyn Backend) {
     .unwrap();
 }
 
-#[tokio::test]
-async fn both_engines_persist_byte_identical_protocol_blobs() {
-    let (pg, lite) = both_sides("blobs-protocol").await;
-    for side in [&pg, &lite] {
+/// Same protocol writes on two engines, same bytes in every column.
+async fn protocol_blobs_match(left: Side, right: Side) {
+    for side in [&left, &right] {
         write_protocol_state(&**side.backend()).await;
     }
     for (table, column) in [
@@ -201,15 +235,29 @@ async fn both_engines_persist_byte_identical_protocol_blobs() {
         ("sent_messages", "payload"),
         ("msg_secrets", "secret"),
     ] {
-        assert_same_bytes(&pg, &lite, table, column).await;
+        assert_same_bytes(&left, &right, table, column).await;
     }
-    let pg_json = pg.text("device_registry", "devices_json").await;
-    assert_eq!(pg_json.len(), 1, "one registry row");
+    let left_json = left.text("device_registry", "devices_json").await;
+    assert_eq!(left_json.len(), 1, "one registry row");
     assert_eq!(
-        pg_json,
-        lite.text("device_registry", "devices_json").await,
+        left_json,
+        right.text("device_registry", "devices_json").await,
         "device_registry.devices_json differs between engines"
     );
-    pg.drop().await;
-    lite.drop().await;
+    left.drop().await;
+    right.drop().await;
+}
+
+#[tokio::test]
+async fn both_engines_persist_byte_identical_protocol_blobs() {
+    let (pg, lite) = both_sides("blobs-protocol").await;
+    protocol_blobs_match(pg, lite).await;
+}
+
+/// With `both_engines_` (Postgres against SQLite), closes the three engines.
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_and_sqlite_persist_byte_identical_protocol_blobs() {
+    let (lite, turso) = sqlite_and_turso("blobs-protocol").await;
+    protocol_blobs_match(lite, turso).await;
 }

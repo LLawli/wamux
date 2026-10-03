@@ -60,6 +60,12 @@ async fn sqlite_mutation_macs_batch_reads_only_the_asked_collection() {
     mutation_macs_batch_reads_only_the_asked_collection(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_mutation_macs_batch_reads_only_the_asked_collection() {
+    mutation_macs_batch_reads_only_the_asked_collection(harness::turso().await).await;
+}
+
 fn hash_state(version: u64) -> HashState {
     HashState {
         version,
@@ -111,6 +117,12 @@ async fn sqlite_commit_patch_round_trips() {
     commit_patch_round_trips(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_commit_patch_round_trips() {
+    commit_patch_round_trips(harness::turso().await).await;
+}
+
 fn lid_entry(i: usize, source: &str) -> LidPnMappingEntry {
     LidPnMappingEntry {
         lid: format!("1000000000{i:05}"),
@@ -152,6 +164,12 @@ async fn postgres_lid_mappings_batch_round_trips() {
 #[tokio::test]
 async fn sqlite_lid_mappings_batch_round_trips() {
     lid_mappings_batch_round_trips(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_lid_mappings_batch_round_trips() {
+    lid_mappings_batch_round_trips(harness::turso().await).await;
 }
 
 fn device_list(i: usize, timestamp: i64) -> DeviceListRecord {
@@ -198,6 +216,12 @@ async fn postgres_device_lists_batch_round_trips() {
 #[tokio::test]
 async fn sqlite_device_lists_batch_round_trips() {
     device_lists_batch_round_trips(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_device_lists_batch_round_trips() {
+    device_lists_batch_round_trips(harness::turso().await).await;
 }
 
 fn jid(i: usize) -> String {
@@ -251,4 +275,10 @@ async fn postgres_tc_tokens_batch_keeps_the_asked_order() {
 #[tokio::test]
 async fn sqlite_tc_tokens_batch_keeps_the_asked_order() {
     tc_tokens_batch_keeps_the_asked_order(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_tc_tokens_batch_keeps_the_asked_order() {
+    tc_tokens_batch_keeps_the_asked_order(harness::turso().await).await;
 }

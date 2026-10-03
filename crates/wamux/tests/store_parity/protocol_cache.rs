@@ -90,6 +90,12 @@ async fn sqlite_tc_tokens_round_trip_list_and_delete() {
     tc_tokens_round_trip_list_and_delete(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_tc_tokens_round_trip_list_and_delete() {
+    tc_tokens_round_trip_list_and_delete(harness::turso().await).await;
+}
+
 /// A row goes only when BOTH windows are stale: the received token (older than
 /// `token_cutoff`, or byte-empty) AND the sender bucket (older than
 /// `sender_cutoff`, or never set). Both comparisons are strict.
@@ -156,6 +162,12 @@ async fn sqlite_expired_tc_tokens_need_both_windows_stale() {
     expired_tc_tokens_need_both_windows_stale(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_expired_tc_tokens_need_both_windows_stale() {
+    expired_tc_tokens_need_both_windows_stale(harness::turso().await).await;
+}
+
 /// Retry receipts consume the payload: a second take must find nothing, or a
 /// duplicate receipt would resend the message.
 async fn sent_messages_take_removes_what_it_returns(h: Harness) {
@@ -203,6 +215,12 @@ async fn sqlite_sent_messages_take_removes_what_it_returns() {
     sent_messages_take_removes_what_it_returns(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sent_messages_take_removes_what_it_returns() {
+    sent_messages_take_removes_what_it_returns(harness::turso().await).await;
+}
+
 /// The store stamps `created_at` with the wall clock, so the cutoffs sit an
 /// hour either side of now: no flake from a second ticking over.
 async fn expired_sent_messages_respect_cutoff(h: Harness) {
@@ -241,4 +259,10 @@ async fn postgres_expired_sent_messages_respect_cutoff() {
 #[tokio::test]
 async fn sqlite_expired_sent_messages_respect_cutoff() {
     expired_sent_messages_respect_cutoff(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_expired_sent_messages_respect_cutoff() {
+    expired_sent_messages_respect_cutoff(harness::turso().await).await;
 }

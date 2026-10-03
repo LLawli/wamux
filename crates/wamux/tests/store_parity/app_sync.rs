@@ -79,6 +79,12 @@ async fn sqlite_sync_keys_round_trip_and_latest_id_is_highest() {
     sync_keys_round_trip_and_latest_id_is_highest(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sync_keys_round_trip_and_latest_id_is_highest() {
+    sync_keys_round_trip_and_latest_id_is_highest(harness::turso().await).await;
+}
+
 fn mac(index: u8, value: u8) -> AppStateMutationMAC {
     AppStateMutationMAC {
         index_mac: vec![index; 32],
@@ -152,4 +158,10 @@ async fn postgres_mutation_macs_round_trip_delete_and_clear() {
 #[tokio::test]
 async fn sqlite_mutation_macs_round_trip_delete_and_clear() {
     mutation_macs_round_trip_delete_and_clear(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_mutation_macs_round_trip_delete_and_clear() {
+    mutation_macs_round_trip_delete_and_clear(harness::turso().await).await;
 }

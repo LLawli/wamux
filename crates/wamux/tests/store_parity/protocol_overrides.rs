@@ -81,6 +81,12 @@ async fn sqlite_get_sent_message_reads_without_consuming() {
     get_sent_message_reads_without_consuming(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_get_sent_message_reads_without_consuming() {
+    get_sent_message_reads_without_consuming(harness::turso().await).await;
+}
+
 /// `created_at` is the wall clock at save, so the cutoffs sit an hour either
 /// side of now: no flake from a second ticking over.
 async fn delete_expired_base_keys_prunes_before_cutoff(h: Harness) {
@@ -122,6 +128,12 @@ async fn postgres_delete_expired_base_keys_prunes_before_cutoff() {
 #[tokio::test]
 async fn sqlite_delete_expired_base_keys_prunes_before_cutoff() {
     delete_expired_base_keys_prunes_before_cutoff(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_delete_expired_base_keys_prunes_before_cutoff() {
+    delete_expired_base_keys_prunes_before_cutoff(harness::turso().await).await;
 }
 
 async fn touch_tc_token_sender_timestamp_only_advances(h: Harness) {
@@ -174,6 +186,12 @@ async fn postgres_touch_tc_token_sender_timestamp_only_advances() {
 #[tokio::test]
 async fn sqlite_touch_tc_token_sender_timestamp_only_advances() {
     touch_tc_token_sender_timestamp_only_advances(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_touch_tc_token_sender_timestamp_only_advances() {
+    touch_tc_token_sender_timestamp_only_advances(harness::turso().await).await;
 }
 
 async fn store_received_tc_token_is_newer_wins(h: Harness) {
@@ -238,6 +256,12 @@ async fn sqlite_store_received_tc_token_is_newer_wins() {
     store_received_tc_token_is_newer_wins(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_store_received_tc_token_is_newer_wins() {
+    store_received_tc_token_is_newer_wins(harness::turso().await).await;
+}
+
 /// The trait's own example of the race: history sync stores a received token
 /// while the send path touches the sender bucket of the same contact. With a
 /// read-modify-write both read "absent" and the second write drops the first
@@ -289,4 +313,10 @@ async fn postgres_tc_token_writers_converge_under_concurrency() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn sqlite_tc_token_writers_converge_under_concurrency() {
     tc_token_writers_converge_under_concurrency(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn turso_tc_token_writers_converge_under_concurrency() {
+    tc_token_writers_converge_under_concurrency(harness::turso().await).await;
 }

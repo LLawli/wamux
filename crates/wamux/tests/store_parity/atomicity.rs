@@ -141,7 +141,8 @@ fn sqlite_triggers() -> String {
 
 /// One engine with the triggers installed and one account.
 struct Rigged {
-    store: SqlStore,
+    /// The SQL store, kept to close its Postgres pool; `None` on Turso.
+    store: Option<SqlStore>,
     backend: Arc<dyn Backend>,
     pg_database: Option<String>,
     _dir: Option<tempfile::TempDir>,
@@ -181,6 +182,31 @@ async fn rigged_sqlite() -> Rigged {
     rig(store, None, Some(dir)).await
 }
 
+/// Turso runs the SQLite trigger text as is (#106: RAISE(ABORT) verified on
+/// turso 0.8.1 before this test was written).
+#[cfg(feature = "turso")]
+async fn rigged_turso() -> Rigged {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("turso://{}", dir.path().join("rigged.db").display());
+    let store = wamux::storage::turso::TursoStore::open(&url)
+        .await
+        .expect("open turso");
+    store
+        .connection()
+        .lock()
+        .await
+        .execute_batch(sqlite_triggers())
+        .await
+        .expect("triggers");
+    let row = store.create_account(Some("atomicity")).await.unwrap();
+    Rigged {
+        backend: store.device_backend(row.device_id),
+        store: None,
+        pg_database: None,
+        _dir: Some(dir),
+    }
+}
+
 async fn rig(
     store: SqlStore,
     pg_database: Option<String>,
@@ -189,7 +215,7 @@ async fn rig(
     let row = store.create_account(Some("atomicity")).await.unwrap();
     let backend = store.device_backend(row.device_id);
     Rigged {
-        store,
+        store: Some(store),
         backend,
         pg_database,
         _dir: dir,
@@ -197,7 +223,7 @@ async fn rig(
 }
 
 async fn unrig(rigged: Rigged) {
-    if let SqlPool::Pg(pool) = rigged.store.pool() {
+    if let Some(SqlPool::Pg(pool)) = rigged.store.as_ref().map(SqlStore::pool) {
         pool.close().await;
     }
     let Some(name) = rigged.pg_database else {
@@ -381,6 +407,12 @@ async fn sqlite_batch_writes_are_all_or_nothing() {
     batch_writes_are_all_or_nothing(rigged_sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_batch_writes_are_all_or_nothing() {
+    batch_writes_are_all_or_nothing(rigged_turso().await).await;
+}
+
 fn mac(index: [u8; 32], value: u8) -> AppStateMutationMAC {
     AppStateMutationMAC {
         index_mac: index.to_vec(),
@@ -439,4 +471,10 @@ async fn postgres_commit_patch_is_atomic() {
 #[tokio::test]
 async fn sqlite_commit_patch_is_atomic() {
     commit_patch_is_atomic(rigged_sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_commit_patch_is_atomic() {
+    commit_patch_is_atomic(rigged_turso().await).await;
 }

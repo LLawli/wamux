@@ -73,6 +73,12 @@ async fn sqlite_sender_key_devices_status_round_trip_and_flip() {
     sender_key_devices_status_round_trip_and_flip(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sender_key_devices_status_round_trip_and_flip() {
+    sender_key_devices_status_round_trip_and_flip(harness::turso().await).await;
+}
+
 /// Three clears with three different scopes: one group, one device JID across
 /// every group, and every group. All three stop at the account boundary.
 async fn sender_key_device_clears_are_scoped(h: Harness) {
@@ -139,6 +145,12 @@ async fn postgres_sender_key_device_clears_are_scoped() {
 #[tokio::test]
 async fn sqlite_sender_key_device_clears_are_scoped() {
     sender_key_device_clears_are_scoped(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sender_key_device_clears_are_scoped() {
+    sender_key_device_clears_are_scoped(harness::turso().await).await;
 }
 
 fn mapping(
@@ -259,6 +271,12 @@ async fn sqlite_lid_mappings_round_trip_and_pick_most_recent_pn() {
     lid_mappings_round_trip_and_pick_most_recent_pn(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_lid_mappings_round_trip_and_pick_most_recent_pn() {
+    lid_mappings_round_trip_and_pick_most_recent_pn(harness::turso().await).await;
+}
+
 async fn base_keys_detect_same_key_and_delete(h: Harness) {
     const ADDR: &str = "alice@s.whatsapp.net.0";
     let t = h.two_accounts("base-keys").await;
@@ -298,6 +316,12 @@ async fn postgres_base_keys_detect_same_key_and_delete() {
 #[tokio::test]
 async fn sqlite_base_keys_detect_same_key_and_delete() {
     base_keys_detect_same_key_and_delete(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_base_keys_detect_same_key_and_delete() {
+    base_keys_detect_same_key_and_delete(harness::turso().await).await;
 }
 
 fn device_list(user: &str, timestamp: i64) -> DeviceListRecord {
@@ -352,4 +376,10 @@ async fn postgres_device_registry_delete_is_scoped() {
 #[tokio::test]
 async fn sqlite_device_registry_delete_is_scoped() {
     device_registry_delete_is_scoped(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_device_registry_delete_is_scoped() {
+    device_registry_delete_is_scoped(harness::turso().await).await;
 }
