@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use tracing_subscriber::EnvFilter;
 use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
-use wamux::storage::postgres::PgStorage;
+use wamux::storage::sql::SqlStore;
 
 use crate::live_env::EnvLookup;
 use crate::socket_client::account_ref;
@@ -32,9 +32,9 @@ pub fn init_tracing(default_filter: &str) {
 }
 
 /// Open (and migrate) the Postgres store at `database_url`. Callers that need
-/// the raw pool (`stress_live`) take it from `PgStorage::pool`.
-pub async fn open_engine(database_url: &str) -> anyhow::Result<Arc<PgStorage>> {
-    let engine = PgStorage::open(database_url, 16)
+/// the raw pool (`stress_live`) take it from `SqlStore::pool`.
+pub async fn open_engine(database_url: &str) -> anyhow::Result<Arc<SqlStore>> {
+    let engine = SqlStore::open_postgres(database_url, 16)
         .await
         .context("opening the Postgres store")?;
     Ok(Arc::new(engine))
@@ -43,7 +43,7 @@ pub async fn open_engine(database_url: &str) -> anyhow::Result<Arc<PgStorage>> {
 /// A registry over `engine` with the given tuning and every persisted
 /// account loaded.
 pub async fn load_registry(
-    engine: Arc<PgStorage>,
+    engine: Arc<SqlStore>,
     tuning: RegistryTuning,
 ) -> anyhow::Result<Arc<AccountRegistry>> {
     let registry = Arc::new(AccountRegistry::new(engine, tuning));

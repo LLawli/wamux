@@ -1,5 +1,5 @@
-"""#60: scripts/check-store-coverage.py fails CI when a method of either store
-engine is never called from crates/wamux/tests/.
+"""#60: scripts/check-store-coverage.py fails CI when a method of a store engine
+family is never called from crates/wamux/tests/ (#65: families, not engines).
 
 Run: python3 -m unittest discover -s scripts/tests -v
 Needs nothing but the checkout; no cargo, no database.
@@ -14,9 +14,9 @@ CHECK = REPO / "scripts" / "check-store-coverage.py"
 FLOOR = 63
 
 
-def run_check(root):
+def run_check(root, families=("sql",)):
     return subprocess.run(
-        [str(CHECK), "--root", str(root)],
+        [str(CHECK), "--root", str(root), "--families", ",".join(families)],
         capture_output=True,
         text=True,
         check=False,
@@ -27,11 +27,11 @@ def fake_names(count):
     return [f"store_method_{i:02d}" for i in range(count)]
 
 
-def write_tree(root, postgres_names, sqlite_names, test_body):
-    """A minimal checkout: one `*_store.rs` per engine and one test file."""
+def write_tree(root, names_by_family, test_body):
+    """A minimal checkout: one `*_store.rs` per family and one test file."""
     storage = root / "crates" / "wamux" / "src" / "storage"
-    for engine, names in (("postgres", postgres_names), ("sqlite", sqlite_names)):
-        engine_dir = storage / engine
+    for family, names in names_by_family.items():
+        engine_dir = storage / family
         engine_dir.mkdir(parents=True)
         body = "\n".join(f"    async fn {n}(&self) -> Result<()> {{ Ok(()) }}" for n in names)
         (engine_dir / "fake_store.rs").write_text(f"impl FakeStore for X {{\n{body}\n}}\n")
@@ -56,14 +56,14 @@ class CheckStoreCoverage(unittest.TestCase):
             self.assertIn(needle, output)
 
     def test_repo_passes_with_every_method_called(self):
-        result = run_check(REPO)
+        result = subprocess.run([str(CHECK)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f"store coverage ok: {FLOOR} methods per engine", result.stdout)
+        self.assertIn(f"store coverage ok: {FLOOR} methods per family (sql)", result.stdout)
 
     def test_unreferenced_method_fails_and_is_named(self):
         names = fake_names(FLOOR)
         with tempfile.TemporaryDirectory() as tmp:
-            write_tree(Path(tmp), names, names, calls(names[1:]))
+            write_tree(Path(tmp), {"sql": names}, calls(names[1:]))
             result = run_check(tmp)
         self.assert_reported_failure(result, names[0])
         self.assertNotIn(names[1], result.stdout + result.stderr)
@@ -72,7 +72,7 @@ class CheckStoreCoverage(unittest.TestCase):
         names = fake_names(FLOOR)
         body = calls(names[1:]) + f"    // backend.{names[0]}().await is covered elsewhere\n"
         with tempfile.TemporaryDirectory() as tmp:
-            write_tree(Path(tmp), names, names, body)
+            write_tree(Path(tmp), {"sql": names}, body)
             result = run_check(tmp)
         self.assert_reported_failure(result, names[0])
 
@@ -80,21 +80,42 @@ class CheckStoreCoverage(unittest.TestCase):
         names = fake_names(FLOOR)
         body = calls(names[1:]) + f'    let label = "{names[0]}";\n    let f = {names[0]};\n'
         with tempfile.TemporaryDirectory() as tmp:
-            write_tree(Path(tmp), names, names, body)
+            write_tree(Path(tmp), {"sql": names}, body)
             result = run_check(tmp)
         self.assert_reported_failure(result, names[0])
 
-    def test_engines_with_different_methods_fail(self):
+    def test_families_with_different_methods_fail(self):
         names = fake_names(FLOOR + 1)
         with tempfile.TemporaryDirectory() as tmp:
-            write_tree(Path(tmp), names, names[:-1], calls(names))
+            write_tree(Path(tmp), {"sql": names, "turso": names[:-1]}, calls(names))
+            result = run_check(tmp, ("sql", "turso"))
+        self.assert_reported_failure(result, f"only in sql, missing in turso: {names[-1]}")
+
+    def test_two_families_with_the_same_methods_pass(self):
+        names = fake_names(FLOOR)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_tree(Path(tmp), {"sql": names, "turso": names}, calls(names))
+            result = run_check(tmp, ("sql", "turso"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_store_file_outside_the_families_fails(self):
+        names = fake_names(FLOOR)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_tree(Path(tmp), {"sql": names, "postgres": names}, calls(names))
             result = run_check(tmp)
-        self.assert_reported_failure(result, names[-1])
+        self.assert_reported_failure(result, "store file outside the families sql: postgres/fake_store.rs")
+
+    def test_missing_family_directory_fails(self):
+        names = fake_names(FLOOR)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_tree(Path(tmp), {"sql": names}, calls(names))
+            result = run_check(tmp, ("sql", "turso"))
+        self.assert_reported_failure(result, "family directory missing: storage/turso")
 
     def test_too_few_methods_fails_the_floor(self):
         names = fake_names(3)
         with tempfile.TemporaryDirectory() as tmp:
-            write_tree(Path(tmp), names, names, calls(names))
+            write_tree(Path(tmp), {"sql": names}, calls(names))
             result = run_check(tmp)
         self.assert_reported_failure(result, str(FLOOR))
 

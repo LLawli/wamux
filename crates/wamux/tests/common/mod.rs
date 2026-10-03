@@ -14,8 +14,7 @@ use wamux::config::Config;
 use wamux::proto::v1 as pb;
 use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
 use wamux::storage::StorageEngine;
-use wamux::storage::postgres::PgStorage;
-use wamux::storage::sqlite::SqliteStorage;
+use wamux::storage::sql::{SqlPool, SqlStore};
 use wamux::{server, transport};
 
 // `MockWaServer` exists only in a stress build.
@@ -31,21 +30,38 @@ pub fn database_url() -> String {
 
 /// Connect + migrate the Postgres engine in one call; `max_conns` is the only
 /// knob the suites vary.
-pub async fn pg_engine(max_conns: u32) -> Arc<PgStorage> {
+pub async fn pg_engine(max_conns: u32) -> Arc<SqlStore> {
     Arc::new(
-        PgStorage::open(&database_url(), max_conns)
+        SqlStore::open_postgres(&database_url(), max_conns)
             .await
             .expect("open pg storage"),
     )
 }
 
+/// The Postgres pool under a `SqlStore` a test opened as Postgres, for the
+/// probes that read below the store traits.
+pub fn pg_pool(store: &SqlStore) -> &sqlx::PgPool {
+    match store.pool() {
+        SqlPool::Pg(pool) => pool,
+        SqlPool::Sqlite(_) => panic!("opened as postgres, holds a sqlite pool"),
+    }
+}
+
+/// The SQLite pool under a `SqlStore` a test opened as SQLite.
+pub fn lite_pool(store: &SqlStore) -> &sqlx::SqlitePool {
+    match store.pool() {
+        SqlPool::Sqlite(pool) => pool,
+        SqlPool::Pg(_) => panic!("opened as sqlite, holds a postgres pool"),
+    }
+}
+
 /// A fresh SQLite engine in a throwaway directory, plus the guard that keeps
 /// the directory alive. Every call gets its own empty database file.
-pub async fn sqlite_engine() -> (Arc<SqliteStorage>, tempfile::TempDir) {
+pub async fn sqlite_engine() -> (Arc<SqlStore>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("wamux-test.db");
     let url = format!("sqlite://{}?mode=rwc", path.display());
-    let engine = SqliteStorage::open(&url)
+    let engine = SqlStore::open_sqlite(&url)
         .await
         .expect("open sqlite storage");
     (Arc::new(engine), dir)

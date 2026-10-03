@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """#93: every wacore store trait default is classified in docs/store-trait-defaults.md.
 
-Usage: scripts/check-store-defaults.py [--root DIR] [--traits PATH]
+Usage: scripts/check-store-defaults.py [--root DIR] [--traits PATH] [--families A,B]
        (DIR defaults to the repo; PATH defaults to wacore's traits.rs, resolved
-       through `cargo metadata --offline`)
+       through `cargo metadata --offline`; the families to FAMILIES)
 
 Why: wacore gives some store trait methods a default body, and a backend that
 says nothing silently inherits it. Four of those methods were wrong for a
@@ -11,11 +11,12 @@ real backend (`get_sent_message` errored, `delete_expired_base_keys` never
 pruned, the two tc-token writers were not atomic) and nothing flagged them. This
 check makes the choice explicit: every default the pinned wacore declares needs
 a row in the doc (override or default, with a reason), every row must name a
-default that still exists, and `override` means both engines implement the
-method while `default` means neither does. A whatsapp-rust bump that adds a
+default that still exists, and `override` means every engine family (#65:
+`sql`, one impl for Postgres and SQLite) implements the method while
+`default` means none does. A whatsapp-rust bump that adds a
 default fails here until someone classifies it.
 
-Textual check, like check-store-coverage.py: it parses traits.rs and the engine
+Textual check, like check-store-coverage.py: it parses traits.rs and the family
 sources, it does not prove an override behaves; the parity tests do that.
 """
 import argparse
@@ -26,7 +27,8 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-ENGINES = ("postgres", "sqlite")
+# Engine families under storage/ (#65): one impl of each trait per family.
+FAMILIES = ("sql",)
 MIN_TRAIT_DEFAULTS = 36
 DOC = Path("docs") / "store-trait-defaults.md"
 ASYNC_FN = re.compile(r"\basync\s+fn\s+(\w+)")
@@ -106,14 +108,16 @@ def doc_rows(doc_text: str) -> dict[str, tuple[str, str, str]]:
     return rows
 
 
-def engine_methods(storage: Path) -> dict[str, set[str]]:
-    """`async fn` names in each engine's `*_store.rs` (same rule as the coverage check)."""
+def family_methods(storage: Path, families: tuple[str, ...]) -> dict[str, set[str]]:
+    """`async fn` names in each family's `*_store.rs` (same rule as the coverage check)."""
     out: dict[str, set[str]] = {}
-    for engine in ENGINES:
+    for family in families:
+        if not (storage / family).is_dir():
+            raise CheckError(f"family directory missing: storage/{family}")
         names: set[str] = set()
-        for path in sorted((storage / engine).glob("*_store.rs")):
+        for path in sorted((storage / family).glob("*_store.rs")):
             names.update(ASYNC_FN.findall(read_text(path)))
-        out[engine] = names
+        out[family] = names
     return out
 
 
@@ -157,9 +161,9 @@ def row_problems(name: str, trait: str, row: tuple[str, str, str], impls: dict[s
         problems.append(f"unknown decision '{decision}' for {name}, expected override or default")
         return problems
     if decision == "override":
-        problems += [f"marked override but not implemented by {e}: {name}" for e in ENGINES if name not in impls[e]]
+        problems += [f"marked override but not implemented by {e}: {name}" for e in impls if name not in impls[e]]
         return problems
-    problems += [f"marked default but overridden by {e}: {name}" for e in ENGINES if name in impls[e]]
+    problems += [f"marked default but overridden by {e}: {name}" for e in impls if name in impls[e]]
     if not why:
         problems.append(f"default kept without a reason: {name}")
     return problems
@@ -182,11 +186,11 @@ def classification_problems(
     return problems
 
 
-def run(root: Path, traits: Path | None) -> int:
+def run(root: Path, traits: Path | None, families: tuple[str, ...]) -> int:
     traits_path = traits if traits is not None else resolve_traits_path(root)
     defaults = declared_defaults(load_traits(traits_path))
     rows = doc_rows(read_text(root / DOC))
-    impls = engine_methods(root / "crates" / "wamux" / "src" / "storage")
+    impls = family_methods(root / "crates" / "wamux" / "src" / "storage", families)
     problems = classification_problems(defaults, rows, impls)
     if problems:
         print("store defaults FAILED:")
@@ -201,9 +205,11 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="store trait defaults check (#93)")
     parser.add_argument("--root", type=Path, default=REPO)
     parser.add_argument("--traits", type=Path, default=None)
+    parser.add_argument("--families", default=",".join(FAMILIES))
     args = parser.parse_args(argv)
+    families = tuple(f for f in args.families.split(",") if f)
     try:
-        return run(args.root, args.traits)
+        return run(args.root, args.traits, families)
     except CheckError as err:
         print(f"store defaults FAILED:\n  - {err}")
         return 1

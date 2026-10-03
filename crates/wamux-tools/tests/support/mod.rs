@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
-use wamux::storage::sqlite::SqliteStorage;
+use wamux::storage::sql::SqlStore;
 use wamux::{server, transport};
 
 pub struct TestDaemon {
@@ -27,7 +27,7 @@ impl TestDaemon {
             .expect("tempdir");
         let socket = dir.path().join("wamux.sock");
         let db = format!("sqlite://{}?mode=rwc", dir.path().join("w.db").display());
-        let engine = Arc::new(SqliteStorage::open(&db).await.expect("open sqlite"));
+        let engine = Arc::new(SqlStore::open_sqlite(&db).await.expect("open sqlite"));
         let registry = Arc::new(AccountRegistry::new(engine, RegistryTuning::with_ring(64)));
         let socket_str = socket.to_str().expect("utf-8 path").to_string();
         let config = Config {

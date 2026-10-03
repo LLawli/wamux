@@ -1,6 +1,8 @@
 /target
 *.db
 *.db-*
+# Committed store fixtures (#65): real SQLite files the tests copy and open.
+!/crates/wamux/tests/fixtures/**/*.db
 *.sock
 /wamux.toml
 /.claude/
