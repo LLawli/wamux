@@ -26,7 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 FAMILIES = ("sql",)
-MIN_STORE_METHODS = 63
+MIN_STORE_METHODS = 80
 ASYNC_FN = re.compile(r"\basync\s+fn\s+(\w+)")
 CALL = re.compile(r"\.\s*(\w+)\s*\(")
 

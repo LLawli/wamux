@@ -134,7 +134,7 @@ class CheckStoreDefaults(unittest.TestCase):
     def test_repo_passes_against_the_pinned_wacore(self):
         result = run_check(REPO)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("store defaults ok: 36 trait defaults, 5 overridden, 31 kept", result.stdout)
+        self.assertIn("store defaults ok: 36 trait defaults, 22 overridden, 14 kept", result.stdout)
 
     def test_fake_tree_fully_classified_passes(self):
         a, b = split(fake_defaults(FLOOR - 1))
