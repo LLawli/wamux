@@ -36,7 +36,7 @@ use wacore::store::Device;
 use wacore::store::traits::DeviceStore;
 use wamux::proto::v1 as pb;
 use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
-use wamux::storage::postgres::PgBackend;
+use wamux::storage::sql::{SqlBackend, SqlPool};
 use wamux::stress::MockWaServer;
 use wamux_tools::delivery::is_delivery_receipt;
 use wamux_tools::inproc::{
@@ -216,7 +216,7 @@ fn show_pairing_qr(env: pb::EventEnvelope) {
 /// `<success>`.
 async fn provision_and_connect_fakes(
     registry: &Arc<AccountRegistry>,
-    pool: &sqlx::PgPool,
+    pool: &SqlPool,
     n: usize,
 ) -> anyhow::Result<Vec<Arc<AccountHandle>>> {
     let tag = uuid::Uuid::new_v4();
@@ -228,7 +228,7 @@ async fn provision_and_connect_fakes(
         let mut device = Device::new();
         device.pn = Some(format!("5511{:09}@s.whatsapp.net", 100_000_000 + i).parse()?);
         device.push_name = "Stress".to_string();
-        PgBackend::new(pool.clone(), h.device_id)
+        SqlBackend::new(pool.clone(), h.device_id)
             .save(&device)
             .await?;
         fakes.push(h);

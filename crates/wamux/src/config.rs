@@ -16,7 +16,7 @@ pub struct Config {
     /// absent). Anything else fails at startup.
     pub database_url: String,
     /// Postgres pool size. Ignored by the SQLite engine, which pins its pool to
-    /// a single connection to serialize writes (see `storage::sqlite::connect`).
+    /// a single connection to serialize writes (see `storage::sql::connect_sqlite`).
     pub db_max_connections: u32,
     /// Per-account in-memory replay ring capacity.
     pub event_ring_capacity: usize,

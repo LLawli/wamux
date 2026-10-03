@@ -47,7 +47,7 @@ async fn current_rows() -> BTreeSet<String> {
     let databases: Vec<String> = sqlx::query_scalar(
         "SELECT datname FROM pg_database WHERE datname LIKE 'wamux\\_upgrade\\_%'",
     )
-    .fetch_all(engine.pool())
+    .fetch_all(common::pg_pool(&engine))
     .await
     .expect("list throwaway databases");
     rows.extend(databases.into_iter().map(|name| format!("database {name}")));

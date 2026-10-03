@@ -1,16 +1,15 @@
 //! Persistence. Relay-pure: only whatsapp-rust's Signal/session/device state is
 //! stored, never business message history.
 //!
-//! `StorageEngine` is the abstraction; `postgres` and `sqlite` are its two
-//! implementations, each implementing wacore's four store traits on a
-//! device-scoped backend type.
+//! `StorageEngine` is the abstraction and the only plug point; `sql` is its one
+//! family today (Postgres and SQLite through sqlx), implementing wacore's store
+//! traits on a device-scoped backend type.
 
 pub mod bincode_upgrade;
 pub mod blob_codec;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod engine;
-pub mod postgres;
-pub mod sqlite;
+pub mod sql;
 pub mod sqlx_error;
 
 pub use engine::{AccountRow, StorageEngine};
@@ -24,16 +23,16 @@ use wacore::store::error::StoreError;
 /// The scheme picks the engine — there is no separate `storage_backend` knob,
 /// so a config can never name one engine and point at the other's database.
 /// `pg_max_connections` applies to Postgres only; the SQLite engine pins its
-/// pool to one connection on purpose (see `sqlite::connect`).
+/// pool to one connection on purpose (see `sql::connect_sqlite`).
 pub async fn open_engine(
     database_url: &str,
     pg_max_connections: u32,
 ) -> Result<Arc<dyn StorageEngine>, StoreError> {
     match dsn_scheme(database_url) {
         "postgres" | "postgresql" => Ok(Arc::new(
-            postgres::PgStorage::open(database_url, pg_max_connections).await?,
+            sql::SqlStore::open_postgres(database_url, pg_max_connections).await?,
         )),
-        "sqlite" => Ok(Arc::new(sqlite::SqliteStorage::open(database_url).await?)),
+        "sqlite" => Ok(Arc::new(sql::SqlStore::open_sqlite(database_url).await?)),
         other => Err(StoreError::InvalidConfig(format!(
             "unsupported database_url scheme '{other}': expected one of \
              postgres://, postgresql://, sqlite://"

@@ -15,19 +15,17 @@ use std::sync::Arc;
 use bytes::Bytes;
 use wacore::store::traits::Backend;
 use wamux::storage::StorageEngine;
-use wamux::storage::postgres::PgBackend;
-use wamux::storage::sqlite::SqliteBackend;
+use wamux::storage::sql::SqlBackend;
 
 // Only a subset of the shared helpers is used per test binary.
 #[allow(dead_code)]
 mod common;
 
-/// Compile-time proof that each engine's four trait impls satisfy the umbrella
-/// `Backend`. If an engine ever misses a method, this fails before any test runs.
+/// Compile-time proof that the SQL family's trait impls satisfy the umbrella
+/// `Backend`. If it ever misses a method, this fails before any test runs.
 fn _assert_backend<T: Backend>() {}
 const _: () = {
-    let _ = _assert_backend::<PgBackend>;
-    let _ = _assert_backend::<SqliteBackend>;
+    let _ = _assert_backend::<SqlBackend>;
 };
 
 /// The shared body: two accounts on one engine must never see each other's
@@ -123,7 +121,7 @@ async fn sqlite_account_delete_cascades_to_scoped_rows() {
         .expect("put identity");
 
     let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identities")
-        .fetch_one(storage.pool())
+        .fetch_one(common::lite_pool(&storage))
         .await
         .expect("count before");
     assert_eq!(before, 1, "identity must be persisted before the delete");
@@ -131,7 +129,7 @@ async fn sqlite_account_delete_cascades_to_scoped_rows() {
     assert!(storage.delete_account(account.uuid).await.unwrap());
 
     let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identities")
-        .fetch_one(storage.pool())
+        .fetch_one(common::lite_pool(&storage))
         .await
         .expect("count after");
     assert_eq!(after, 0, "cascade must remove the account's Signal rows");
@@ -171,12 +169,12 @@ async fn both_engines_persist_byte_identical_device_blobs() {
 
     let pg_blob: Vec<u8> = sqlx::query_scalar("SELECT data FROM device WHERE device_id = $1")
         .bind(pg_account.device_id)
-        .fetch_one(pg.pool())
+        .fetch_one(common::pg_pool(&pg))
         .await
         .expect("read pg blob");
     let lite_blob: Vec<u8> = sqlx::query_scalar("SELECT data FROM device WHERE device_id = ?")
         .bind(lite_account.device_id)
-        .fetch_one(lite.pool())
+        .fetch_one(common::lite_pool(&lite))
         .await
         .expect("read sqlite blob");
 

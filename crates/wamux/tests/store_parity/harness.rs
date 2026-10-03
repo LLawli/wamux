@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use wacore::store::traits::Backend;
-use wamux::storage::postgres::PgStorage;
-use wamux::storage::sqlite::SqliteStorage;
+use wamux::storage::sql::{SqlPool, SqlStore};
 use wamux::storage::{AccountRow, StorageEngine};
 
 use crate::common;
@@ -28,60 +27,51 @@ pub trait RawProbe: Send + Sync {
     async fn prekey_uploaded(&self, device_id: i32, id: u32) -> Option<bool>;
 }
 
-#[async_trait]
-impl RawProbe for PgStorage {
-    async fn column_bytes(&self, table: &str, column: &str, device_id: i32) -> Vec<Vec<u8>> {
-        let sql = format!("SELECT {column} FROM {table} WHERE device_id = $1");
-        let mut rows: Vec<Vec<u8>> = sqlx::query_scalar(&sql)
-            .bind(device_id)
-            .fetch_all(self.pool())
-            .await
-            .unwrap_or_else(|e| panic!("read {table}.{column} on postgres: {e}"));
-        rows.sort();
-        rows
-    }
-
-    async fn column_text(&self, table: &str, column: &str, device_id: i32) -> Vec<String> {
-        let sql = format!("SELECT {column} FROM {table} WHERE device_id = $1");
-        let mut rows: Vec<String> = sqlx::query_scalar(&sql)
-            .bind(device_id)
-            .fetch_all(self.pool())
-            .await
-            .unwrap_or_else(|e| panic!("read {table}.{column} on postgres: {e}"));
-        rows.sort();
-        rows
-    }
-
-    async fn prekey_uploaded(&self, device_id: i32, id: u32) -> Option<bool> {
-        sqlx::query_scalar("SELECT uploaded FROM prekeys WHERE device_id = $1 AND id = $2")
-            .bind(device_id)
-            .bind(id as i32)
-            .fetch_optional(self.pool())
-            .await
-            .expect("read prekeys.uploaded on postgres")
+/// Which driver a `SqlStore` runs on, for the panic messages.
+fn engine_name(pool: &SqlPool) -> &'static str {
+    match pool {
+        SqlPool::Pg(_) => "postgres",
+        SqlPool::Sqlite(_) => "sqlite",
     }
 }
 
+/// One `SELECT {column} FROM {table} WHERE device_id = $1` on either driver.
+/// sqlx-sqlite binds `$N` by number (#65), so the text is the same for both.
+async fn column_values<T>(store: &SqlStore, table: &str, column: &str, device_id: i32) -> Vec<T>
+where
+    T: Send + Unpin,
+    for<'r> T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+    for<'r> T: sqlx::Decode<'r, sqlx::Sqlite> + sqlx::Type<sqlx::Sqlite>,
+{
+    let sql = format!("SELECT {column} FROM {table} WHERE device_id = $1");
+    let rows = match store.pool() {
+        SqlPool::Pg(pool) => {
+            sqlx::query_scalar(&sql)
+                .bind(device_id)
+                .fetch_all(pool)
+                .await
+        }
+        SqlPool::Sqlite(pool) => {
+            sqlx::query_scalar(&sql)
+                .bind(device_id)
+                .fetch_all(pool)
+                .await
+        }
+    };
+    let engine = engine_name(store.pool());
+    rows.unwrap_or_else(|e| panic!("read {table}.{column} on {engine}: {e}"))
+}
+
 #[async_trait]
-impl RawProbe for SqliteStorage {
+impl RawProbe for SqlStore {
     async fn column_bytes(&self, table: &str, column: &str, device_id: i32) -> Vec<Vec<u8>> {
-        let sql = format!("SELECT {column} FROM {table} WHERE device_id = ?");
-        let mut rows: Vec<Vec<u8>> = sqlx::query_scalar(&sql)
-            .bind(device_id)
-            .fetch_all(self.pool())
-            .await
-            .unwrap_or_else(|e| panic!("read {table}.{column} on sqlite: {e}"));
+        let mut rows: Vec<Vec<u8>> = column_values(self, table, column, device_id).await;
         rows.sort();
         rows
     }
 
     async fn column_text(&self, table: &str, column: &str, device_id: i32) -> Vec<String> {
-        let sql = format!("SELECT {column} FROM {table} WHERE device_id = ?");
-        let mut rows: Vec<String> = sqlx::query_scalar(&sql)
-            .bind(device_id)
-            .fetch_all(self.pool())
-            .await
-            .unwrap_or_else(|e| panic!("read {table}.{column} on sqlite: {e}"));
+        let mut rows: Vec<String> = column_values(self, table, column, device_id).await;
         rows.sort();
         rows
     }
@@ -89,12 +79,25 @@ impl RawProbe for SqliteStorage {
     // SQLite keeps the flag as INTEGER 0/1; sqlx decodes it as bool, so the
     // two engines answer in the same type.
     async fn prekey_uploaded(&self, device_id: i32, id: u32) -> Option<bool> {
-        sqlx::query_scalar("SELECT uploaded FROM prekeys WHERE device_id = ? AND id = ?")
-            .bind(device_id)
-            .bind(id as i32)
-            .fetch_optional(self.pool())
-            .await
-            .expect("read prekeys.uploaded on sqlite")
+        let sql = "SELECT uploaded FROM prekeys WHERE device_id = $1 AND id = $2";
+        let row = match self.pool() {
+            SqlPool::Pg(pool) => {
+                sqlx::query_scalar(sql)
+                    .bind(device_id)
+                    .bind(id as i32)
+                    .fetch_optional(pool)
+                    .await
+            }
+            SqlPool::Sqlite(pool) => {
+                sqlx::query_scalar(sql)
+                    .bind(device_id)
+                    .bind(id as i32)
+                    .fetch_optional(pool)
+                    .await
+            }
+        };
+        let engine = engine_name(self.pool());
+        row.unwrap_or_else(|e| panic!("read prekeys.uploaded on {engine}: {e}"))
     }
 }
 

@@ -21,8 +21,7 @@ use wacore::store::traits::AppStateSyncKey;
 use wamux::storage::StorageEngine;
 use wamux::storage::bincode_upgrade::decode_legacy_device;
 use wamux::storage::blob_codec::decode_device;
-use wamux::storage::postgres::{self, PgStorage};
-use wamux::storage::sqlite::{self, SqliteStorage};
+use wamux::storage::sql::{self, SqlPool, SqlStore};
 
 const KEY_ID: &[u8] = &[0, 0, 0, 1];
 
@@ -134,9 +133,9 @@ async fn legacy_sqlite(
         "sqlite://{}?mode=rwc",
         dir.path().join("legacy.db").display()
     );
-    let pool = sqlite::connect(&url).await.unwrap();
-    sqlite::MIGRATOR.run(&pool).await.unwrap();
-    let accounts = SqliteStorage::from_pool(pool.clone());
+    let pool = sql::connect_sqlite(&url).await.unwrap();
+    sql::SQLITE_MIGRATOR.run(&pool).await.unwrap();
+    let accounts = SqlStore::from_pool(SqlPool::Sqlite(pool.clone()));
     let device_id = accounts
         .create_account(Some("upgrade"))
         .await
@@ -206,14 +205,17 @@ async fn sqlite_legacy_store_is_converted_on_open() {
     let legacy = legacy_account();
     let (url, _dir, device_id) = legacy_sqlite(&legacy, false).await;
 
-    let engine = SqliteStorage::open(&url).await.expect("open converts");
-    assert_eq!(sqlite_marker(engine.pool()).await, "protobuf");
-    let converted = sqlite_device_blob(engine.pool(), device_id).await;
+    let engine = SqlStore::open_sqlite(&url).await.expect("open converts");
+    assert_eq!(sqlite_marker(common::lite_pool(&engine)).await, "protobuf");
+    let converted = sqlite_device_blob(common::lite_pool(&engine), device_id).await;
     assert_converted(Arc::new(engine), device_id, &legacy).await;
 
     // Idempotent: a second open finds 'protobuf' and writes nothing.
-    let again = SqliteStorage::open(&url).await.expect("reopen");
-    assert_eq!(sqlite_device_blob(again.pool(), device_id).await, converted);
+    let again = SqlStore::open_sqlite(&url).await.expect("reopen");
+    assert_eq!(
+        sqlite_device_blob(common::lite_pool(&again), device_id).await,
+        converted
+    );
 }
 
 #[tokio::test]
@@ -221,14 +223,14 @@ async fn sqlite_one_unreadable_row_aborts_the_conversion_and_changes_nothing() {
     let legacy = legacy_account();
     let (url, _dir, device_id) = legacy_sqlite(&legacy, true).await;
 
-    let err = SqliteStorage::open(&url)
+    let err = SqlStore::open_sqlite(&url)
         .await
         .err()
         .expect("open must refuse");
     let chain = format!("{:?}", anyhow::Error::from(err));
     assert!(chain.contains("not readable as bincode"), "{chain}");
 
-    let pool = sqlite::connect(&url).await.unwrap();
+    let pool = sql::connect_sqlite(&url).await.unwrap();
     assert_eq!(
         sqlite_marker(&pool).await,
         "bincode",
@@ -244,7 +246,7 @@ async fn sqlite_one_unreadable_row_aborts_the_conversion_and_changes_nothing() {
 #[tokio::test]
 async fn sqlite_fresh_store_is_marked_protobuf() {
     let (engine, _dir) = common::sqlite_engine().await;
-    assert_eq!(sqlite_marker(engine.pool()).await, "protobuf");
+    assert_eq!(sqlite_marker(common::lite_pool(&engine)).await, "protobuf");
 }
 
 // --- Postgres ---
@@ -279,9 +281,9 @@ async fn drop_pg_database(db: ThrowawayPg) {
 
 async fn legacy_pg(legacy: &LegacyAccount) -> (ThrowawayPg, i32) {
     let db = create_pg_database().await;
-    let pool = postgres::connect(&db.url, 2).await.unwrap();
-    postgres::MIGRATOR.run(&pool).await.unwrap();
-    let accounts = PgStorage::from_pool(pool.clone());
+    let pool = sql::connect_postgres(&db.url, 2).await.unwrap();
+    sql::PG_MIGRATOR.run(&pool).await.unwrap();
+    let accounts = SqlStore::from_pool(SqlPool::Pg(pool.clone()));
     let device_id = accounts
         .create_account(Some("upgrade"))
         .await
@@ -324,13 +326,15 @@ async fn postgres_legacy_store_is_converted_on_open() {
     let legacy = legacy_account();
     let (db, device_id) = legacy_pg(&legacy).await;
 
-    let engine = PgStorage::open(&db.url, 2).await.expect("open converts");
+    let engine = SqlStore::open_postgres(&db.url, 2)
+        .await
+        .expect("open converts");
     let marker: String = sqlx::query_scalar("SELECT format FROM blob_format WHERE id = 1")
-        .fetch_one(engine.pool())
+        .fetch_one(common::pg_pool(&engine))
         .await
         .unwrap();
     assert_eq!(marker, "protobuf");
-    let pool = engine.pool().clone();
+    let pool = common::pg_pool(&engine).clone();
     assert_converted(Arc::new(engine), device_id, &legacy).await;
 
     pool.close().await;
@@ -407,7 +411,7 @@ fn refuse_a_live_store(url: &str) {
 /// how many rows are still unmarked with a baseline: the library's first sync
 /// at the head marks each of them. Counts only on stdout: the store holds
 /// Signal key material.
-async fn check_versions(engine: &SqliteStorage, before: &RealStoreBefore) -> usize {
+async fn check_versions(engine: &SqlStore, before: &RealStoreBefore) -> usize {
     let mut unmarked = 0;
     for (device_id, name, old) in &before.versions {
         let new = engine
@@ -436,12 +440,12 @@ async fn check_versions(engine: &SqliteStorage, before: &RealStoreBefore) -> usi
 async fn rehearse_the_conversion_on_a_copy_of_a_real_store() {
     let url = std::env::var("WAMUX_REHEARSAL_DB").expect("set WAMUX_REHEARSAL_DB");
     refuse_a_live_store(&url);
-    let pool = sqlite::connect(&url).await.unwrap();
+    let pool = sql::connect_sqlite(&url).await.unwrap();
     let before = read_real_store(&pool).await;
     pool.close().await;
 
-    let engine = SqliteStorage::open(&url).await.expect("open converts");
-    assert_eq!(sqlite_marker(engine.pool()).await, "protobuf");
+    let engine = SqlStore::open_sqlite(&url).await.expect("open converts");
+    assert_eq!(sqlite_marker(common::lite_pool(&engine)).await, "protobuf");
     for (device_id, old) in &before.devices {
         let new = engine
             .device_backend(*device_id)
