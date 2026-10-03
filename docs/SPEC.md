@@ -20,7 +20,7 @@ src/
                        #   media_transfer, groups, contacts
   services/            # one gRPC impl per file (thin): account/event/messaging/
                        #   media/group/contact/admin
-  storage/postgres/    # PgBackend + the 4 wacore store traits + accounts + error_map
+  storage/sql/         # SqlBackend (Postgres + SQLite, SQL written once) + the wacore store traits + accounts
 ```
 
 ## gRPC services (package `wamux.v1`)
@@ -58,7 +58,7 @@ src/
 - `AccountHandle` holds: `device_id`, the live `Arc<Client>`, the running `Bot`
   (owned by a **supervisor** task), a `broadcast` event channel (capacity from
   `Config::broadcast_capacity`), the `EventRing`, and a `watch<ConnectionState>`.
-- `bot_factory::build_bot` wires `PgBackend` + tokio transport/runtime + ureq HTTP +
+- `bot_factory::build_bot` wires `SqlBackend` + tokio transport/runtime + ureq HTTP +
   the `event_bridge` `on_event` closure; `skip_history_sync` (relay-pure).
 - `event_bridge::dispatch` updates state, maps the event (`domain::event_mapping`),
   stamps seq+timestamp, broadcasts, and pushes to the ring **only if `replayable`**

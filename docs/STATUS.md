@@ -38,7 +38,7 @@ separada** (fora de escopo).
   do run loop → `on_bot_exited` deixa `is_running` verdadeiro), `broadcast` de eventos
   (capacidade via config), ring buffer, `watch<ConnectionState>`. Stop **gracioso**
   (`Client::disconnect` + espera com timeout). Budget `max_connected_accounts` no connect.
-- `bot_factory` (wira PgBackend + tokio transport/runtime + ureq + on_event), `event_bridge`
+- `bot_factory` (wira SqlBackend + tokio transport/runtime + ureq + on_event), `event_bridge`
   (Event→envelope, broadcast + ring **só se `replayable`**: history sync e eventos acima de
   `replay_max_event_bytes` ficam fora do ring). **History sync: skip por default**
   (relay puro); a borda liga o backfill no `ConnectAccount.backfill_history` **e no
@@ -100,7 +100,7 @@ separada** (fora de escopo).
 - `cargo build` (nightly), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`.
 - Unit: `domain::event_mapping` (mapeamento pairing QR/código) — 2 testes.
 - Integração `tests/postgres_backend.rs`: isolamento por `device_id` + round-trip +
-  prova `PgBackend: Backend` (contra Postgres docker).
+  prova `SqlBackend: Backend` (contra Postgres docker).
 - Integração `tests/grpc_server.rs`: ciclo de conta **sobre socket gRPC real**
   (create/list/status por uuid e external_ref/NotFound/delete).
 
@@ -242,7 +242,7 @@ Gotchas conhecidos:
   mock e2e). **M1 ✅**: `Client` real do `whatsapp-rust` completa o handshake contra o mock
   sobre `ws://` loopback e o servidor decifra o ClientPayload (`tests/stress_handshake.rs`).
   Transporte injetável via `RegistryTuning::ws_url_override` + `build_bot(ws_url)`.
-  **M2a ✅**: device registrado (`pn` set, persistido via `PgBackend::save`) → cliente envia
+  **M2a ✅**: device registrado (`pn` set, persistido via `SqlBackend::save`) → cliente envia
   payload de **login** → servidor manda `<success>` (nós binários via `wacore-binary`) → cliente
   **loga** e envia IQs pós-login que o servidor **decifra** (transporte cifrado bidirecional OK;
   cifras trocadas no servidor: send=read, recv=write; contadores por-direção). Servidor responde
