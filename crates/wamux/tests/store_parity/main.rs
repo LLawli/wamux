@@ -1,7 +1,8 @@
 //! Engine parity for every method the two stores implement (#60).
 //!
-//! The Postgres and SQLite stores each implement 63 methods of the wacore
-//! traits (59 until #93 overrode four wrong defaults). This is the
+//! The SQL family implements 80 methods of the wacore traits on both engines
+//! (59 until #93 overrode four wrong defaults, 63 until #104 overrode the
+//! throughput ones). This is the
 //! crypto-critical state of every account, and #65 is about to rewrite all of
 //! it: these tests are the safety net that rewrite runs
 //! against. A divergence in sender keys, base keys or tc-tokens would otherwise
@@ -22,8 +23,12 @@
 mod common;
 
 mod app_sync;
+mod atomicity;
+mod batches_protocol;
+mod batches_signal;
 mod blobs;
 mod harness;
+mod maintenance;
 mod msg_secret;
 mod protocol;
 mod protocol_cache;
