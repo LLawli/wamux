@@ -154,7 +154,11 @@ Ten more minutes of grep would have caught each one.
 - Poke the socket by hand:         `grpcurl -unix -plaintext /run/wamux.sock list`
   (needs `grpcurl` installed; reflection is on by default in dev)
 - CI (all gates, one command):     `scripts/ci.sh` (add `--full` for the #[ignore] scale tests).
-  There is no hosted CI; this script is the pipeline — run it before declaring work done.
+  Run it before declaring work done. Hosted CI (`.github/workflows/ci.yml`) also runs on every
+  PR and every push to main: `scripts/ci.sh (postgres)` (without `--full`, so the scale tests are
+  still yours to run locally), `fmt + clippy + tests (sqlite)` and `cargo audit`. Merge only after
+  those checks pass. Right after `gh pr create`, `gh pr checks` can print "no checks reported":
+  the runs are not registered yet, so wait until they appear, then `--watch`.
 
 ## Code style
 - Functions: 4-20 lines. Split if longer.
