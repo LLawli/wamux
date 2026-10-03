@@ -90,11 +90,11 @@ def rows(a_defaults, b_defaults, overrides=(), trait_of=None, why="kept for a re
     return out
 
 
-def write_tree(root, traits_text, doc_rows, postgres_impls, sqlite_impls):
-    """A minimal checkout: one `*_store.rs` per engine, the doc, a traits.rs."""
+def write_tree(root, traits_text, doc_rows, impls_by_family):
+    """A minimal checkout: one `*_store.rs` per family, the doc, a traits.rs."""
     storage = root / "crates" / "wamux" / "src" / "storage"
-    for engine, names in (("postgres", postgres_impls), ("sqlite", sqlite_impls)):
-        engine_dir = storage / engine
+    for family, names in impls_by_family.items():
+        engine_dir = storage / family
         engine_dir.mkdir(parents=True)
         body = "\n".join(f"    async fn {n}(&self) -> Result<()> {{ Ok(()) }}" for n in names)
         (engine_dir / "protocol_store.rs").write_text(f"impl FakeA for X {{\n{body}\n}}\n")
@@ -108,10 +108,12 @@ def write_tree(root, traits_text, doc_rows, postgres_impls, sqlite_impls):
     return traits
 
 
-def run_check(root, traits=None):
+def run_check(root, traits=None, families=None):
     args = [str(CHECK), "--root", str(root)]
     if traits is not None:
         args += ["--traits", str(traits)]
+    if families is not None:
+        args += ["--families", ",".join(families)]
     return subprocess.run(args, capture_output=True, text=True, check=False)
 
 
@@ -124,10 +126,10 @@ class CheckStoreDefaults(unittest.TestCase):
         for needle in needles:
             self.assertIn(needle, output)
 
-    def check_fake(self, a, b, doc_rows, pg, sq):
+    def check_fake(self, a, b, doc_rows, impls_by_family):
         with tempfile.TemporaryDirectory() as tmp:
-            traits = write_tree(Path(tmp), traits_source(a, b), doc_rows, pg, sq)
-            return run_check(tmp, traits)
+            traits = write_tree(Path(tmp), traits_source(a, b), doc_rows, impls_by_family)
+            return run_check(tmp, traits, list(impls_by_family))
 
     def test_repo_passes_against_the_pinned_wacore(self):
         result = run_check(REPO)
@@ -137,7 +139,7 @@ class CheckStoreDefaults(unittest.TestCase):
     def test_fake_tree_fully_classified_passes(self):
         a, b = split(fake_defaults(FLOOR - 1))
         over = [a[0], b[0]]
-        result = self.check_fake(a, b, rows(a, b, over), over, over)
+        result = self.check_fake(a, b, rows(a, b, over), {"sql": over})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(f"store defaults ok: {FLOOR} trait defaults, 2 overridden, {FLOOR - 2} kept", result.stdout)
 
@@ -148,7 +150,7 @@ class CheckStoreDefaults(unittest.TestCase):
             "| `free_helper_with_body` | FakeA | default | not in a trait |\n",
             "| `inherent_with_body` | FakeA | default | not in a trait |\n",
         ]
-        result = self.check_fake(a, b, rows(a, b) + extra, [], [])
+        result = self.check_fake(a, b, rows(a, b) + extra, {"sql": []})
         self.assert_reported_failure(
             result,
             "stale row, not a trait default: required_a",
@@ -159,45 +161,57 @@ class CheckStoreDefaults(unittest.TestCase):
     def test_unclassified_default_fails_and_is_named(self):
         a, b = split(fake_defaults(FLOOR - 1))
         doc = [r for r in rows(a, b) if f"`{b[-1]}`" not in r]
-        result = self.check_fake(a, b, doc, [], [])
+        result = self.check_fake(a, b, doc, {"sql": []})
         self.assert_reported_failure(result, f"unclassified trait default: {b[-1]}")
 
     def test_multiline_default_with_nested_braces_counts(self):
         a, b = split(fake_defaults(FLOOR - 1))
         doc = [r for r in rows(a, b) if "`default_multiline`" not in r]
-        result = self.check_fake(a, b, doc, [], [])
+        result = self.check_fake(a, b, doc, {"sql": []})
         self.assert_reported_failure(result, "unclassified trait default: default_multiline")
 
-    def test_override_row_missing_in_one_engine_fails(self):
+    def test_override_row_missing_in_one_family_fails(self):
         a, b = split(fake_defaults(FLOOR - 1))
-        result = self.check_fake(a, b, rows(a, b, [a[0]]), [a[0]], [])
-        self.assert_reported_failure(result, f"marked override but not implemented by sqlite: {a[0]}")
+        result = self.check_fake(a, b, rows(a, b, [a[0]]), {"sql": [a[0]], "turso": []})
+        self.assert_reported_failure(result, f"marked override but not implemented by turso: {a[0]}")
 
-    def test_default_row_overridden_by_an_engine_fails(self):
+    def test_override_row_missing_in_the_only_family_fails(self):
         a, b = split(fake_defaults(FLOOR - 1))
-        result = self.check_fake(a, b, rows(a, b), [], [b[0]])
-        self.assert_reported_failure(result, f"marked default but overridden by sqlite: {b[0]}")
+        result = self.check_fake(a, b, rows(a, b, [a[0]]), {"sql": []})
+        self.assert_reported_failure(result, f"marked override but not implemented by sql: {a[0]}")
+
+    def test_default_row_overridden_by_a_family_fails(self):
+        a, b = split(fake_defaults(FLOOR - 1))
+        result = self.check_fake(a, b, rows(a, b), {"sql": [], "turso": [b[0]]})
+        self.assert_reported_failure(result, f"marked default but overridden by turso: {b[0]}")
+
+    def test_missing_family_directory_fails_cleanly(self):
+        a, b = split(fake_defaults(FLOOR - 1))
+        with tempfile.TemporaryDirectory() as tmp:
+            traits = write_tree(Path(tmp), traits_source(a, b), rows(a, b), {"sql": []})
+            result = run_check(tmp, traits, ["sql", "turso"])
+        self.assert_reported_failure(result, "family directory missing: storage/turso")
 
     def test_default_without_a_reason_fails(self):
         a, b = split(fake_defaults(FLOOR - 1))
         doc = rows(a, b)
         doc[1] = f"| `{a[0]}` | FakeA | default |  |\n"
-        result = self.check_fake(a, b, doc, [], [])
+        result = self.check_fake(a, b, doc, {"sql": []})
         self.assert_reported_failure(result, f"default kept without a reason: {a[0]}")
 
     def test_wrong_trait_column_fails(self):
         a, b = split(fake_defaults(FLOOR - 1))
-        result = self.check_fake(a, b, rows(a, b, trait_of={b[0]: "FakeA"}), [], [])
+        result = self.check_fake(a, b, rows(a, b, trait_of={b[0]: "FakeA"}), {"sql": []})
         self.assert_reported_failure(result, f"trait column says FakeA, wacore declares {b[0]} in FakeB")
 
     def test_too_few_defaults_fails_the_floor(self):
         a, b = split(fake_defaults(3))
-        result = self.check_fake(a, b, rows(a, b), [], [])
+        result = self.check_fake(a, b, rows(a, b), {"sql": []})
         self.assert_reported_failure(result, f"expected at least {FLOOR}")
 
     def test_missing_traits_file_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as tmp:
-            write_tree(Path(tmp), "", [], [], [])
+            write_tree(Path(tmp), "", [], {"sql": []})
             result = run_check(tmp, Path(tmp) / "absent" / "traits.rs")
         self.assert_reported_failure(result, "cannot resolve wacore")
 

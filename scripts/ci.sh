@@ -151,6 +151,8 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   must_run_tests --test storage_backend sqlite_
   must_run_tests --test bincode_upgrade sqlite_
   must_run_tests --test store_parity sqlite_
+  # #65: a store the pre-unification code wrote, opened on the unified SQL.
+  must_run_tests --test existing_store sqlite_
 
   stage "no-postgres: wamux-tools (sqlite daemon fixture)"
   must_run_pkg_tests wamux-tools "${TOOLS_NO_PG_SUITES[@]}"
