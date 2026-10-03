@@ -369,6 +369,23 @@ has to follow them.
 
 ### Fixed
 
+- **The Postgres engine no longer runs out of pool connections** (issue
+  #107). After a `CheckOnWhatsApp`, `GetAbout` or `ListParticipating`, the
+  daemon could spend minutes failing every store call with `pool timed out
+  while waiting for an open connection`. Signal state stopped flushing, and a
+  send could take minutes and answer `Unavailable`.
+  - The cause: those three RPCs run a library future that is not `Send`, and
+    they ran it on a throwaway runtime built per call. A Postgres connection
+    the pool opened during the call stayed bound to that runtime after it was
+    gone, and every later acquire that picked it waited out the 30-second
+    acquire timeout. Tasks the library started during the call died with the
+    runtime too.
+  - The call now runs on the daemon's own runtime, from a blocking thread, so
+    connections, timers and tasks outlive it.
+  - The SQLite engine was not affected: its connections do not use tokio's
+    I/O driver. The per-call runtime dates from before 0.1.0, so 0.1.0 on
+    Postgres has the same bug.
+
 - **The stores override the wacore trait defaults that were wrong for them**
   (issue #93). Both engines left every trait method with a default body on
   that default, and four of those defaults do something other than what the
