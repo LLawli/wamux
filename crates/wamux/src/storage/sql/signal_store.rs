@@ -1,11 +1,17 @@
 //! `SignalStore` for the SQL family. All key material is stored as raw bytes,
 //! matching the whatsapp-rust sqlite reference (no transform).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use wacore::store::error::{Result, StoreError};
 use wacore::store::traits::SignalStore;
 
+use super::signal_sql::{
+    self, DELETE_IDENTITY, DELETE_PREKEY, DELETE_SENDER_KEY, DELETE_SESSION, PUT_IDENTITY,
+    PUT_SENDER_KEY, PUT_SESSION, STORE_PREKEY,
+};
 use super::{SqlBackend, prekeys_sql};
 
 #[async_trait]
@@ -13,14 +19,7 @@ impl SignalStore for SqlBackend {
     // --- Identities ---
 
     async fn put_identity(&self, address: &str, key: [u8; 32]) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "INSERT INTO identities (address, key, device_id) VALUES ($1, $2, $3)
-             ON CONFLICT (address, device_id) DO UPDATE SET key = EXCLUDED.key",
-            address,
-            &key[..],
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, PUT_IDENTITY, address, &key[..], self.device_id)?;
         Ok(())
     }
 
@@ -44,12 +43,7 @@ impl SignalStore for SqlBackend {
     }
 
     async fn delete_identity(&self, address: &str) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM identities WHERE address = $1 AND device_id = $2",
-            address,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, DELETE_IDENTITY, address, self.device_id)?;
         Ok(())
     }
 
@@ -67,24 +61,12 @@ impl SignalStore for SqlBackend {
     }
 
     async fn put_session(&self, address: &str, session: &[u8]) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "INSERT INTO sessions (address, record, device_id) VALUES ($1, $2, $3)
-             ON CONFLICT (address, device_id) DO UPDATE SET record = EXCLUDED.record",
-            address,
-            session,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, PUT_SESSION, address, session, self.device_id)?;
         Ok(())
     }
 
     async fn delete_session(&self, address: &str) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM sessions WHERE address = $1 AND device_id = $2",
-            address,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, DELETE_SESSION, address, self.device_id)?;
         Ok(())
     }
 
@@ -93,9 +75,7 @@ impl SignalStore for SqlBackend {
     async fn store_prekey(&self, id: u32, record: &[u8], uploaded: bool) -> Result<()> {
         execute_sql!(
             &self.pool,
-            "INSERT INTO prekeys (id, key, uploaded, device_id) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (id, device_id) DO UPDATE
-             SET key = EXCLUDED.key, uploaded = EXCLUDED.uploaded",
+            STORE_PREKEY,
             id as i32,
             record,
             uploaded,
@@ -125,12 +105,7 @@ impl SignalStore for SqlBackend {
     }
 
     async fn remove_prekey(&self, id: u32) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM prekeys WHERE id = $1 AND device_id = $2",
-            id as i32,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, DELETE_PREKEY, id as i32, self.device_id)?;
         Ok(())
     }
 
@@ -191,14 +166,7 @@ impl SignalStore for SqlBackend {
     // --- Sender Keys ---
 
     async fn put_sender_key(&self, address: &str, record: &[u8]) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "INSERT INTO sender_keys (address, record, device_id) VALUES ($1, $2, $3)
-             ON CONFLICT (address, device_id) DO UPDATE SET record = EXCLUDED.record",
-            address,
-            record,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, PUT_SENDER_KEY, address, record, self.device_id)?;
         Ok(())
     }
 
@@ -213,12 +181,49 @@ impl SignalStore for SqlBackend {
     }
 
     async fn delete_sender_key(&self, address: &str) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM sender_keys WHERE address = $1 AND device_id = $2",
-            address,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, DELETE_SENDER_KEY, address, self.device_id)?;
         Ok(())
+    }
+
+    // --- Batches (#104): one transaction or one query per chunk, see `signal_sql` ---
+
+    async fn put_identities_batch(&self, identities: &[(Arc<str>, [u8; 32])]) -> Result<()> {
+        signal_sql::put_identities(&self.pool, self.device_id, identities).await
+    }
+
+    async fn delete_identities_batch(&self, addresses: &[Arc<str>]) -> Result<()> {
+        signal_sql::delete_identities(&self.pool, self.device_id, addresses).await
+    }
+
+    async fn put_sessions_batch(&self, sessions: &[(Arc<str>, Bytes)]) -> Result<()> {
+        signal_sql::put_sessions(&self.pool, self.device_id, sessions).await
+    }
+
+    async fn get_sessions_batch(&self, addresses: &[Arc<str>]) -> Result<Vec<(Arc<str>, Bytes)>> {
+        signal_sql::get_sessions(&self.pool, self.device_id, addresses).await
+    }
+
+    async fn delete_sessions_batch(&self, addresses: &[Arc<str>]) -> Result<()> {
+        signal_sql::delete_sessions(&self.pool, self.device_id, addresses).await
+    }
+
+    async fn store_prekeys_batch(&self, keys: &[(u32, Bytes)], uploaded: bool) -> Result<()> {
+        signal_sql::store_prekeys(&self.pool, self.device_id, keys, uploaded).await
+    }
+
+    async fn load_prekeys_batch(&self, ids: &[u32]) -> Result<Vec<(u32, Bytes)>> {
+        signal_sql::load_prekeys(&self.pool, self.device_id, ids).await
+    }
+
+    async fn remove_prekeys_batch(&self, ids: &[u32]) -> Result<()> {
+        signal_sql::remove_prekeys(&self.pool, self.device_id, ids).await
+    }
+
+    async fn put_sender_keys_batch(&self, sender_keys: &[(Arc<str>, Bytes)]) -> Result<()> {
+        signal_sql::put_sender_keys(&self.pool, self.device_id, sender_keys).await
+    }
+
+    async fn delete_sender_keys_batch(&self, addresses: &[Arc<str>]) -> Result<()> {
+        signal_sql::delete_sender_keys(&self.pool, self.device_id, addresses).await
     }
 }

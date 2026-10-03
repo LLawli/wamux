@@ -1,12 +1,15 @@
 //! `AppSyncStore` for the SQL family. Sync keys and version state are protobuf
 //! blobs (`blob_codec`, #31); MACs are raw bytes.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use wacore::appstate::hash::HashState;
 use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::error::Result;
 use wacore::store::traits::{AppStateSyncKey, AppSyncStore};
 
+use super::app_sync_sql::{self, SET_VERSION};
 use super::{SqlBackend, SqlTx};
 use crate::storage::blob_codec::{
     decode_app_state_sync_key, decode_hash_state, encode_app_state_sync_key, encode_hash_state,
@@ -75,14 +78,7 @@ impl AppSyncStore for SqlBackend {
 
     async fn set_version(&self, name: &str, state: HashState) -> Result<()> {
         let data = encode_hash_state(&state);
-        execute_sql!(
-            &self.pool,
-            "INSERT INTO app_state_versions (name, state_data, device_id) VALUES ($1, $2, $3)
-             ON CONFLICT (name, device_id) DO UPDATE SET state_data = EXCLUDED.state_data",
-            name,
-            &data,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, SET_VERSION, name, &data, self.device_id)?;
         Ok(())
     }
 
@@ -93,20 +89,7 @@ impl AppSyncStore for SqlBackend {
         mutations: &[AppStateMutationMAC],
     ) -> Result<()> {
         let mut tx = SqlTx::begin(&self.pool).await?;
-        for m in mutations {
-            execute_sql!(
-                in tx,
-                "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (name, index_mac, device_id)
-                 DO UPDATE SET version = EXCLUDED.version, value_mac = EXCLUDED.value_mac",
-                name,
-                version as i64,
-                m.index_mac.as_slice(),
-                m.value_mac.as_slice(),
-                self.device_id
-            )?;
-        }
+        app_sync_sql::put_macs_in(&mut tx, self.device_id, name, version, mutations).await?;
         tx.commit().await
     }
 
@@ -124,16 +107,7 @@ impl AppSyncStore for SqlBackend {
 
     async fn delete_mutation_macs(&self, name: &str, index_macs: &[Vec<u8>]) -> Result<()> {
         let mut tx = SqlTx::begin(&self.pool).await?;
-        for index_mac in index_macs {
-            execute_sql!(
-                in tx,
-                "DELETE FROM app_state_mutation_macs
-                 WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-                name,
-                index_mac.as_slice(),
-                self.device_id
-            )?;
-        }
+        app_sync_sql::delete_macs_in(&mut tx, self.device_id, name, index_macs).await?;
         tx.commit().await
     }
 
@@ -157,5 +131,34 @@ impl AppSyncStore for SqlBackend {
             "SELECT key_id FROM app_state_keys WHERE device_id = $1 ORDER BY key_id DESC LIMIT 1",
             self.device_id
         )
+    }
+
+    // --- Throughput overrides (#104), see `app_sync_sql` ---
+
+    async fn get_mutation_macs(
+        &self,
+        name: &str,
+        index_macs: &[[u8; 32]],
+    ) -> Result<HashMap<[u8; 32], Vec<u8>>> {
+        app_sync_sql::get_mutation_macs(&self.pool, self.device_id, name, index_macs).await
+    }
+
+    async fn commit_patch(
+        &self,
+        name: &str,
+        state: HashState,
+        removed_index_macs: &[Vec<u8>],
+        added: &[AppStateMutationMAC],
+    ) -> Result<()> {
+        let device_id = self.device_id;
+        app_sync_sql::commit_patch(
+            &self.pool,
+            device_id,
+            name,
+            state,
+            removed_index_macs,
+            added,
+        )
+        .await
     }
 }

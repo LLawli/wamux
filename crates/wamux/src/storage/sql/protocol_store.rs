@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use wacore::store::error::Result;
 use wacore::store::traits::{DeviceListRecord, LidPnMappingEntry, ProtocolStore, TcTokenEntry};
 
+use super::protocol_batch_sql::{self, PUT_LID_MAPPING, UPDATE_DEVICE_LIST};
 use super::protocol_rows::{self, DeviceListRow, LidMappingRow};
 use super::{SqlBackend, SqlTx, tc_token_sql};
 use crate::storage::blob_codec::now_secs;
@@ -107,13 +108,7 @@ impl ProtocolStore for SqlBackend {
     async fn put_lid_mapping(&self, entry: &LidPnMappingEntry) -> Result<()> {
         execute_sql!(
             &self.pool,
-            "INSERT INTO lid_pn_mapping
-                (lid, phone_number, created_at, learning_source, updated_at, device_id)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (lid, device_id) DO UPDATE SET
-                phone_number = EXCLUDED.phone_number,
-                learning_source = EXCLUDED.learning_source,
-                updated_at = EXCLUDED.updated_at",
+            PUT_LID_MAPPING,
             &entry.lid,
             &entry.phone_number,
             entry.created_at,
@@ -189,15 +184,7 @@ impl ProtocolStore for SqlBackend {
         // deref'd to `&str` at the bind site.
         execute_sql!(
             &self.pool,
-            "INSERT INTO device_registry
-                (user_id, devices_json, timestamp, phash, device_id, updated_at, raw_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (user_id, device_id) DO UPDATE SET
-                devices_json = EXCLUDED.devices_json,
-                timestamp = EXCLUDED.timestamp,
-                phash = EXCLUDED.phash,
-                updated_at = EXCLUDED.updated_at,
-                raw_id = EXCLUDED.raw_id",
+            UPDATE_DEVICE_LIST,
             &*record.user,
             &devices_json,
             record.timestamp,
@@ -413,5 +400,23 @@ impl ProtocolStore for SqlBackend {
         token_timestamp: i64,
     ) -> Result<()> {
         tc_token_sql::store_received(&self.pool, self.device_id, jid, token, token_timestamp).await
+    }
+
+    // --- Throughput overrides (#104), see `protocol_batch_sql` ---
+
+    async fn put_lid_mappings(&self, entries: &[LidPnMappingEntry]) -> Result<()> {
+        protocol_batch_sql::put_lid_mappings(&self.pool, self.device_id, entries).await
+    }
+
+    async fn update_device_lists(&self, records: Vec<DeviceListRecord>) -> Result<()> {
+        protocol_batch_sql::update_device_lists(&self.pool, self.device_id, records).await
+    }
+
+    async fn get_devices_batch(&self, users: &[&str]) -> Result<Vec<DeviceListRecord>> {
+        protocol_batch_sql::get_devices_batch(&self.pool, self.device_id, users).await
+    }
+
+    async fn get_tc_tokens(&self, jids: &[String]) -> Result<Vec<Option<TcTokenEntry>>> {
+        protocol_batch_sql::get_tc_tokens(&self.pool, self.device_id, jids).await
     }
 }

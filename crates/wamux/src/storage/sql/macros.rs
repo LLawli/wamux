@@ -109,3 +109,18 @@ macro_rules! row_all_sql {
         .map_err($crate::storage::sqlx_error::db)
     };
 }
+
+/// Every row decoded as `$ty`, for a statement whose last placeholders are one
+/// fixed-size `IN` list (#104). `$bind`s go first, then each of `$values`.
+macro_rules! rows_in_list_sql {
+    ($ty:ty, $pool:expr, $sql:expr, [$($bind:expr),*], $values:expr) => {
+        on_sql_pool!($pool, |conn| {
+            let mut query = sqlx::query_as::<_, $ty>($sql)$(.bind($bind))*;
+            for value in $values {
+                query = query.bind(value);
+            }
+            query.fetch_all(conn).await
+        })
+        .map_err($crate::storage::sqlx_error::db)
+    };
+}

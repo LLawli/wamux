@@ -5,9 +5,10 @@
 //! `ProtocolStore`, `DeviceStore`, plus `MsgSecretStore`) on a `SqlPool`; since
 //! `Backend` is a blanket impl over them, that makes it a `Backend`. Statements
 //! are `$N` strings that run on both drivers; `macros` expands each one per
-//! driver. Only three places write a string per driver, because the dialects
+//! driver. Only four places write a string per driver, because the dialects
 //! have no common form there: `accounts` (UUID vs TEXT), `prekeys_sql`
-//! (array bind vs a loop) and the `blob_format` row lock in `bincode_upgrade`.
+//! (array bind vs a loop), `maintenance_sql` (SQLite upkeep vs Postgres
+//! autovacuum) and the `blob_format` row lock in `bincode_upgrade`.
 //!
 //! Multi-tenancy: one shared pool, one `SqlBackend` per account, each carrying
 //! the integer `device_id` that scopes every row. A future engine that is not
@@ -17,14 +18,19 @@
 mod macros;
 
 mod accounts;
+mod app_sync_sql;
 mod app_sync_store;
+mod batch_sql;
 mod bincode_upgrade;
 mod connect;
 mod device_store;
+mod maintenance_sql;
 mod msg_secret_store;
 mod prekeys_sql;
+mod protocol_batch_sql;
 mod protocol_rows;
 mod protocol_store;
+mod signal_sql;
 mod signal_store;
 mod tc_token_sql;
 mod transaction;

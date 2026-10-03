@@ -6,7 +6,7 @@ use wacore::store::Device;
 use wacore::store::error::Result;
 use wacore::store::traits::DeviceStore;
 
-use super::SqlBackend;
+use super::{SqlBackend, maintenance_sql};
 use crate::storage::blob_codec::{decode_device, encode_device};
 
 #[async_trait]
@@ -57,5 +57,10 @@ impl DeviceStore for SqlBackend {
             &data
         )?;
         Ok(self.device_id)
+    }
+
+    /// Periodic upkeep, per engine in `maintenance_sql` (#104).
+    async fn maintenance(&self) -> Result<()> {
+        maintenance_sql::run(&self.pool).await
     }
 }
