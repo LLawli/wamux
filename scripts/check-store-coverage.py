@@ -12,7 +12,7 @@ them (a parser that silently finds nothing must not pass), and each name
 appears as a `.name(` call somewhere under crates/wamux/tests/.
 
 Since #65 the unit is the engine FAMILY, one directory under storage/ with
-one impl of each trait (`sql` covers Postgres and SQLite). Every family must
+one impl of each trait (`sql` covers Postgres and SQLite, `turso` is #106). Every family must
 declare the same methods, and every `*_store.rs` under storage/ must belong to
 a listed family, so a new engine (#106) or a stray copy cannot sit outside the
 check.
@@ -25,7 +25,7 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-FAMILIES = ("sql",)
+FAMILIES = ("sql", "turso")
 MIN_STORE_METHODS = 80
 ASYNC_FN = re.compile(r"\basync\s+fn\s+(\w+)")
 CALL = re.compile(r"\.\s*(\w+)\s*\(")
