@@ -133,6 +133,15 @@ scripts/check-store-defaults.py
 stage "store SQL written once"
 scripts/check-store-sql-shared.py
 
+# #114: a tonic::Status is built in one place, WamuxError's mapping in
+# wamux-types; everywhere else returns a WamuxError. Pure text check.
+stage "Status constructed in one place"
+scripts/check-status-sites.py
+
+# #114: the named types and the error mapping. No database, so both modes run it.
+stage "tests (wamux-types)"
+must_run_pkg_tests wamux-types
+
 # #67: a sleep in a test is a synchronization bug unless it says why it is not
 # one. Pure text check over the sources, so both modes run it.
 stage "test sleeps are marked"
