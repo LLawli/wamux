@@ -87,7 +87,7 @@ async fn chat_scoped(f: &mut Fixture, chat: Option<pb::Jid>) -> Vec<(&'static st
         to: c(),
         quote: Some(pb::QuoteContext {
             quoted: Some(key("x@s.whatsapp.net", "3EB0OFFER")),
-            participant: String::new(),
+            participant: None,
         }),
         quoted_message: Vec::new(),
         reply: Some(pb::send_interactive_reply_request::Reply::Button(
@@ -226,7 +226,7 @@ async fn chat_scoped(f: &mut Fixture, chat: Option<pb::Jid>) -> Vec<(&'static st
                     account: a.clone(),
                     chat: c(),
                     poll_id: "3EB0POLL".into(),
-                    poll_creator_jid: "5511900000002@s.whatsapp.net".into(),
+                    poll_creator: jid("5511900000002@s.whatsapp.net"),
                     message_secret: vec![7; 32],
                     options: Vec::new(),
                 })

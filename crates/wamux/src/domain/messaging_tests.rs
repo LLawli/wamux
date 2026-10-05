@@ -60,10 +60,16 @@ fn send_result_maps_to_proto_key_with_from_me() {
         None,
     );
     let key = proto.key.expect("key must be set");
-    assert_eq!(key.remote_jid, "5511999999999@s.whatsapp.net");
+    assert_eq!(
+        key.chat,
+        Some(pb::Jid {
+            value: "5511999999999@s.whatsapp.net".to_string()
+        })
+    );
     assert_eq!(key.id, "3EB0ABCDEF");
     assert!(key.from_me);
-    assert!(key.participant.is_empty());
+    // A send has no participant: unset, never `Jid { value: "" }` (#120).
+    assert_eq!(key.participant, None);
     // The lib's SendResult carries no server timestamp; we pin 0 so the
     // edge knows the field is a placeholder, not a real clock reading.
     assert_eq!(proto.server_timestamp, 0);

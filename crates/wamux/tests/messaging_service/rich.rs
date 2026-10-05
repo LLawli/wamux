@@ -45,7 +45,7 @@ async fn send_interactive_reply_reaches_the_peer() {
         to: jid(&peer),
         quote: Some(pb::QuoteContext {
             quoted: Some(key(&peer, "3EB0OFFER")),
-            participant: peer.clone(),
+            participant: jid(&peer),
         }),
         quoted_message: Vec::new(),
         reply: Some(pb::send_interactive_reply_request::Reply::Button(
@@ -131,7 +131,7 @@ fn vote_request(f: &crate::harness::Fixture, secret: &[u8]) -> pb::SendPollVoteR
         account: f.a(),
         chat: jid(f.peer.pn()),
         poll_id: POLL_ID.into(),
-        poll_creator_jid: f.peer.pn().to_string(),
+        poll_creator: jid(f.peer.pn()),
         message_secret: secret.to_vec(),
         options: vec!["azul".into()],
     }
@@ -187,11 +187,11 @@ async fn aggregate_poll_votes_tallies_the_vote_this_account_sent() {
     let request = pb::AggregatePollVotesRequest {
         account: f.a(),
         poll_id: POLL_ID.into(),
-        poll_creator_jid: f.peer.pn().to_string(),
+        poll_creator: jid(f.peer.pn()),
         message_secret: secret.to_vec(),
         options: vec!["azul".into(), "verde".into()],
         votes: vec![pb::PollVote {
-            voter_jid: voter.clone(),
+            voter: jid(&voter),
             enc_payload: vote.enc_payload.clone().unwrap_or_default(),
             enc_iv: vote.enc_iv.clone().unwrap_or_default(),
         }],
@@ -209,6 +209,10 @@ async fn aggregate_poll_votes_tallies_the_vote_this_account_sent() {
         .map(|r| (r.option.clone(), r.voters.len()))
         .collect();
     assert_eq!(by_option, vec![("azul".into(), 1), ("verde".into(), 0)]);
+    // #120: each voter is a Jid carrying the library's spelling (the canonical
+    // identity it deduped by), never an empty value.
+    let voters = &tally.results[0].voters;
+    assert!(voters.iter().all(|v| !v.value.is_empty()), "{voters:?}");
     f.cleanup().await;
 }
 

@@ -6,7 +6,7 @@ use tonic::transport::Channel;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 
-use crate::harness::{PEER_PN_USER, jid, key};
+use crate::harness::{PEER_PN_USER, jid, jids, key};
 
 type Outcome = (&'static str, Result<(), tonic::Status>);
 
@@ -199,7 +199,7 @@ async fn rich(m: &mut MessagingServiceClient<Channel>, account: &pb::AccountRef)
         to: jid(peer()),
         quote: Some(pb::QuoteContext {
             quoted: Some(key(peer(), "3EB0OFFER")),
-            participant: String::new(),
+            participant: None,
         }),
         quoted_message: Vec::new(),
         reply: Some(pb::send_interactive_reply_request::Reply::Button(
@@ -246,7 +246,7 @@ async fn rich(m: &mut MessagingServiceClient<Channel>, account: &pb::AccountRef)
                 account: a(),
                 chat: jid(peer()),
                 poll_id: "3EB0POLL".into(),
-                poll_creator_jid: peer(),
+                poll_creator: jid(peer()),
                 message_secret: secret(),
                 options: vec!["azul".into()],
             })
@@ -258,7 +258,7 @@ async fn rich(m: &mut MessagingServiceClient<Channel>, account: &pb::AccountRef)
             m.aggregate_poll_votes(pb::AggregatePollVotesRequest {
                 account: a(),
                 poll_id: "3EB0POLL".into(),
-                poll_creator_jid: peer(),
+                poll_creator: jid(peer()),
                 message_secret: secret(),
                 options: options(),
                 votes: Vec::new(),
@@ -274,7 +274,7 @@ async fn statuses(
     account: &pb::AccountRef,
 ) -> Vec<Outcome> {
     let a = || Some(account.clone());
-    let recipients = || vec![peer()];
+    let recipients = || jids(&[peer()]);
     let media = vec![
         pb::PostStatusMediaChunk {
             part: Some(pb::post_status_media_chunk::Part::Header(

@@ -58,7 +58,7 @@ impl TryFrom<pb::SendPollVoteRequest> for PollVoteCast {
 
     fn try_from(request: pb::SendPollVoteRequest) -> Result<Self, WamuxError> {
         let (creator, poll_id, message_secret) = vote_identity(
-            &request.poll_creator_jid,
+            request.poll_creator,
             request.poll_id,
             &request.message_secret,
         )?;
@@ -78,7 +78,7 @@ impl TryFrom<pb::AggregatePollVotesRequest> for PollVotesToTally {
 
     fn try_from(request: pb::AggregatePollVotesRequest) -> Result<Self, WamuxError> {
         let (creator, poll_id, message_secret) = vote_identity(
-            &request.poll_creator_jid,
+            request.poll_creator,
             request.poll_id,
             &request.message_secret,
         )?;
@@ -107,7 +107,7 @@ impl TryFrom<pb::PollVote> for EncryptedVote {
 
     fn try_from(vote: pb::PollVote) -> Result<Self, WamuxError> {
         Ok(Self {
-            voter: Jid::parse(&vote.voter_jid)?,
+            voter: Jid::from_required_wire(vote.voter)?,
             enc_payload: vote.enc_payload,
             enc_iv: vote.enc_iv,
         })
@@ -117,11 +117,11 @@ impl TryFrom<pb::PollVote> for EncryptedVote {
 /// The three checks a vote and a tally share, in the order the domain made
 /// them: creator, poll id, secret.
 fn vote_identity(
-    creator: &str,
+    creator: Option<pb::Jid>,
     poll_id: String,
     secret: &[u8],
 ) -> Result<(Jid, MessageId, [u8; POLL_SECRET_LEN]), WamuxError> {
-    let creator = Jid::parse(creator)?;
+    let creator = Jid::from_required_wire(creator)?;
     // The poll id keys the vote's HKDF: an empty one derives a wrong key rather
     // than failing, so it is refused under its own name, not "empty message id".
     let poll_id = MessageId::new(poll_id)

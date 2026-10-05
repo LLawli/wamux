@@ -100,10 +100,12 @@ fn relayed_row(row: &Row) -> pb::NewsletterMessage {
     pb::NewsletterMessage {
         message: Some(pb::InboundMessage {
             key: Some(pb::MessageKey {
-                remote_jid: CHANNEL.into(),
+                chat: Some(pb::Jid {
+                    value: CHANNEL.into(),
+                }),
                 id: id.into(),
                 from_me: false,
-                participant: String::new(),
+                participant: None,
             }),
             chat: CHANNEL.into(),
             timestamp: t * 1000,

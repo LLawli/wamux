@@ -332,7 +332,7 @@ Gotchas conhecidos:
   misto (criador PN, votante `@lid`) nunca é tentado na combinação que o remetente usou.
   Enquete criada em PN, votada de um `@lid`: `undecryptable=3` de 3 passando o `sender` verbatim;
   tally limpo passando o `sender_alt` (a forma PN do mesmo remetente). Documentado no
-  `PollVote.voter_jid`; é a borda que escolhe a forma, o core não normaliza jid.
+  `PollVote.voter`; é a borda que escolhe a forma, o core não normaliza jid.
 - Validação: `WAMUX_LIVE_DEST=<jid> WAMUX_REF=<conta> cargo run --release --bin poll_live
   <socket> [segundos]` (mesmo guard de destino do `stress_live`; recusa rodar sem `WAMUX_LIVE_DEST`
   e recusa enquete para o próprio número). **Resultado**: enquete entregue, voto do celular apurado

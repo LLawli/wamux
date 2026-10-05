@@ -109,12 +109,22 @@ pub fn jid(value: impl ToString) -> Option<pb::Jid> {
     })
 }
 
-pub fn key(remote_jid: impl ToString, id: &str) -> pb::MessageKey {
+/// Each value as a `pb::Jid`, for the repeated jid fields (#120).
+pub fn jids<T: ToString>(values: &[T]) -> Vec<pb::Jid> {
+    values
+        .iter()
+        .map(|value| pb::Jid {
+            value: value.to_string(),
+        })
+        .collect()
+}
+
+pub fn key(chat: impl ToString, id: &str) -> pb::MessageKey {
     pb::MessageKey {
-        remote_jid: remote_jid.to_string(),
+        chat: jid(chat),
         id: id.to_string(),
         from_me: true,
-        participant: String::new(),
+        participant: None,
     }
 }
 

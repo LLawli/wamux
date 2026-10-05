@@ -40,6 +40,7 @@ use wamux_tools::live_env::{
 };
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
+use wamux_types::relay_jid;
 
 const QUESTION: &str = "wamux #13: o voto chegou?";
 const TAP_POLL: Duration = Duration::from_millis(500);
@@ -180,7 +181,7 @@ async fn vote_twice(
                     value: run.chat.clone(),
                 }),
                 poll_id: run.poll_id.clone(),
-                poll_creator_jid: run.creator.clone(),
+                poll_creator: relay_jid(run.creator.clone()),
                 message_secret: run.secret.clone(),
                 options: vec![choice.to_string()],
             })
@@ -215,7 +216,9 @@ async fn collect_votes(
             };
             println!(
                 "[vote] sender={} alt={} -> voting as {}",
-                inbound.sender, inbound.sender_alt, vote.voter_jid
+                inbound.sender,
+                inbound.sender_alt,
+                vote.voter.as_ref().map_or("", |voter| voter.value.as_str())
             );
             votes.push(vote);
             last = aggregate(messaging, run, &votes).await.or(last);
@@ -235,7 +238,7 @@ async fn aggregate(
         .aggregate_poll_votes(pb::AggregatePollVotesRequest {
             account: Some(run.acct.clone()),
             poll_id: run.poll_id.clone(),
-            poll_creator_jid: run.creator.clone(),
+            poll_creator: relay_jid(run.creator.clone()),
             message_secret: run.secret.clone(),
             options: run.options.clone(),
             votes: votes.to_vec(),
@@ -298,7 +301,11 @@ fn vote_in(inbound: &pb::InboundMessage, poll_id: &str, creator: &str) -> Option
     }
     let vote = update.vote.as_option()?;
     Some(pb::PollVote {
-        voter_jid: same_namespace_as(creator, &inbound.sender, &inbound.sender_alt),
+        voter: relay_jid(same_namespace_as(
+            creator,
+            &inbound.sender,
+            &inbound.sender_alt,
+        )),
         enc_payload: vote.enc_payload.clone().unwrap_or_default(),
         enc_iv: vote.enc_iv.clone().unwrap_or_default(),
     })

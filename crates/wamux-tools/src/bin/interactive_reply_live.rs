@@ -42,6 +42,7 @@ use wamux_tools::live_env::{
 };
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
+use wamux_types::relay_jid;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
@@ -325,7 +326,7 @@ async fn answer(
         }),
         quote: Some(pb::QuoteContext {
             quoted: Some(key),
-            participant: inbound.sender.clone(),
+            participant: relay_jid(inbound.sender.clone()),
         }),
         // The official client embeds the whole offer, not just its id, and the
         // edge already holds those bytes. Relayed here so the live shape

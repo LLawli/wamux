@@ -18,7 +18,9 @@ async fn send_text_reaches_the_peer_as_the_text_sent() {
         .expect("send")
         .into_inner();
     let sent = answer.key.clone().expect("key");
-    assert_eq!(sent.remote_jid, f.peer.pn().to_string());
+    assert_eq!(sent.chat, jid(f.peer.pn()));
+    // #120: a send has no participant, and says so by leaving it unset.
+    assert_eq!(sent.participant, None);
     assert!(sent.from_me && !sent.id.is_empty(), "{sent:?}");
     let fanout = answer.recipient_fanout.expect("a DM reports its fan-out");
     assert!(fanout.addressed >= 1, "{fanout:?}");
@@ -40,10 +42,10 @@ async fn send_text_composes_mentions_quote_preview_and_ephemeral() {
     let mut f = fixture("send_text_composes_mentions_quote_preview_and_ephemeral").await;
     let peer = f.peer.pn().to_string();
     let request = pb::SendTextRequest {
-        mentions: vec![pb::Mention { jid: peer.clone() }],
+        mentions: vec![pb::Mention { jid: jid(&peer) }],
         quote: Some(pb::QuoteContext {
             quoted: Some(key(&peer, "3EB0QUOTED")),
-            participant: peer.clone(),
+            participant: jid(&peer),
         }),
         link_preview: Some(pb::LinkPreview {
             matched_text: "https://example.com/a".into(),
@@ -131,7 +133,7 @@ async fn send_reaction_reaches_the_peer() {
     assert_eq!(reaction.text.as_deref(), Some("\u{1F44D}"));
     assert_eq!(
         wa_key_of(reaction.key.as_option()),
-        (target.remote_jid, target.id, true)
+        (target.chat.expect("chat").value, target.id, true)
     );
     f.cleanup().await;
 }
@@ -165,7 +167,7 @@ async fn edit_message_reaches_the_peer_as_an_edit() {
         .expect("edit")
         .into_inner();
     let answered = answer.key.expect("key");
-    assert_eq!(answered.remote_jid, target.remote_jid);
+    assert_eq!(answered.chat, target.chat);
     assert_ne!(answered.id, target.id, "the edit stanza has its own id");
     let stanza = sent_message(&f.mock, &answered.id).await;
     assert_eq!(attr(&stanza, "edit").as_deref(), Some("1"));
@@ -235,7 +237,7 @@ async fn send_text_to_a_group_reaches_every_member() {
         .expect("send")
         .into_inner();
     let sent = sent.key.expect("key");
-    assert_eq!(sent.remote_jid, GROUP);
+    assert_eq!(sent.chat, jid(GROUP));
     let stanza = sent_message(&f.mock, &sent.id).await;
     assert_eq!(attr(&stanza, "to").as_deref(), Some(GROUP));
     for member in [&f.peer, &f.other] {

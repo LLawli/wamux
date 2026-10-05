@@ -9,7 +9,7 @@ use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::Event;
 use wacore::types::message::MessageInfo;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
-use wamux_types::MediaKind;
+use wamux_types::{MediaKind, relay_jid};
 use whatsapp_rust::Jid;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
@@ -377,10 +377,11 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
     let chat = info.source.chat.to_string();
     let sender = info.source.sender.to_string();
     let key = pb::MessageKey {
-        remote_jid: chat.clone(),
+        chat: relay_jid(chat.clone()),
         id: info.id.to_string(),
         from_me: info.source.is_from_me,
-        participant: sender.clone(),
+        // The inbound participant is the sender even in a DM; kept as it was (#120).
+        participant: relay_jid(sender.clone()),
     };
 
     let mut out = pb::InboundMessage {
@@ -429,13 +430,15 @@ pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, c
             out.mentions = ci
                 .mentioned_jid
                 .iter()
-                .map(|j| pb::Mention { jid: j.clone() })
+                // An empty mention is dropped, never `Mention { jid: None }` (#120).
+                .filter_map(|j| relay_jid(j.clone()))
+                .map(|jid| pb::Mention { jid: Some(jid) })
                 .collect();
             if let Some(stanza_id) = &ci.stanza_id {
-                let participant = ci.participant.clone().unwrap_or_default();
+                let participant = relay_jid(ci.participant.clone().unwrap_or_default());
                 out.quote = Some(pb::QuoteContext {
                     quoted: Some(pb::MessageKey {
-                        remote_jid: chat.clone(),
+                        chat: relay_jid(chat.clone()),
                         id: stanza_id.clone(),
                         from_me: false,
                         participant: participant.clone(),
@@ -520,10 +523,10 @@ fn jid_or_empty(jid: Option<&Jid>) -> String {
 /// Project a wa `MessageKey` into the proto one (proto3 empty == lib `None`).
 fn wa_key_to_proto(k: &wa::MessageKey) -> pb::MessageKey {
     pb::MessageKey {
-        remote_jid: k.remote_jid.clone().unwrap_or_default(),
+        chat: relay_jid(k.remote_jid.clone().unwrap_or_default()),
         id: k.id.clone().unwrap_or_default(),
         from_me: k.from_me.unwrap_or(false),
-        participant: k.participant.clone().unwrap_or_default(),
+        participant: relay_jid(k.participant.clone().unwrap_or_default()),
     }
 }
 

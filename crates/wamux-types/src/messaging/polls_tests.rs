@@ -18,7 +18,9 @@ fn vote_request(creator: &str, poll_id: &str, secret: Vec<u8>) -> pb::SendPollVo
         account: None,
         chat: None,
         poll_id: poll_id.to_string(),
-        poll_creator_jid: creator.to_string(),
+        poll_creator: Some(pb::Jid {
+            value: creator.to_string(),
+        }),
         message_secret: secret,
         options: vec!["Sim".to_string()],
     }
@@ -26,7 +28,9 @@ fn vote_request(creator: &str, poll_id: &str, secret: Vec<u8>) -> pb::SendPollVo
 
 fn ballot(voter_jid: &str, enc_payload: Vec<u8>) -> pb::PollVote {
     pb::PollVote {
-        voter_jid: voter_jid.to_string(),
+        voter: Some(pb::Jid {
+            value: voter_jid.to_string(),
+        }),
         enc_payload,
         enc_iv: vec![0x01; 12],
     }
@@ -36,7 +40,9 @@ fn tally_request(options: &[&str], votes: Vec<pb::PollVote>) -> pb::AggregatePol
     pb::AggregatePollVotesRequest {
         account: None,
         poll_id: "3EB0POLL".to_string(),
-        poll_creator_jid: CREATOR.to_string(),
+        poll_creator: Some(pb::Jid {
+            value: CREATOR.to_string(),
+        }),
         message_secret: vec![0x11; 32],
         options: options.iter().map(|o| o.to_string()).collect(),
         votes,
@@ -72,7 +78,7 @@ fn vote_refusals_keep_their_messages() {
             "3EB0POLL",
             vec![7; 32]
         ))),
-        "empty jid"
+        "missing jid"
     );
     let message = invalid_argument(PollVoteCast::try_from(vote_request(
         "not a jid",
@@ -103,7 +109,7 @@ fn vote_refusals_keep_their_messages() {
 fn a_vote_checks_in_the_domain_order() {
     assert_eq!(
         invalid_argument(PollVoteCast::try_from(vote_request("", "", Vec::new()))),
-        "empty jid"
+        "missing jid"
     );
     assert_eq!(
         invalid_argument(PollVoteCast::try_from(vote_request(
@@ -151,7 +157,9 @@ fn a_tally_keeps_the_votes_in_order() {
 #[test]
 fn tally_refusals_keep_their_messages() {
     let request = |creator: &str, poll_id: &str, secret: Vec<u8>| pb::AggregatePollVotesRequest {
-        poll_creator_jid: creator.to_string(),
+        poll_creator: Some(pb::Jid {
+            value: creator.to_string(),
+        }),
         poll_id: poll_id.to_string(),
         message_secret: secret,
         ..tally_request(&["Sim"], vec![ballot(CREATOR, vec![1])])
@@ -162,7 +170,7 @@ fn tally_refusals_keep_their_messages() {
             "3EB0POLL",
             vec![7; 32]
         ))),
-        "empty jid"
+        "missing jid"
     );
     assert_eq!(
         invalid_argument(PollVotesToTally::try_from(request(
@@ -195,7 +203,7 @@ fn one_unparseable_voter_fails_the_whole_tally() {
         &["Sim"],
         vec![ballot(CREATOR, vec![1]), ballot("", vec![2])],
     ));
-    assert_eq!(invalid_argument(result), "empty jid");
+    assert_eq!(invalid_argument(result), "missing jid");
 }
 
 // The options are checked before the voters.

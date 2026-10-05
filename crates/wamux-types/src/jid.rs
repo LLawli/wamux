@@ -83,6 +83,34 @@ impl TryFrom<pb::Jid> for Jid {
     }
 }
 
+impl Jid {
+    /// A required jid field of a request (#120): unset, or set with an empty
+    /// value, is `InvalidArgument("missing jid")`; a malformed one names the
+    /// value (`"invalid jid '<v>': .."`).
+    pub fn from_required_wire(jid: Option<pb::Jid>) -> Result<Self, WamuxError> {
+        Self::try_from(jid.unwrap_or_default())
+    }
+
+    /// An optional jid field of a request (#120), such as a DM's
+    /// `participant`: unset, or set with an empty value, is absence. A
+    /// malformed one is still `InvalidArgument`.
+    pub fn from_optional_wire(jid: Option<pb::Jid>) -> Result<Option<Self>, WamuxError> {
+        match jid {
+            Some(jid) if !jid.value.is_empty() => Self::parse(&jid.value).map(Some),
+            _ => Ok(None),
+        }
+    }
+}
+
+/// A jid the core relays out, in a response or an event (#120): the value
+/// verbatim, never parsed, and an empty one is an unset field rather than
+/// `Jid { value: "" }`.
+pub fn relay_jid(value: impl Into<String>) -> Option<pb::Jid> {
+    let value: String = value.into();
+    // proto3 has no "empty message": an empty value is an unset field (#120).
+    (!value.is_empty()).then_some(pb::Jid { value })
+}
+
 impl From<Jid> for pb::Jid {
     fn from(jid: Jid) -> Self {
         Self {

@@ -8,10 +8,12 @@ use wamux_tools::delivery::{EventTap, is_delivery_receipt, send_reached_phone};
 fn sent(id: &str, fanout: Option<pb::RecipientFanout>) -> pb::SendResult {
     pb::SendResult {
         key: Some(pb::MessageKey {
-            remote_jid: "5561900000001@s.whatsapp.net".into(),
+            chat: Some(pb::Jid {
+                value: "5561900000001@s.whatsapp.net".into(),
+            }),
             id: id.into(),
             from_me: true,
-            participant: String::new(),
+            participant: None,
         }),
         server_timestamp: 1,
         recipient_fanout: fanout,

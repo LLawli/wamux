@@ -10,7 +10,7 @@ use tonic::Code;
 use wamux::proto::v1 as pb;
 
 use crate::common::{self, mock_wire::account_ref};
-use crate::harness::{Fixture, MEDIA_LIMIT, fixture, jid};
+use crate::harness::{Fixture, MEDIA_LIMIT, fixture, jid, jids};
 use crate::media::{chunk, head, header, plaintext, send_media};
 
 fn assert_refused<T: std::fmt::Debug>(
@@ -216,7 +216,7 @@ fn status_head(f: &Fixture, media_type: &str) -> pb::PostStatusMediaChunk {
                 account: f.a(),
                 media_type: media_type.into(),
                 mime_type: "image/jpeg".into(),
-                recipients: vec![f.peer.pn().to_string()],
+                recipients: jids(&[f.peer.pn()]),
                 ..Default::default()
             },
         )),

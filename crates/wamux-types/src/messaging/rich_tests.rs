@@ -18,12 +18,16 @@ fn invalid_argument<T: std::fmt::Debug>(result: Result<T, WamuxError>) -> String
 fn quote(id: &str, participant: &str) -> pb::QuoteContext {
     pb::QuoteContext {
         quoted: Some(pb::MessageKey {
-            remote_jid: "5511999999999@s.whatsapp.net".to_string(),
+            chat: Some(pb::Jid {
+                value: "5511999999999@s.whatsapp.net".to_string(),
+            }),
             id: id.to_string(),
             from_me: false,
-            participant: participant.to_string(),
+            participant: Some(pb::Jid {
+                value: participant.to_string(),
+            }),
         }),
-        participant: String::new(),
+        participant: None,
     }
 }
 
@@ -155,7 +159,7 @@ fn every_reply_shape_converts() {
 fn an_unquoted_or_idless_reply_keeps_its_message() {
     let no_key = pb::QuoteContext {
         quoted: None,
-        participant: String::new(),
+        participant: None,
     };
     for (case, quote) in [
         ("no quote", None),

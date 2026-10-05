@@ -15,8 +15,13 @@ fn invalid_argument<T: std::fmt::Debug>(result: Result<T, WamuxError>) -> String
     }
 }
 
-fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(|v| v.to_string()).collect()
+fn strings(values: &[&str]) -> Vec<pb::Jid> {
+    values
+        .iter()
+        .map(|v| pb::Jid {
+            value: v.to_string(),
+        })
+        .collect()
 }
 
 fn jids(values: &[&str]) -> Vec<Jid> {
@@ -63,7 +68,7 @@ fn status_text_refuses_a_malformed_recipient() {
         recipients: strings(&[PHONE, ""]),
         ..Default::default()
     });
-    assert_eq!(invalid_argument(result), "empty jid");
+    assert_eq!(invalid_argument(result), "missing jid");
 }
 
 // An empty recipient list is the library's to refuse (#101, pinned "today"
@@ -134,6 +139,6 @@ fn status_revoke_refusals_keep_their_messages() {
     );
     assert_eq!(
         invalid_argument(StatusRevoke::try_from(revoke_request("3EB0STATUS", &[""]))),
-        "empty jid"
+        "missing jid"
     );
 }
