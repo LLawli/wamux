@@ -16,6 +16,7 @@ mod common;
 
 mod captured;
 mod harness;
+mod not_found;
 mod reads;
 mod statuses;
 mod writes;

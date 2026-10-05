@@ -16,6 +16,7 @@ use wamux::domain::newsletters;
 use wamux::error::WamuxError;
 use wamux::proto::v1 as pb;
 use wamux::stress::MockWaServer;
+use wamux_types::{NewsletterAddOnsQuery, NewsletterJid, NewsletterPollVote};
 
 #[allow(dead_code)]
 mod common;
@@ -35,6 +36,8 @@ fn mondays() -> Vec<u8> {
     hash("\u{1F636}\u{200D}\u{1F32B}\u{FE0F} Mondays should be illegal.")
 }
 
+/// The vote as the edge sends it; `vote` converts it the way the service does
+/// (#116), which is where a malformed one is now refused.
 fn vote_request(option_hashes: Vec<Vec<u8>>) -> pb::SendNewsletterPollVoteRequest {
     pb::SendNewsletterPollVoteRequest {
         account: None,
@@ -42,6 +45,10 @@ fn vote_request(option_hashes: Vec<Vec<u8>>) -> pb::SendNewsletterPollVoteReques
         server_id: POLL_SERVER_ID,
         option_hashes,
     }
+}
+
+fn vote(option_hashes: Vec<Vec<u8>>) -> NewsletterPollVote {
+    NewsletterPollVote::try_from(vote_request(option_hashes)).expect("a valid vote")
 }
 
 /// The `<message>` the mock received with this id, waiting for it to land.
@@ -89,10 +96,9 @@ async fn a_vote_puts_the_measured_stanza_on_the_wire() {
     );
     let logged = common::logged_in_client(&mock, &prefix).await;
     let client = logged.client.clone();
-    let answer =
-        newsletters::send_poll_vote(&client, &vote_request(vec![good_morning(), mondays()]))
-            .await
-            .expect("vote");
+    let answer = newsletters::send_poll_vote(&client, &vote(vec![good_morning(), mondays()]))
+        .await
+        .expect("vote");
     assert!(!answer.stanza_id.is_empty());
 
     let message = sent_message(&mock, &answer.stanza_id).await;
@@ -125,7 +131,7 @@ async fn an_empty_selection_sends_an_empty_votes() {
     );
     let logged = common::logged_in_client(&mock, &prefix).await;
     let client = logged.client.clone();
-    let answer = newsletters::send_poll_vote(&client, &vote_request(Vec::new()))
+    let answer = newsletters::send_poll_vote(&client, &vote(Vec::new()))
         .await
         .expect("remove the vote");
     let message = sent_message(&mock, &answer.stanza_id).await;
@@ -149,17 +155,17 @@ async fn a_malformed_vote_is_refused_before_anything_is_sent() {
     not_a_channel.jid = "120363041234567890@g.us".to_string();
     let mut no_poll = vote_request(vec![good_morning()]);
     no_poll.server_id = 0;
+    // Since #116 the refusal is the boundary conversion's, before the domain
+    // (and so before the wire) is reached.
     for request in [short, not_a_channel, no_poll] {
-        let err = newsletters::send_poll_vote(&client, &request)
-            .await
-            .expect_err("malformed");
+        let err = NewsletterPollVote::try_from(request).expect_err("malformed");
         assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
     }
     // The negative assertion needs a positive signal (#67): a valid vote sent
     // after the malformed ones. The websocket is ordered, so once it reaches
     // the mock, anything the malformed ones had sent would be there too, and
     // the valid vote must be the only message.
-    let answer = newsletters::send_poll_vote(&client, &vote_request(vec![good_morning()]))
+    let answer = newsletters::send_poll_vote(&client, &vote(vec![good_morning()]))
         .await
         .expect("a valid vote");
     sent_message(&mock, &answer.stanza_id).await;
@@ -225,6 +231,7 @@ async fn my_addons_relay_the_servers_record() {
         jid: CHANNEL.to_string(),
         limit: 20,
     };
+    let request = NewsletterAddOnsQuery::try_from(request).expect("a valid query");
     let list = newsletters::get_my_addons(&client, &request)
         .await
         .expect("my addons")
@@ -255,15 +262,13 @@ async fn my_addons_refuse_a_zero_limit() {
         "my_addons_refuse_a_zero_limit",
     );
     let logged = common::logged_in_client(&mock, &prefix).await;
-    let client = logged.client.clone();
     let request = pb::GetMyNewsletterAddOnsRequest {
         account: None,
         jid: CHANNEL.to_string(),
         limit: 0,
     };
-    let err = newsletters::get_my_addons(&client, &request)
-        .await
-        .expect_err("limit 0");
+    // Since #116 the refusal is the boundary conversion's, before the domain.
+    let err = NewsletterAddOnsQuery::try_from(request).expect_err("limit 0");
     assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
     logged.cleanup().await;
 }
@@ -283,9 +288,12 @@ async fn live_updates_answer_the_servers_duration() {
             .attr("duration", "90")
             .build(),
     );
-    let answer = newsletters::subscribe_live_updates(&client, CHANNEL)
-        .await
-        .expect("subscribe");
+    let answer = newsletters::subscribe_live_updates(
+        &client,
+        NewsletterJid::parse(CHANNEL).expect("channel jid"),
+    )
+    .await
+    .expect("subscribe");
     assert_eq!(answer.duration_seconds, 90);
     logged.cleanup().await;
 }

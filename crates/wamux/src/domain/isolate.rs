@@ -11,6 +11,11 @@
 
 use crate::error::{WamuxError, client_err};
 
+/// Stays generic on purpose, an exception to #63's "concrete types over
+/// generics" (#116): every caller passes a closure of its own type, so the
+/// concrete form would be a `Box<dyn FnOnce>`, which is another trait object
+/// rather than a concrete type, and would box the future as well.
+///
 /// Public only so the integration tests can drive it (#107); not part of the
 /// crate's API.
 #[doc(hidden)]

@@ -2,22 +2,19 @@
 
 use std::sync::Arc;
 
+use wamux_types::Jid;
 use whatsapp_rust::Client;
 
-use crate::domain::jid_parse::parse_jid;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
 pub async fn check_on_whatsapp(
     client: Arc<Client>,
-    jids: &[String],
+    jids: Vec<Jid>,
 ) -> Result<Vec<pb::CheckResult>, WamuxError> {
     // The core does NOT normalize identity: the edge sends well-formed JIDs
-    // (e.g. "<number>@s.whatsapp.net"). We only parse and validate them.
-    let jids = jids
-        .iter()
-        .map(|j| parse_jid(j))
-        .collect::<Result<Vec<_>, _>>()?;
+    // (e.g. "<number>@s.whatsapp.net"); the service already parsed them.
+    let jids: Vec<whatsapp_rust::Jid> = jids.into_iter().map(Jid::into_lib).collect();
     // The library's usync future isn't Send (HRTB), so it cannot live inside the
     // #[async_trait] future. Drive it to completion on its own current-thread
     // runtime in a blocking task; only the owned result crosses back.
@@ -37,12 +34,11 @@ pub async fn check_on_whatsapp(
 
 pub async fn get_profile_picture(
     client: &Client,
-    jid: &str,
+    jid: &Jid,
 ) -> Result<pb::ProfilePictureResponse, WamuxError> {
-    let jid = parse_jid(jid)?;
     let picture = client
         .contacts()
-        .get_profile_picture(&jid, false)
+        .get_profile_picture(jid.as_lib(), false)
         .await
         .map_err(client_err)?;
     Ok(pb::ProfilePictureResponse {
@@ -90,7 +86,7 @@ pub async fn set_push_name(client: &Client, name: &str) -> Result<(), WamuxError
 /// before any network I/O, with a bare `anyhow` (no IQ code). `client_err`
 /// would then launder that into `Client` -> `Unavailable`/503, so a plain
 /// caller mistake reads as "upstream down" at the edge. Reject it up front as
-/// InvalidArgument, mirroring the empty-input guards in jid_parse / chat_actions
+/// InvalidArgument, mirroring the empty-input guards in wamux_types::Jid / chat_actions
 /// (E2E triage 2026-06-16). We match the lib's own rule exactly (empty only):
 /// trimming/blank policy is the edge's call, not the core's.
 fn validate_push_name(name: &str) -> Result<(), WamuxError> {
@@ -102,8 +98,8 @@ fn validate_push_name(name: &str) -> Result<(), WamuxError> {
     Ok(())
 }
 
-pub async fn get_about(client: Arc<Client>, jid: &str) -> Result<pb::AboutResponse, WamuxError> {
-    let jid = parse_jid(jid)?;
+pub async fn get_about(client: Arc<Client>, jid: Jid) -> Result<pb::AboutResponse, WamuxError> {
+    let jid: whatsapp_rust::Jid = jid.into_lib();
     let lookup = jid.clone();
     let info = crate::domain::isolate::run_isolated(move || async move {
         client.contacts().get_user_info(&[lookup]).await
@@ -118,11 +114,10 @@ pub async fn get_about(client: Arc<Client>, jid: &str) -> Result<pb::AboutRespon
 
 pub async fn get_business_profile(
     client: &Client,
-    jid: &str,
+    jid: &Jid,
 ) -> Result<pb::BusinessProfileResponse, WamuxError> {
-    let jid = parse_jid(jid)?;
     let profile = client
-        .get_business_profile(&jid)
+        .get_business_profile(jid.as_lib())
         .await
         .map_err(client_err)?;
     Ok(pb::BusinessProfileResponse {
@@ -130,29 +125,14 @@ pub async fn get_business_profile(
     })
 }
 
-pub async fn subscribe_presence(client: &Client, jid: &str) -> Result<(), WamuxError> {
-    let jid = parse_jid(jid)?;
-    client.presence().subscribe(&jid).await.map_err(client_err)
+pub async fn subscribe_presence(client: &Client, jid: &Jid) -> Result<(), WamuxError> {
+    client
+        .presence()
+        .subscribe(jid.as_lib())
+        .await
+        .map_err(client_err)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // E2E triage 2026-06-16: an empty push name must fail fast as
-    // InvalidArgument (the lib rejects it pre-network with a bare anyhow that
-    // client_err would otherwise mislabel as Unavailable/503 at the edge).
-    #[test]
-    fn empty_push_name_is_invalid_argument() {
-        let err = validate_push_name("").expect_err("empty name must be rejected");
-        assert!(matches!(err, WamuxError::InvalidArgument(_)));
-    }
-
-    #[test]
-    fn non_empty_push_name_is_accepted() {
-        assert!(validate_push_name("Ana").is_ok());
-        // A single space is non-empty: the core mirrors the lib's empty-only
-        // rule and leaves any trim/blank policy to the edge.
-        assert!(validate_push_name(" ").is_ok());
-    }
-}
+#[path = "contacts_tests.rs"]
+mod tests;
