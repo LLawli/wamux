@@ -496,6 +496,35 @@ has to follow them.
 
 ### Changed
 
+- **The messaging domain takes its own types, not the wire's** (issue #115,
+  part 2 of #63). The services convert a request once, at the boundary, into a
+  `wamux-types` type, and `domain/` and `state/` never see a generated
+  `pb::*` input struct (`scripts/check-domain-inputs.py`, which lists the
+  newsletter files #116 still has to convert). The `.proto` does not change,
+  and well-formed input goes out exactly as before.
+  - The new types: `MessageTarget`, `QuotedRef`, `OutgoingContext`,
+    `OutgoingText`, `LinkPreview`, `OutgoingMedia`, `DownloadableMedia`,
+    `StatusText`, `StatusMedia`, `StatusRevoke`, `PollVoteCast`,
+    `PollVotesToTally`, `NewPoll`, `ContactCard`, `InteractiveReply` and
+    `ReplyChoice`. Every function of the messaging domain takes the
+    `wamux_types::Jid`.
+  - Every error that existed keeps its code, its message and the order the
+    checks run in.
+  - What changes, for input that was malformed or spelled the legacy way:
+    - a mention, a quote's participant, or a target's participant used to
+      relay unparsed; a malformed one is now `InvalidArgument`, and a `@c.us`
+      one goes out as `@s.whatsapp.net`, the library's parse, as a `@c.us`
+      recipient already did;
+    - an empty id on the target of SendReaction, EditMessage, DeleteMessage
+      or StarMessage is now `InvalidArgument("empty message id")`, where
+      before it reached the library;
+    - a quote whose key has an empty id is now
+      `InvalidArgument("empty quote.quoted.id; expected the id of the quoted
+      message")`;
+    - a quote with no key quotes nothing, as before, and a SendText whose only
+      extra was such a quote now goes as a plain `conversation` instead of an
+      extended text with no context.
+
 - **`wamux-types`: the domain's named types and its error, in a crate of
   their own** (issue #114, part 1 of #63). For anyone using the `wamux` crate
   as a library (today `crates/wamux-tools`). Nothing changes on the wire
