@@ -54,7 +54,7 @@ message NewsletterMessage {
   // What a history row cannot fill stays at the proto3 default rather than
   // gaining a placeholder: the node carries no sender, no push_name and no
   // alt-namespace jids. `key.from_me` is the ONLY sender information it has
-  // (the server's `is_sender`), and `key.remote_jid`/`chat` are the jid the
+  // (the server's `is_sender`), and `key.chat`/`chat` are the jid the
   // caller asked for, not something read off the node.
   //
   // `timestamp` is milliseconds, like every other timestamp in this contract.

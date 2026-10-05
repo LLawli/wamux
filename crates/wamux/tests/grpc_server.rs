@@ -233,10 +233,12 @@ async fn status_revoke_is_refused_on_the_wrong_shape_over_socket() {
         .delete_message(pb::DeleteMessageRequest {
             account: account.clone(),
             target: Some(pb::MessageKey {
-                remote_jid: "status@broadcast".to_string(),
+                chat: Some(pb::Jid {
+                    value: "status@broadcast".to_string(),
+                }),
                 id: "3EB0STATUS".to_string(),
                 from_me: true,
-                participant: String::new(),
+                participant: None,
             }),
             for_everyone: true,
         })
@@ -259,7 +261,12 @@ async fn status_revoke_is_refused_on_the_wrong_shape_over_socket() {
             .revoke_status(pb::RevokeStatusRequest {
                 account: account.clone(),
                 message_id: message_id.to_string(),
-                recipients: recipients.clone(),
+                recipients: recipients
+                    .iter()
+                    .map(|value| pb::Jid {
+                        value: value.clone(),
+                    })
+                    .collect(),
             })
             .await
             .expect_err("a malformed revoke is refused");

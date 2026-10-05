@@ -15,24 +15,35 @@ message AccountRef {
 }
 
 // A WhatsApp JID, e.g. "5511999999999@s.whatsapp.net" or a group/lid jid.
+// Every field that carries a jid is this message, never a bare string (#72).
+// In a request it is parsed: unset or an empty value is InvalidArgument
+// "missing jid" where the field is required, absence where it is optional.
+// In a response or an event it carries the value the core has, verbatim, and
+// a jid the core does not have is an unset field, never an empty value.
 message Jid {
   string value = 1;
 }
 
 message MessageKey {
-  string remote_jid = 1;  // chat jid
+  // #120: a jid field changed type, so it took a new number; an old client's
+  // string under the old number is an unknown field, never a misread Jid.
+  reserved 1, 4;
+  reserved "remote_jid";
+  Jid chat = 5;           // the conversation
   string id = 2;          // message id
   bool from_me = 3;
-  string participant = 4; // sender jid inside a group (optional)
+  Jid participant = 6;    // the sender inside a group; unset in a DM
 }
 
 message Mention {
-  string jid = 1;
+  reserved 1;  // #120: was `string jid`
+  Jid jid = 2;
 }
 
 message QuoteContext {
   MessageKey quoted = 1;
-  string participant = 2;
+  reserved 2;  // #120: was `string participant`
+  Jid participant = 3;
 }
 
 enum ConnectionState {

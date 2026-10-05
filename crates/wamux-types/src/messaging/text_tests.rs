@@ -49,7 +49,9 @@ fn outgoing_text_carries_text_context_and_preview() {
         }),
         text: "oi".to_string(),
         mentions: vec![pb::Mention {
-            jid: "5511888888888@s.whatsapp.net".to_string(),
+            jid: Some(pb::Jid {
+                value: "5511888888888@s.whatsapp.net".to_string(),
+            }),
         }],
         quote: None,
         link_preview: Some(preview()),
@@ -80,7 +82,9 @@ fn a_plain_text_has_no_context_and_no_preview() {
 fn outgoing_text_refuses_a_malformed_mention() {
     let result = OutgoingText::try_from(pb::SendTextRequest {
         mentions: vec![pb::Mention {
-            jid: "not a jid".to_string(),
+            jid: Some(pb::Jid {
+                value: "not a jid".to_string(),
+            }),
         }],
         ..Default::default()
     });

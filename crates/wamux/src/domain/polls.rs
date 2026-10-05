@@ -13,7 +13,7 @@
 //! the votes; the core stores nothing and reads nothing back but its own
 //! identity store.
 
-use wamux_types::{EncryptedVote, Jid, PollVoteCast, PollVotesToTally};
+use wamux_types::{EncryptedVote, Jid, PollVoteCast, PollVotesToTally, relay_jid};
 use whatsapp_rust::features::{PollOptionResult, PollVoteCiphertext};
 use whatsapp_rust::{Client, Jid as LibJid, SendResult};
 
@@ -115,7 +115,8 @@ fn tally_to_proto(results: Vec<PollOptionResult>, undecryptable: u32) -> pb::Pol
             .into_iter()
             .map(|result| pb::PollOptionResult {
                 option: result.name,
-                voters: result.voters,
+                // An empty voter is dropped, never `Jid { value: "" }` (#120).
+                voters: result.voters.into_iter().filter_map(relay_jid).collect(),
             })
             .collect(),
         undecryptable,

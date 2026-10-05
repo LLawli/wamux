@@ -198,9 +198,11 @@ async fn core_reads_the_captured_page() {
     assert_eq!(first.raw_message, text_payload("bom dia"));
     let key = first.key.as_ref().expect("the key is always built");
     assert_eq!(
-        (key.remote_jid.as_str(), key.id.as_str()),
-        (CHANNEL, "3AEC773")
+        (key.chat.as_ref().map(|c| c.value.as_str()), key.id.as_str()),
+        (Some(CHANNEL), "3AEC773")
     );
+    // #120: the row names no participant, and an absent jid is unset.
+    assert_eq!(key.participant, None);
     assert!(!key.from_me);
     // The row names no sender, so nothing is invented beyond `from_me`.
     assert!(first.sender.is_empty() && first.push_name.is_empty());

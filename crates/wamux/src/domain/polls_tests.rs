@@ -4,6 +4,8 @@
 //! assertions; what stays here is the pairing and the projection.
 
 use wamux_types::{EncryptedVote, Jid};
+
+use crate::proto::v1 as pb;
 use whatsapp_rust::features::PollOptionResult;
 
 use super::{ciphertext_pairs, tally_to_proto};
@@ -54,7 +56,13 @@ fn an_option_nobody_chose_still_comes_back() {
     let tally = tally_to_proto(results, 0);
     assert_eq!(tally.results.len(), 2);
     assert_eq!(tally.results[0].option, "Sim");
-    assert_eq!(tally.results[0].voters.len(), 1);
+    // #120: each voter is a Jid carrying the library's spelling verbatim.
+    assert_eq!(
+        tally.results[0].voters,
+        vec![pb::Jid {
+            value: "5511999999999@s.whatsapp.net".to_string()
+        }]
+    );
     assert_eq!(tally.results[1].option, "Não");
     assert!(tally.results[1].voters.is_empty());
 }

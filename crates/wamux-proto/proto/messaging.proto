@@ -112,7 +112,7 @@ message EditMessageRequest {
 message DeleteMessageRequest {
   AccountRef account = 1;
   MessageKey target = 2;
-  // true=revoke for all, false=delete for me. A status (`remote_jid` =
+  // true=revoke for all, false=delete for me. A status (`chat` =
   // `status@broadcast`) cannot be revoked here: that is RevokeStatus, which
   // needs the recipient list this request has no field for (issue #41).
   bool for_everyone = 3;
@@ -159,7 +159,7 @@ message MarkReadRequest {
 
 // --- Chat actions (mutations synced across the account's linked devices) ---
 
-// target.remote_jid = chat; target.participant = sender inside a group (empty
+// target.chat = the chat; target.participant = sender inside a group (unset
 // in a DM); target.id = message id; target.from_me = whether we sent it.
 message StarMessageRequest {
   AccountRef account = 1;
@@ -235,7 +235,7 @@ message SendPollResult {
 // Both stay relay-pure: the edge supplies every stored value (secret, options,
 // the votes themselves) and the core persists nothing.
 
-// The poll is addressed by (chat, poll_id, poll_creator_jid) rather than by a
+// The poll is addressed by (chat, poll_id, poll_creator) rather than by a
 // MessageKey: the library derives the key's other fields itself (from_me from
 // the creator, participant from the chat's kind), so a MessageKey here would be
 // three fields the core ignores. The creator is explicit for the same reason it
@@ -244,7 +244,9 @@ message SendPollVoteRequest {
   AccountRef account = 1;
   Jid chat = 2;
   string poll_id = 3;             // message id of the poll-creation message
-  string poll_creator_jid = 4;    // who sent the poll
+  reserved 4;                     // #120: was `string poll_creator_jid`
+  reserved "poll_creator_jid";
+  Jid poll_creator = 7;           // who sent the poll
   bytes message_secret = 5;       // 32 bytes, from SendPollResult or the payload
   // Chosen option names, spelled exactly as the poll offered them (a vote
   // references options by SHA-256 of the name). Empty retracts the vote, and
@@ -254,7 +256,7 @@ message SendPollVoteRequest {
 
 // One vote as it arrived, straight out of a PollUpdateMessage.
 message PollVote {
-  // MUST be in the SAME namespace as poll_creator_jid: both `@lid`, or both a
+  // MUST be in the SAME namespace as poll_creator: both `@lid`, or both a
   // phone jid. The key is derived from the creator/voter PAIR, and the library
   // only ever swaps the two together, so a mixed pair is never tried in the
   // combination the sender actually used -- it just fails to open. A vote
@@ -264,7 +266,9 @@ message PollVote {
   // live accounts: a PN-created poll voted from a `@lid` sender gives
   // undecryptable=3 of 3 when the sender is passed verbatim, and a clean tally
   // when the phone jid is passed instead.
-  string voter_jid = 1;
+  reserved 1;  // #120: was `string voter_jid`
+  reserved "voter_jid";
+  Jid voter = 4;
   bytes enc_payload = 2;
   bytes enc_iv = 3;
 }
@@ -272,7 +276,9 @@ message PollVote {
 message AggregatePollVotesRequest {
   AccountRef account = 1;
   string poll_id = 2;
-  string poll_creator_jid = 3;
+  reserved 3;  // #120: was `string poll_creator_jid`
+  reserved "poll_creator_jid";
+  Jid poll_creator = 7;
   bytes message_secret = 4;
   repeated string options = 5;    // in the order the poll offered them
   // The edge holds these, not the core. ORDER IS THE CONTRACT: oldest first.
@@ -287,7 +293,8 @@ message PollOptionResult {
   // Deduped by the voter's canonical identity, so someone who voted as a phone
   // number and re-voted as a LID counts once. The count is `len(voters)`; a
   // separate field could only ever disagree with it.
-  repeated string voters = 2;
+  reserved 2;  // #120: was `repeated string voters`
+  repeated Jid voters = 3;
 }
 
 message PollTally {
@@ -307,7 +314,8 @@ message PostStatusTextRequest {
   string text = 2;
   uint32 background_argb = 3; // 0xAARRGGBB; 0 is a valid (transparent) value
   int32 font = 4;             // font style index (0-4 on WhatsApp Web)
-  repeated string recipients = 5; // device set the status is encrypted to
+  reserved 5;                     // #120: was `repeated string recipients`
+  repeated Jid recipients = 6;    // device set the status is encrypted to
 }
 
 message PostStatusMediaHeader {
@@ -317,7 +325,8 @@ message PostStatusMediaHeader {
   bytes thumbnail = 4;   // JPEG preview; the edge generates it (no transcode)
   string caption = 5;
   uint32 seconds = 6;    // video duration; ignored for image
-  repeated string recipients = 7;
+  reserved 7;  // #120: was `repeated string recipients`
+  repeated Jid recipients = 8;
 }
 
 message PostStatusMediaChunk {
@@ -333,7 +342,8 @@ message PostStatusMediaChunk {
 message RevokeStatusRequest {
   AccountRef account = 1;
   string message_id = 2;          // the status's own id: PostStatus* SendResult.key.id
-  repeated string recipients = 3; // the same device set the status was posted to
+  reserved 3;                     // #120: was `repeated string recipients`
+  repeated Jid recipients = 4;    // the same device set the status was posted to
 }
 
 // --- Answering a button, a list or a template (issue #28) ---

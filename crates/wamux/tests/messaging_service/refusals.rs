@@ -6,7 +6,7 @@ use wamux::proto::v1 as pb;
 
 use crate::common::mock_wire::account_ref;
 use crate::harness::{
-    Fixture, assert_only_the_probe_was_sent, fixture, jid, key, text, wire_count,
+    Fixture, assert_only_the_probe_was_sent, fixture, jid, jids, key, text, wire_count,
 };
 
 /// Assert every call was InvalidArgument, then that nothing reached the wire.
@@ -44,7 +44,7 @@ fn vote(f: &Fixture, creator: &str, poll_id: &str, secret: Vec<u8>) -> pb::SendP
         account: f.a(),
         chat: jid(f.peer.pn()),
         poll_id: poll_id.into(),
-        poll_creator_jid: creator.into(),
+        poll_creator: jid(creator),
         message_secret: secret,
         options: vec!["azul".into()],
     }
@@ -54,11 +54,11 @@ fn tally(f: &Fixture, options: Vec<String>, voter: &str) -> pb::AggregatePollVot
     pb::AggregatePollVotesRequest {
         account: f.a(),
         poll_id: "3EB0POLL".into(),
-        poll_creator_jid: f.peer.pn().to_string(),
+        poll_creator: jid(f.peer.pn()),
         message_secret: vec![7; 32],
         options,
         votes: vec![pb::PollVote {
-            voter_jid: voter.into(),
+            voter: jid(voter),
             enc_payload: vec![1],
             enc_iv: vec![2],
         }],
@@ -136,7 +136,7 @@ async fn send_interactive_reply_rejects_each_malformed_shape() {
     let quote = |id: &str| {
         Some(pb::QuoteContext {
             quoted: Some(key(&peer, id)),
-            participant: String::new(),
+            participant: None,
         })
     };
     let cases = [
@@ -171,7 +171,7 @@ async fn star_message_rejects_a_malformed_participant() {
     let mut f = fixture("star_message_rejects_a_malformed_participant").await;
     let before = wire_count(&f);
     let target = pb::MessageKey {
-        participant: "not a jid".into(),
+        participant: jid("not a jid"),
         ..key(crate::harness::GROUP, "3EB0STAR")
     };
     let request = pb::StarMessageRequest {
@@ -261,7 +261,7 @@ async fn revoke_status_rejects_each_malformed_shape() {
         |account: &pb::AccountRef, id: &str, recipients: Vec<String>| pb::RevokeStatusRequest {
             account: Some(account.clone()),
             message_id: id.into(),
-            recipients,
+            recipients: jids(&recipients),
         };
     let mut results = Vec::new();
     for account in [f.account.clone(), unknown] {

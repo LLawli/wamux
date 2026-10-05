@@ -9,7 +9,8 @@ use wamux::proto::v1 as pb;
 
 use crate::common::mock_wire::sent_message;
 use crate::harness::{
-    Fixture, PEER_PN_USER, assert_only_the_probe_was_sent, fixture, key, sender, text, wire_count,
+    Fixture, PEER_PN_USER, assert_only_the_probe_was_sent, fixture, jid, key, sender, text,
+    wire_count,
 };
 
 /// Each call refused with `code`, and when `message` is given, with exactly it.
@@ -108,14 +109,14 @@ async fn a_malformed_mention_or_participant_is_refused() {
     let peer = f.peer.pn().to_string();
     let mention = pb::SendTextRequest {
         mentions: vec![pb::Mention {
-            jid: "not a jid".into(),
+            jid: jid("not a jid"),
         }],
         ..text(&f, &peer, "@x")
     };
     let quote_participant = pb::SendTextRequest {
         quote: Some(pb::QuoteContext {
             quoted: Some(key(&peer, "3EB0QUOTED")),
-            participant: "not a jid".into(),
+            participant: jid("not a jid"),
         }),
         ..text(&f, &peer, "re")
     };
@@ -130,7 +131,7 @@ async fn a_malformed_mention_or_participant_is_refused() {
         ),
     ];
     let target = pb::MessageKey {
-        participant: "not a jid".into(),
+        participant: jid("not a jid"),
         ..key(&peer, "3EB0TARGET")
     };
     for (rpc, result) in act_on(&mut f, target).await {
@@ -151,7 +152,7 @@ async fn a_quote_with_an_empty_id_is_refused() {
     let request = pb::SendTextRequest {
         quote: Some(pb::QuoteContext {
             quoted: Some(key(&peer, "")),
-            participant: String::new(),
+            participant: None,
         }),
         ..text(&f, &peer, "re")
     };
@@ -172,7 +173,7 @@ async fn a_legacy_mention_relays_in_the_phone_namespace() {
     let peer = f.peer.pn().to_string();
     let request = pb::SendTextRequest {
         mentions: vec![pb::Mention {
-            jid: format!("{PEER_PN_USER}@c.us"),
+            jid: jid(format!("{PEER_PN_USER}@c.us")),
         }],
         ..text(&f, &peer, "@peer")
     };
@@ -203,7 +204,7 @@ async fn a_quote_without_a_key_sends_plain_text() {
     let request = pb::SendTextRequest {
         quote: Some(pb::QuoteContext {
             quoted: None,
-            participant: String::new(),
+            participant: None,
         }),
         ..text(&f, &peer, "sem citação")
     };

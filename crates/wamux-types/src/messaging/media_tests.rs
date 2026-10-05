@@ -38,7 +38,9 @@ fn outgoing_media_parses_its_kind_and_context() {
         mime_type: "audio/ogg; codecs=opus".to_string(),
         caption: "legenda".to_string(),
         mentions: vec![pb::Mention {
-            jid: "5511888888888@s.whatsapp.net".to_string(),
+            jid: Some(pb::Jid {
+                value: "5511888888888@s.whatsapp.net".to_string(),
+            }),
         }],
         quote: None,
         media_type: "audio".to_string(),
@@ -80,7 +82,9 @@ fn outgoing_media_refuses_a_download_only_kind() {
 fn outgoing_media_checks_the_kind_before_the_context() {
     let request = pb::SendMediaHeader {
         mentions: vec![pb::Mention {
-            jid: "not a jid".to_string(),
+            jid: Some(pb::Jid {
+                value: "not a jid".to_string(),
+            }),
         }],
         ..header("gif")
     };

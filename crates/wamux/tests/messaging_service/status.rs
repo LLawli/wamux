@@ -11,18 +11,18 @@ use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::common::mock_wire::{attr, sent_message};
 use crate::harness::{
-    Fixture, MEDIA_LIMIT, assert_only_the_probe_was_sent, fixture, newest_stanza, sender,
-    wire_count,
+    Fixture, MEDIA_LIMIT, assert_only_the_probe_was_sent, fixture, jid, jids, newest_stanza,
+    sender, wire_count,
 };
 use crate::media::plaintext;
 
 const STATUS: &str = "status@broadcast";
 
-fn recipients(f: &Fixture) -> Vec<String> {
-    vec![f.peer.pn().to_string(), f.other.pn().to_string()]
+fn recipients(f: &Fixture) -> Vec<pb::Jid> {
+    jids(&[f.peer.pn(), f.other.pn()])
 }
 
-fn status_text(f: &Fixture, font: i32, recipients: Vec<String>) -> pb::PostStatusTextRequest {
+fn status_text(f: &Fixture, font: i32, recipients: Vec<pb::Jid>) -> pb::PostStatusTextRequest {
     pb::PostStatusTextRequest {
         account: f.a(),
         text: "bom dia, status".into(),
@@ -48,7 +48,7 @@ async fn post_text(f: &mut Fixture) -> pb::MessageKey {
 async fn post_status_text_reaches_every_recipient() {
     let mut f = fixture("post_status_text_reaches_every_recipient").await;
     let posted = post_text(&mut f).await;
-    assert_eq!(posted.remote_jid, STATUS);
+    assert_eq!(posted.chat, jid(STATUS));
     let stanza = sent_message(&f.mock, &posted.id).await;
     assert_eq!(attr(&stanza, "to").as_deref(), Some(STATUS));
     for recipient in [&f.peer, &f.other] {
@@ -200,10 +200,7 @@ async fn an_unknown_status_font_is_invalid_argument() {
     let before = wire_count(&f);
     let cases = [
         ("font 999", status_text(&f, 999, recipients(&f))),
-        (
-            "a bad recipient",
-            status_text(&f, 1, vec!["not a jid".into()]),
-        ),
+        ("a bad recipient", status_text(&f, 1, jids(&["not a jid"]))),
     ];
     for (case, request) in cases {
         let status = f.messages.post_status_text(request).await.expect_err(case);

@@ -37,15 +37,16 @@ pub struct OutgoingContext {
 }
 
 /// Checked in the order the domain read them: chat, participant, id.
-/// `InvalidArgument("empty jid")` / `("invalid jid '<v>': ..")` for the chat,
-/// the same for a non-empty participant, `("empty message id")` for the id.
+/// `InvalidArgument("missing jid")` / `("invalid jid '<v>': ..")` for the chat
+/// (unset or empty is missing), `("invalid jid '<v>': ..")` for a malformed
+/// participant (unset or empty is a DM, #120), `("empty message id")` for the id.
 impl TryFrom<pb::MessageKey> for MessageTarget {
     type Error = WamuxError;
 
     fn try_from(key: pb::MessageKey) -> Result<Self, WamuxError> {
         Ok(Self {
-            chat: Jid::parse(&key.remote_jid)?,
-            participant: Jid::parse_optional(&key.participant)?,
+            chat: Jid::from_required_wire(key.chat)?,
+            participant: Jid::from_optional_wire(key.participant)?,
             id: MessageId::new(key.id)?,
             from_me: key.from_me,
         })
@@ -56,9 +57,9 @@ impl QuotedRef {
     /// A request's optional quote. No context, or a context with no `quoted`
     /// key, is no quote (as it always was). A key with an empty id is
     /// `InvalidArgument("empty quote.quoted.id; expected the id of the quoted
-    /// message")`. The participant is the context's own when it is set, else
-    /// the quoted key's. The quoted key's `remote_jid` is never read: the wire
-    /// quote has no field for it.
+    /// message")`. The participant is the context's own when it is set and not
+    /// empty (#120), else the quoted key's. The quoted key's `chat` is never
+    /// read: the wire quote has no field for it.
     pub fn from_proto(quote: Option<pb::QuoteContext>) -> Result<Option<Self>, WamuxError> {
         let Some(quoted_key) = quote.as_ref().and_then(|quote| quote.quoted.as_ref()) else {
             return Ok(None);
@@ -70,17 +71,14 @@ impl QuotedRef {
         }
         // The context's own participant wins; the key's is the fallback, as the
         // wire builder always read them.
-        let context_participant = quote
-            .as_ref()
-            .map_or("", |quote| quote.participant.as_str());
-        let participant = if context_participant.is_empty() {
-            &quoted_key.participant
-        } else {
-            context_participant
+        let context_participant = quote.as_ref().and_then(|quote| quote.participant.clone());
+        let participant: Option<Jid> = match Jid::from_optional_wire(context_participant)? {
+            Some(own) => Some(own),
+            None => Jid::from_optional_wire(quoted_key.participant.clone())?,
         };
         Ok(Some(Self {
             id: MessageId::new(quoted_key.id.clone())?,
-            participant: Jid::parse_optional(participant)?,
+            participant,
         }))
     }
 }
@@ -94,7 +92,7 @@ impl OutgoingContext {
     ) -> Result<Self, WamuxError> {
         let mentions = mentions
             .iter()
-            .map(|mention| Jid::parse(&mention.jid))
+            .map(|mention| Jid::from_required_wire(mention.jid.clone()))
             .collect::<Result<Vec<Jid>, WamuxError>>()?;
         Ok(Self {
             mentions,

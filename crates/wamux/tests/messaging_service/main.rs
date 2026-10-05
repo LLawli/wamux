@@ -23,6 +23,7 @@ mod error_messages;
 mod every_rpc;
 mod harness;
 mod history;
+mod jid_fields;
 mod media;
 mod receipts;
 mod refusals;

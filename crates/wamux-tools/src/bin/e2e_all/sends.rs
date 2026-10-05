@@ -9,6 +9,7 @@ use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux_tools::delivery::{judge_reached, judge_send, judge_send_keeping_id};
 use wamux_tools::media_kit::{media_chunks, png_bytes};
 use wamux_tools::report::Report;
+use wamux_types::relay_jid;
 
 use crate::E2eCtx;
 
@@ -67,10 +68,10 @@ async fn send_text(
     let (id, delivered) =
         judge_send_keeping_id(report, "Messaging.SendText", sent, &ctx.tap, ctx.window).await;
     let key = id.map(|id| pb::MessageKey {
-        remote_jid: ctx.dest.clone(),
+        chat: relay_jid(ctx.dest.clone()),
         id,
         from_me: true,
-        participant: String::new(),
+        participant: None,
     });
     (key, delivered)
 }

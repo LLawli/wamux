@@ -93,6 +93,10 @@ impl TryFrom<pb::RevokeStatusRequest> for StatusRevoke {
     }
 }
 
-fn parse_recipients(values: &[String]) -> Result<Vec<Jid>, WamuxError> {
-    values.iter().map(|value| Jid::parse(value)).collect()
+fn parse_recipients(values: &[pb::Jid]) -> Result<Vec<Jid>, WamuxError> {
+    // Each recipient is required: an unset or empty one is "missing jid" (#120).
+    values
+        .iter()
+        .map(|value| Jid::from_required_wire(Some(value.clone())))
+        .collect()
 }

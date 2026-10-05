@@ -7,7 +7,7 @@
 //! these rows by jid. Nothing new is implemented against WhatsApp here; the
 //! library already asks, the core just relays the answer.
 
-use wamux_types::{Jid, NewsletterHistoryQuery};
+use wamux_types::{Jid, NewsletterHistoryQuery, relay_jid};
 use whatsapp_rust::Client;
 use whatsapp_rust::features::{
     NewsletterError, NewsletterMessage, NewsletterMetadata, NewsletterRole, NewsletterState,
@@ -211,10 +211,10 @@ fn row_to_inbound(row: &NewsletterMessage, chat: &Jid) -> pb::InboundMessage {
     let chat_text: String = chat.to_string();
     let mut out = pb::InboundMessage {
         key: Some(pb::MessageKey {
-            remote_jid: chat_text.clone(),
+            chat: relay_jid(chat_text.clone()),
             id: row.message_id.clone(),
             from_me: row.is_sender,
-            participant: String::new(),
+            participant: None,
         }),
         chat: chat_text.clone(),
         timestamp: millis_from_seconds(row.timestamp),

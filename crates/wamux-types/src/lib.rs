@@ -14,7 +14,7 @@ pub mod newsletter;
 
 pub use account::{AccountId, AccountRef, ExternalRef};
 pub use error::WamuxError;
-pub use jid::{GroupJid, Jid, NewsletterJid};
+pub use jid::{GroupJid, Jid, NewsletterJid, relay_jid};
 pub use lid::LidPnQuery;
 pub use media_kind::MediaKind;
 pub use message_id::MessageId;
@@ -33,6 +33,8 @@ mod account_tests;
 mod error_tests;
 #[cfg(test)]
 mod jid_tests;
+#[cfg(test)]
+mod jid_wire_tests;
 #[cfg(test)]
 mod lid_tests;
 #[cfg(test)]

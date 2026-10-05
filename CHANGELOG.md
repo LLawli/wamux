@@ -496,6 +496,26 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: every jid in `common.proto` and `messaging.proto` is the `Jid`
+  message** (issue #120, part 1 of #72). Eleven fields that carried a jid as a
+  `string` are `Jid` now: `MessageKey.chat` (was `remote_jid`) and
+  `.participant`, `Mention.jid`, `QuoteContext.participant`, `poll_creator`
+  (was `poll_creator_jid`) on SendPollVote and AggregatePollVotes,
+  `PollVote.voter` (was `voter_jid`), `PollOptionResult.voters`, and the
+  `recipients` of the three status RPCs. The migration guide, with every
+  field's before and after, is `docs/BREAKING-CHANGES-2026-10-05.md`.
+  - Each retyped field took a new number and `reserved` the old one, so a
+    client built against the old contract is not misread: its field is
+    unknown, and the request answers `InvalidArgument("missing jid")`.
+  - A required jid that is unset or empty answers `"missing jid"`, the message
+    `to` and `chat` already gave; these fields answered `"empty jid"` as
+    strings. An unset or empty `participant` is still the DM.
+  - A jid the core answers with is relayed verbatim, and an absent one is an
+    unset field, never `Jid { value: "" }`.
+  - `scripts/check-proto-jids.py` fails CI on a `string` field named for a
+    jid. The fields #121 and #122 still have to convert are on its pending
+    list, which only shrinks.
+
 - **Groups, contacts, channels and LID lookups take named types too** (issue
   #116, part 3 of #63, which it closes). No function in `domain/` or `state/`
   takes a generated `pb::*` input struct or an identifier as a string any more,

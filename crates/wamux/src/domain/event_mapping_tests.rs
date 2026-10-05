@@ -19,6 +19,13 @@ use whatsapp_rust::{Jid, OwnedNodeRef};
 use crate::proto::v1::event_envelope::Event as PbEvent;
 
 const CHAT_JID: &str = "120363041234567890@g.us";
+
+/// A jid as the core relays it out (#120): the value verbatim.
+fn wire(value: &str) -> Option<pb::Jid> {
+    Some(pb::Jid {
+        value: value.to_string(),
+    })
+}
 const SENDER_JID: &str = "5511999000111@s.whatsapp.net";
 const LID_JID: &str = "169815004184633@lid";
 
@@ -119,10 +126,10 @@ fn a_sent_text_echoes_with_the_inbound_shape() {
     };
     let out = crate::domain::event_mapping::map_sent(
         pb::MessageKey {
-            remote_jid: "5511999999999@s.whatsapp.net".to_string(),
+            chat: wire("5511999999999@s.whatsapp.net"),
             id: "3EB0SENT".to_string(),
             from_me: true,
-            participant: String::new(),
+            participant: None,
         },
         "5511999999999@s.whatsapp.net",
         "5511888888888@s.whatsapp.net",
@@ -220,6 +227,10 @@ fn a_sent_edit_echoes_as_an_edit_of_its_target() {
     assert_eq!(out.text, "fixed typo");
     let target = out.protocol_target.expect("an edit names its target");
     assert_eq!(target.id, "3EB0ORIGINAL");
+    // #120: the wa key's absent participant (a DM) and its chat relay as they
+    // are: an unset Jid, never `Jid { value: "" }`, and the chat verbatim.
+    assert_eq!(target.chat, wire(chat));
+    assert_eq!(target.participant, None);
     // The echo's own key is the edit stanza, never the message it edits.
     assert_eq!(out.key.expect("key").id, "3EB0EDITSTANZA");
 }
@@ -287,18 +298,18 @@ fn a_sent_status_revoke_echoes_as_a_delete_of_the_status() {
         .protocol_target
         .expect("a status revoke names the status");
     assert_eq!(target.id, "3EB0STATUS");
-    assert_eq!(target.remote_jid, chat);
+    assert_eq!(target.chat, wire(chat));
     let key = out.key.expect("key");
     assert_eq!(key.id, "3EB0STATUSREVOKE");
-    assert_eq!(key.remote_jid, chat);
+    assert_eq!(key.chat, wire(chat));
 }
 
 fn sent_key(chat: &str, id: &str) -> pb::MessageKey {
     pb::MessageKey {
-        remote_jid: chat.to_string(),
+        chat: wire(chat),
         id: id.to_string(),
         from_me: true,
-        participant: String::new(),
+        participant: None,
     }
 }
 
@@ -329,10 +340,10 @@ fn maps_conversation_text_message_with_key_and_metadata() {
     assert_eq!(out.timestamp, 1_717_932_000_000);
 
     let key = out.key.expect("inbound message must carry a key");
-    assert_eq!(key.remote_jid, CHAT_JID);
+    assert_eq!(key.chat, wire(CHAT_JID));
     assert_eq!(key.id, "WAMID-1");
     assert!(!key.from_me);
-    assert_eq!(key.participant, SENDER_JID);
+    assert_eq!(key.participant, wire(SENDER_JID));
 
     // raw_message is the full encoded wa.Message; decoding restores the text.
     assert!(!out.raw_message.is_empty());
@@ -404,15 +415,15 @@ fn maps_extended_text_with_mentions_and_quote() {
     assert_eq!(
         out.mentions,
         [pb::Mention {
-            jid: "55117770001@s.whatsapp.net".to_string(),
+            jid: wire("55117770001@s.whatsapp.net"),
         }]
     );
     let quote = out.quote.expect("stanza_id must produce a quote");
-    assert_eq!(quote.participant, "55116660002@s.whatsapp.net");
+    assert_eq!(quote.participant, wire("55116660002@s.whatsapp.net"));
     let quoted = quote.quoted.expect("quote must carry the quoted key");
     assert_eq!(quoted.id, "QUOTED-STANZA-1");
-    assert_eq!(quoted.remote_jid, CHAT_JID);
-    assert_eq!(quoted.participant, "55116660002@s.whatsapp.net");
+    assert_eq!(quoted.chat, wire(CHAT_JID));
+    assert_eq!(quoted.participant, wire("55116660002@s.whatsapp.net"));
     assert!(!quoted.from_me);
 }
 
@@ -436,10 +447,10 @@ fn maps_reaction_message_with_target_key() {
     let target = out
         .reaction_target
         .expect("reaction key must map to a target");
-    assert_eq!(target.remote_jid, CHAT_JID);
+    assert_eq!(target.chat, wire(CHAT_JID));
     assert_eq!(target.id, "TARGET-MSG-1");
     assert!(target.from_me);
-    assert_eq!(target.participant, SENDER_JID);
+    assert_eq!(target.participant, wire(SENDER_JID));
 }
 
 // E2E triage 2026-06-16: an inbound revoke arrives as an ordinary message
@@ -467,9 +478,9 @@ fn maps_inbound_revoke_to_is_delete_with_target() {
         .protocol_target
         .expect("revoke must carry the target key");
     assert_eq!(target.id, "REVOKED-MSG-1");
-    assert_eq!(target.remote_jid, CHAT_JID);
+    assert_eq!(target.chat, wire(CHAT_JID));
     assert!(target.from_me);
-    assert_eq!(target.participant, SENDER_JID);
+    assert_eq!(target.participant, wire(SENDER_JID));
 }
 
 // E2E triage 2026-06-16: a legacy inbound edit carries the new text in

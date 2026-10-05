@@ -174,10 +174,10 @@ impl MessagingService for MessagingSvc {
         // as before #38; the echo names the chat the library addressed.
         Ok(Response::new(pb::SendResult {
             key: Some(pb::MessageKey {
-                remote_jid: raw_key.remote_jid,
+                chat: raw_key.chat,
                 id: result.message_id,
                 from_me: true,
-                participant: String::new(),
+                participant: None,
             }),
             server_timestamp: 0,
             recipient_fanout: result.recipient_fanout.map(recipient_fanout_to_proto),
