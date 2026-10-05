@@ -138,6 +138,11 @@ scripts/check-store-sql-shared.py
 stage "Status constructed in one place"
 scripts/check-status-sites.py
 
+# #115: the services convert a request once, at the boundary; domain/ and
+# state/ take wamux-types types, never a generated pb:: input. Pure text check.
+stage "no pb:: inputs in the domain"
+scripts/check-domain-inputs.py
+
 # #114: the named types and the error mapping. No database, so both modes run it.
 stage "tests (wamux-types)"
 must_run_pkg_tests wamux-types
