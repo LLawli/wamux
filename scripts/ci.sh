@@ -143,6 +143,11 @@ scripts/check-status-sites.py
 stage "no pb:: inputs in the domain"
 scripts/check-domain-inputs.py
 
+# #72 / #120: a field of the contract that carries a jid is the Jid message,
+# never a bare string. Pure text check over proto/ (store blobs excluded).
+stage "no string jid fields in the contract"
+scripts/check-proto-jids.py
+
 # #114: the named types and the error mapping. No database, so both modes run it.
 stage "tests (wamux-types)"
 must_run_pkg_tests wamux-types
