@@ -22,46 +22,53 @@
 //! held 13 interactive offers and not one reply. That shape is built from the
 //! proto alone, and it is the one to distrust if a native flow misbehaves.
 
+use wamux_types::{InteractiveReply, Jid, OutgoingContext, ReplyChoice};
 use whatsapp_rust::buffa::{self, Message as _};
 use whatsapp_rust::waproto::whatsapp as wa;
-use whatsapp_rust::{Client, Jid, SendResult};
+use whatsapp_rust::{Client, SendResult};
 
 use crate::domain::outgoing_context::outgoing_context;
 use crate::domain::wire_defaults::{nonempty_string, nonzero_i32};
 use crate::error::{WamuxError, client_err};
-use crate::proto::v1 as pb;
 
 /// Answer an offer. The built message comes back on `SendResult::message`
 /// (upstream #1406) for the service to echo (issue #22), like every send.
 pub async fn send_interactive_reply(
     client: &Client,
     to: Jid,
-    req: &pb::SendInteractiveReplyRequest,
+    reply: &InteractiveReply,
 ) -> Result<SendResult, WamuxError> {
-    let message = build_interactive_reply(req)?;
-    client.send_message(to, message).await.map_err(client_err)
+    let message = build_interactive_reply(reply)?;
+    client
+        .send_message(to.into_lib(), message)
+        .await
+        .map_err(client_err)
 }
 
 /// Pure construction of the outgoing reply.
-pub(crate) fn build_interactive_reply(
-    req: &pb::SendInteractiveReplyRequest,
-) -> Result<wa::Message, WamuxError> {
-    let context = reply_context(req)?;
-    let reply = req
-        .reply
-        .as_ref()
-        .ok_or_else(|| WamuxError::InvalidArgument("no reply shape set".to_string()))?;
-    Ok(match reply {
-        pb::send_interactive_reply_request::Reply::Button(button) => {
-            build_button_reply(button, context)
-        }
-        pb::send_interactive_reply_request::Reply::List(list) => build_list_reply(list, context),
-        pb::send_interactive_reply_request::Reply::Template(template) => {
-            build_template_reply(template, context)
-        }
-        pb::send_interactive_reply_request::Reply::NativeFlow(flow) => {
-            build_native_flow_reply(flow, context)
-        }
+pub(crate) fn build_interactive_reply(reply: &InteractiveReply) -> Result<wa::Message, WamuxError> {
+    let context = reply_context(reply)?;
+    Ok(match &reply.choice {
+        ReplyChoice::Button {
+            selected_id,
+            display_text,
+        } => build_button_reply(selected_id, display_text, context),
+        ReplyChoice::List {
+            selected_row_id,
+            title,
+            description,
+        } => build_list_reply(selected_row_id, title, description, context),
+        ReplyChoice::Template {
+            selected_id,
+            display_text,
+            selected_index,
+        } => build_template_reply(selected_id, display_text, *selected_index, context),
+        ReplyChoice::NativeFlow {
+            name,
+            params_json,
+            body_text,
+            version,
+        } => build_native_flow_reply(name, params_json, body_text, *version, context),
     })
 }
 
@@ -70,22 +77,27 @@ pub(crate) fn build_interactive_reply(
 ///
 /// The quote is required rather than optional: a reply that names no offer is
 /// not a reply, and relaying one would produce a message the bot cannot tie to
-/// its question — a failure that looks like the bot ignoring the user.
+/// its question — a failure that looks like the bot ignoring the user. That is
+/// checked when the request is parsed (`InteractiveReply::try_from`, #115).
 fn reply_context(
-    req: &pb::SendInteractiveReplyRequest,
+    reply: &InteractiveReply,
 ) -> Result<buffa::MessageField<wa::ContextInfo>, WamuxError> {
-    require_quoted_id(req.quote.as_ref())?;
-    let mut context = outgoing_context(&[], req.quote.as_ref(), 0)
+    let quote_only = OutgoingContext {
+        quote: Some(reply.quote.clone()),
+        ..Default::default()
+    };
+    let mut context = outgoing_context(&quote_only)
         .into_option()
         .ok_or_else(|| WamuxError::InvalidArgument("quote built no context".to_string()))?;
-    if !req.quoted_message.is_empty() {
+    if !reply.quoted_message.is_empty() {
         // Decoded, not blindly attached: bytes that are not a `wa::Message` are
         // the caller's mistake and must say so, rather than riding onto the
-        // wire as a malformed quote nobody can read back.
-        let quoted = wa::Message::decode(&mut req.quoted_message.as_slice()).map_err(|err| {
+        // wire as a malformed quote nobody can read back. The decode stays here
+        // because it needs waproto, which wamux-types does not depend on.
+        let quoted = wa::Message::decode(&mut reply.quoted_message.as_slice()).map_err(|err| {
             WamuxError::InvalidArgument(format!(
                 "quoted_message is not a serialized wa.Message ({} bytes): {err}",
-                req.quoted_message.len()
+                reply.quoted_message.len()
             ))
         })?;
         context.quoted_message = buffa::MessageField::some(quoted);
@@ -93,30 +105,18 @@ fn reply_context(
     Ok(buffa::MessageField::some(context))
 }
 
-/// The offer's stanza id, without which there is nothing to answer.
-fn require_quoted_id(quote: Option<&pb::QuoteContext>) -> Result<(), WamuxError> {
-    let has_id = quote
-        .and_then(|quote| quote.quoted.as_ref())
-        .is_some_and(|key| !key.id.is_empty());
-    if has_id {
-        return Ok(());
-    }
-    Err(WamuxError::InvalidArgument(
-        "quote.quoted.id must name the offer being answered".to_string(),
-    ))
-}
-
 /// `type = DISPLAY_TEXT` is set here, not relayed: 5 of 5 captured replies
 /// carry it, and it is the only value the enum has beyond UNKNOWN.
 fn build_button_reply(
-    reply: &pb::ButtonReply,
+    selected_id: &str,
+    display_text: &str,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::Message {
     use wa::message::buttons_response_message::{Response, Type};
     wa::Message {
         buttons_response_message: buffa::MessageField::some(wa::message::ButtonsResponseMessage {
-            selected_button_id: nonempty_string(&reply.selected_id),
-            response: nonempty_string(&reply.display_text).map(Response::SelectedDisplayText),
+            selected_button_id: nonempty_string(selected_id),
+            response: nonempty_string(display_text).map(Response::SelectedDisplayText),
             context_info: context,
             r#type: Some(Type::DisplayText),
         }),
@@ -127,19 +127,21 @@ fn build_button_reply(
 /// `listType = SINGLE_SELECT` is set here, not relayed: 4 of 4 captured replies
 /// carry it, and it is the only value the enum has beyond UNKNOWN.
 fn build_list_reply(
-    reply: &pb::ListReply,
+    selected_row_id: &str,
+    title: &str,
+    description: &str,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::Message {
     use wa::message::list_response_message::{ListType, SingleSelectReply};
     wa::Message {
         list_response_message: buffa::MessageField::some(wa::message::ListResponseMessage {
-            title: nonempty_string(&reply.title),
+            title: nonempty_string(title),
             list_type: Some(ListType::SingleSelect),
             single_select_reply: buffa::MessageField::some(SingleSelectReply {
-                selected_row_id: nonempty_string(&reply.selected_row_id),
+                selected_row_id: nonempty_string(selected_row_id),
             }),
             context_info: context,
-            description: nonempty_string(&reply.description),
+            description: nonempty_string(description),
         }),
         ..Default::default()
     }
@@ -150,16 +152,18 @@ fn build_list_reply(
 /// This is the one place the core's proto3-zero-means-absent rule would be
 /// wrong.
 fn build_template_reply(
-    reply: &pb::TemplateReply,
+    selected_id: &str,
+    display_text: &str,
+    selected_index: u32,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::Message {
     wa::Message {
         template_button_reply_message: buffa::MessageField::some(
             wa::message::TemplateButtonReplyMessage {
-                selected_id: nonempty_string(&reply.selected_id),
-                selected_display_text: nonempty_string(&reply.display_text),
+                selected_id: nonempty_string(selected_id),
+                selected_display_text: nonempty_string(display_text),
                 context_info: context,
-                selected_index: Some(reply.selected_index),
+                selected_index: Some(selected_index),
                 ..Default::default()
             },
         ),
@@ -170,7 +174,10 @@ fn build_template_reply(
 /// The shape with no capture behind it (see the module note). Everything here
 /// relays verbatim; nothing is set that the edge did not ask for.
 fn build_native_flow_reply(
-    reply: &pb::NativeFlowReply,
+    name: &str,
+    params_json: &str,
+    body_text: &str,
+    version: i32,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::Message {
     use wa::message::interactive_response_message::{
@@ -180,15 +187,15 @@ fn build_native_flow_reply(
         interactive_response_message: buffa::MessageField::some(
             wa::message::InteractiveResponseMessage {
                 body: buffa::MessageField::some(Body {
-                    text: nonempty_string(&reply.body_text),
+                    text: nonempty_string(body_text),
                     ..Default::default()
                 }),
                 context_info: context,
                 interactive_response_message: Some(Which::NativeFlowResponseMessage(Box::new(
                     NativeFlowResponseMessage {
-                        name: nonempty_string(&reply.name),
-                        params_json: nonempty_string(&reply.params_json),
-                        version: nonzero_i32(reply.version),
+                        name: nonempty_string(name),
+                        params_json: nonempty_string(params_json),
+                        version: nonzero_i32(version),
                     },
                 ))),
             },

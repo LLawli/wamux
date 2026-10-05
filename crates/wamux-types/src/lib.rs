@@ -8,12 +8,18 @@ pub mod error;
 pub mod jid;
 pub mod media_kind;
 pub mod message_id;
+pub mod messaging;
 
 pub use account::{AccountId, AccountRef, ExternalRef};
 pub use error::WamuxError;
 pub use jid::{GroupJid, Jid, NewsletterJid};
 pub use media_kind::MediaKind;
 pub use message_id::MessageId;
+pub use messaging::{
+    ContactCard, DownloadableMedia, EncryptedVote, InteractiveReply, LinkPreview, MessageTarget,
+    NewPoll, OutgoingContext, OutgoingMedia, OutgoingText, POLL_SECRET_LEN, PollVoteCast,
+    PollVotesToTally, QuotedRef, ReplyChoice, StatusMedia, StatusRevoke, StatusText,
+};
 
 #[cfg(test)]
 mod account_tests;

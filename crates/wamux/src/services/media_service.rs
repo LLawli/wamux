@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
+use wamux_types::DownloadableMedia;
 
 use super::{client_of, require_field};
 use crate::domain::media_transfer;
@@ -35,15 +36,15 @@ impl MediaService for MediaSvc {
     ) -> Result<Response<Self::DownloadMediaStream>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let descriptor = require_field(req.descriptor, "descriptor")?;
+        let media = DownloadableMedia::try_from(require_field(req.descriptor, "descriptor")?)?;
 
         // Eager decrypt-to-memory, then stream out in chunks.
-        let data = media_transfer::download(&client, &descriptor).await?;
+        let data = media_transfer::download(&client, &media).await?;
         let (tx, rx) = mpsc::channel(8);
         tokio::spawn(async move {
             let meta = pb::MediaChunk {
                 part: Some(pb::media_chunk::Part::Meta(pb::MediaMeta {
-                    mime_type: descriptor.mime_type.clone(),
+                    mime_type: media.mime_type,
                     file_length: data.len() as u64,
                 })),
             };

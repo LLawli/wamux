@@ -2,39 +2,37 @@
 //! the recipient device set and supplies any media bytes + thumbnail; the core
 //! uploads and posts, deciding no privacy policy of its own.
 
-use wamux_types::MediaKind;
+use wamux_types::{Jid, MediaKind, StatusMedia, StatusRevoke, StatusText};
 use whatsapp_rust::buffa::Enumeration;
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::FontType;
-use whatsapp_rust::{Client, Jid, SendResult, StatusSendOptions};
+use whatsapp_rust::{Client, Jid as LibJid, SendResult, StatusSendOptions};
 
-use crate::domain::jid_parse::parse_jids;
 use crate::domain::wire_defaults::nonempty_string;
 use crate::error::{WamuxError, client_err};
-use crate::proto::v1 as pb;
 
 /// Post a text status. `background_argb`/`font` relay verbatim (0 is a valid
 /// transparent background, so it is NOT mapped away). Recipients are the device
 /// set the status is encrypted to — the edge composes that list.
 pub async fn post_status_text(
     client: &Client,
-    req: &pb::PostStatusTextRequest,
+    status: &StatusText,
 ) -> Result<SendResult, WamuxError> {
-    let recipients = parse_jids(&req.recipients)?;
+    let recipients = lib_recipients(&status.recipients);
     // 0.7 types the font as a closed enum instead of a bare i32. Reject an
     // out-of-schema number rather than quietly falling back to SYSTEM: the edge
     // asked for a specific font and deserves to hear that it does not exist.
-    let font = FontType::from_i32(req.font).ok_or_else(|| {
+    let font = FontType::from_i32(status.font).ok_or_else(|| {
         WamuxError::InvalidArgument(format!(
             "unknown status font {}; expected a wa FontType value",
-            req.font
+            status.font
         ))
     })?;
     client
         .status()
         .send_text(
-            &req.text,
-            req.background_argb,
+            &status.text,
+            status.background_argb,
             font,
             &recipients,
             // Privacy is the only StatusSendOptions field and defaults to
@@ -51,23 +49,23 @@ pub async fn post_status_text(
 /// `seconds` is the video duration; it is ignored for an image.
 pub async fn post_status_media(
     client: &Client,
-    header: &pb::PostStatusMediaHeader,
+    status: &StatusMedia,
     data: Vec<u8>,
 ) -> Result<SendResult, WamuxError> {
-    let kind = MediaKind::parse_status(&header.media_type)?;
-    let recipients = parse_jids(&header.recipients)?;
+    let kind = status.kind;
+    let recipients = lib_recipients(&status.recipients);
     let upload = client
         .upload(data, kind.media_type(), UploadOptions::new())
         .await
         .map_err(client_err)?;
-    let caption = nonempty_string(&header.caption);
-    let status = client.status();
+    let caption = nonempty_string(&status.caption);
+    let sender = client.status();
     let result = match kind {
         MediaKind::Image => {
-            status
+            sender
                 .send_image(
                     upload,
-                    header.thumbnail.clone(),
+                    status.thumbnail.clone(),
                     caption.as_deref(),
                     &recipients,
                     StatusSendOptions::default(),
@@ -75,11 +73,11 @@ pub async fn post_status_media(
                 .await
         }
         MediaKind::Video => {
-            status
+            sender
                 .send_video(
                     upload,
-                    header.thumbnail.clone(),
-                    header.seconds,
+                    status.thumbnail.clone(),
+                    status.seconds,
                     caption.as_deref(),
                     &recipients,
                     StatusSendOptions::default(),
@@ -98,30 +96,9 @@ pub async fn post_status_media(
     result.map_err(client_err)
 }
 
-/// A status revoke, checked for shape before any account is looked up.
-pub struct StatusRevoke {
-    pub message_id: String,
-    pub recipients: Vec<Jid>,
-}
-
-/// Check a RevokeStatus request (issue #41). An empty id or recipient list
-/// would reach the library and come back as an opaque client error, which maps
-/// to `Unavailable`; the edge sent a malformed request and should hear that.
-pub fn parse_status_revoke(req: &pb::RevokeStatusRequest) -> Result<StatusRevoke, WamuxError> {
-    if req.message_id.is_empty() {
-        return Err(WamuxError::InvalidArgument(
-            "message_id is empty; expected the status's own id (PostStatus* key.id)".to_string(),
-        ));
-    }
-    if req.recipients.is_empty() {
-        return Err(WamuxError::InvalidArgument(
-            "recipients is empty; expected the device set the status was posted to".to_string(),
-        ));
-    }
-    Ok(StatusRevoke {
-        message_id: req.message_id.clone(),
-        recipients: parse_jids(&req.recipients)?,
-    })
+/// The library borrows the recipients as its own type.
+fn lib_recipients(recipients: &[Jid]) -> Vec<LibJid> {
+    recipients.iter().map(|jid| jid.as_lib().clone()).collect()
 }
 
 /// Revoke a status this account posted. Not the chat revoke: the library's
@@ -134,8 +111,8 @@ pub async fn revoke_status(
     client
         .status()
         .revoke(
-            revoke.message_id,
-            &revoke.recipients,
+            revoke.message_id.to_string(),
+            &lib_recipients(&revoke.recipients),
             StatusSendOptions::default(),
         )
         .await
@@ -143,71 +120,5 @@ pub async fn revoke_status(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use wacore::download::MediaType;
-
-    #[test]
-    fn status_media_kind_parses_image_and_video() {
-        assert!(matches!(
-            MediaKind::parse_status("image").unwrap().media_type(),
-            MediaType::Image
-        ));
-        assert!(matches!(
-            MediaKind::parse_status("video").unwrap().media_type(),
-            MediaType::Video
-        ));
-    }
-
-    // Audio/document/sticker are valid for a normal message but NOT for a
-    // status; the edge sending one is an InvalidArgument, not a silent fallback.
-    #[test]
-    fn status_media_kind_rejects_non_status_kinds() {
-        for bad in ["audio", "document", "sticker", "gif"] {
-            assert!(
-                matches!(
-                    MediaKind::parse_status(bad),
-                    Err(WamuxError::InvalidArgument(_))
-                ),
-                "expected {bad} to be rejected"
-            );
-        }
-    }
-
-    fn revoke_request(message_id: &str, recipients: &[&str]) -> pb::RevokeStatusRequest {
-        pb::RevokeStatusRequest {
-            account: None,
-            message_id: message_id.to_string(),
-            recipients: recipients.iter().map(|r| r.to_string()).collect(),
-        }
-    }
-
-    #[test]
-    fn status_revoke_keeps_the_id_and_every_recipient() {
-        let req = revoke_request(
-            "3EB0STATUS",
-            &["5511999000111@s.whatsapp.net", "169815004184633@lid"],
-        );
-        let revoke = parse_status_revoke(&req).unwrap();
-        assert_eq!(revoke.message_id, "3EB0STATUS");
-        assert_eq!(revoke.recipients.len(), 2);
-    }
-
-    #[test]
-    fn status_revoke_refuses_an_empty_id_or_recipient_list() {
-        let bad = [
-            revoke_request("", &["5511999000111@s.whatsapp.net"]),
-            revoke_request("3EB0STATUS", &[]),
-            revoke_request("3EB0STATUS", &[""]),
-        ];
-        for req in bad {
-            assert!(
-                matches!(
-                    parse_status_revoke(&req),
-                    Err(WamuxError::InvalidArgument(_))
-                ),
-                "expected {req:?} to be refused"
-            );
-        }
-    }
-}
+#[path = "status_tests.rs"]
+mod tests;

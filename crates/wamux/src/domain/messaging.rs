@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use wacore::send::RecipientFanout;
+use wamux_types::{Jid, LinkPreview, MessageTarget, OutgoingContext, OutgoingText};
 use whatsapp_rust::buffa::{Enumeration, MessageField};
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::PreviewType;
-use whatsapp_rust::{Client, Jid, RevokeType, SendResult};
+use whatsapp_rust::{Client, Jid as LibJid, RevokeType, SendResult};
 
-use crate::domain::jid_parse::parse_jid;
 use crate::domain::outgoing_context::outgoing_context;
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_i32};
 use crate::error::{WamuxError, client_err};
@@ -20,22 +20,23 @@ use crate::proto::v1 as pb;
 // edge's responsibility: it passes the exact JID it wants and the core relays
 // to it verbatim. Keeping this transport-pure is a deliberate design choice.
 
-/// Wire-shaped like the media path (`send_media` + its header): the routing
-/// fields `req.account`/`req.to` were already consumed by the caller and are
-/// ignored here; every content field relays through `build_text_message`, so
-/// a new proto field touches only the builder, never this signature or its
-/// call sites (code-review 2026-06-11).
+/// The routing (`account`, `to`) was consumed by the service; every content
+/// field relays through `build_text_message`, so a new field touches only the
+/// builder, never this signature or its call sites (code-review 2026-06-11).
 pub async fn send_text(
     client: &Client,
     to: Jid,
-    req: &pb::SendTextRequest,
+    text: &OutgoingText,
 ) -> Result<SendResult, WamuxError> {
-    let message = build_text_message(req)?;
+    let message = build_text_message(text)?;
     // The built message rides back out on `SendResult::message` (upstream
     // #1406) so the service can echo it (issue #22): WhatsApp never echoes a
     // send back to the device that made it, and the echo must carry the message
     // that actually went, not a reconstruction.
-    client.send_message(to, message).await.map_err(client_err)
+    client
+        .send_message(to.into_lib(), message)
+        .await
+        .map_err(client_err)
 }
 
 /// Pure construction of the outgoing text `wa::Message`. Plain `conversation`
@@ -43,33 +44,28 @@ pub async fn send_text(
 /// upgrades it to an `ExtendedTextMessage`. Everything is relayed verbatim:
 /// the EDGE fetched the preview and chose the expiration (the core does no
 /// outbound HTTP and tracks no chat settings).
-pub(crate) fn build_text_message(req: &pb::SendTextRequest) -> Result<wa::Message, WamuxError> {
-    let plain = req.mentions.is_empty()
-        && req.quote.is_none()
-        && req.link_preview.is_none()
-        && req.ephemeral_seconds == 0;
+pub(crate) fn build_text_message(text: &OutgoingText) -> Result<wa::Message, WamuxError> {
+    let plain = text.context == OutgoingContext::default() && text.link_preview.is_none();
     if plain {
         return Ok(wa::Message {
-            conversation: Some(req.text.clone()),
+            conversation: Some(text.text.clone()),
             ..Default::default()
         });
     }
     Ok(wa::Message {
-        extended_text_message: MessageField::some(extended_text(req)?),
+        extended_text_message: MessageField::some(extended_text(text)?),
         ..Default::default()
     })
 }
 
-fn extended_text(
-    req: &pb::SendTextRequest,
-) -> Result<wa::message::ExtendedTextMessage, WamuxError> {
+fn extended_text(text: &OutgoingText) -> Result<wa::message::ExtendedTextMessage, WamuxError> {
     let mut extended = wa::message::ExtendedTextMessage {
-        text: Some(req.text.clone()),
+        text: Some(text.text.clone()),
         // Unset for a preview-only message: shared builder, see outgoing_context.
-        context_info: outgoing_context(&req.mentions, req.quote.as_ref(), req.ephemeral_seconds),
+        context_info: outgoing_context(&text.context),
         ..Default::default()
     };
-    if let Some(preview) = &req.link_preview {
+    if let Some(preview) = &text.link_preview {
         copy_link_preview(&mut extended, preview)?;
     }
     Ok(extended)
@@ -81,7 +77,7 @@ fn extended_text(
 /// absent field, the same lib-natural form a regular link preview uses.
 fn copy_link_preview(
     extended: &mut wa::message::ExtendedTextMessage,
-    preview: &pb::LinkPreview,
+    preview: &LinkPreview,
 ) -> Result<(), WamuxError> {
     extended.matched_text = nonempty_string(&preview.matched_text);
     extended.title = nonempty_string(&preview.title);
@@ -104,11 +100,11 @@ fn copy_link_preview(
 
 pub async fn send_reaction(
     client: &Client,
-    target: &pb::MessageKey,
+    target: &MessageTarget,
     emoji: &str,
 ) -> Result<SendResult, WamuxError> {
-    let to = parse_jid(&target.remote_jid)?;
-    let key = proto_key_to_wa(target);
+    let to = target.chat.clone().into_lib();
+    let key = wa_message_key(target);
     let message = wa::Message {
         reaction_message: MessageField::some(wa::message::ReactionMessage {
             key: MessageField::some(key),
@@ -122,10 +118,10 @@ pub async fn send_reaction(
 
 pub async fn edit_message(
     client: &Client,
-    target: &pb::MessageKey,
+    target: &MessageTarget,
     new_text: &str,
 ) -> Result<SendResult, WamuxError> {
-    let to = parse_jid(&target.remote_jid)?;
+    let to = target.chat.clone().into_lib();
     let new = wa::Message {
         conversation: Some(new_text.to_string()),
         ..Default::default()
@@ -135,7 +131,7 @@ pub async fn edit_message(
     // echo an edit at all (#38). `message_id` is the edit stanza's own fresh
     // id, not the target's.
     client
-        .edit_message(to, target.id.clone(), new)
+        .edit_message(to, target.id.to_string(), new)
         .await
         .map_err(client_err)
 }
@@ -144,8 +140,8 @@ pub async fn edit_message(
 /// revoke is refused by the library for `status@broadcast`, and the status
 /// revoke needs recipients this request has no field for. Checked before the
 /// account is looked up, because it is about the request, not the account.
-pub fn refuse_status_revoke(target: &pb::MessageKey, for_everyone: bool) -> Result<(), WamuxError> {
-    if !for_everyone || parse_jid(&target.remote_jid)? != Jid::status_broadcast() {
+pub fn refuse_status_revoke(target: &MessageTarget, for_everyone: bool) -> Result<(), WamuxError> {
+    if !for_everyone || target.chat.as_lib() != &LibJid::status_broadcast() {
         return Ok(());
     }
     Err(WamuxError::InvalidArgument(format!(
@@ -156,15 +152,15 @@ pub fn refuse_status_revoke(target: &pb::MessageKey, for_everyone: bool) -> Resu
 
 pub async fn delete_message(
     client: &Client,
-    target: &pb::MessageKey,
+    target: &MessageTarget,
     for_everyone: bool,
 ) -> Result<Option<SendResult>, WamuxError> {
-    let to = parse_jid(&target.remote_jid)?;
+    let to = target.chat.clone().into_lib();
     if for_everyone {
         // A revoke is a message the library builds and sends, so it comes back
         // to be echoed like an edit (#38).
         let result = client
-            .revoke_message(to, target.id.clone(), RevokeType::Sender)
+            .revoke_message(to, target.id.to_string(), RevokeType::Sender)
             .await
             .map_err(client_err)?;
         return Ok(Some(result));
@@ -173,7 +169,7 @@ pub async fn delete_message(
     // there is no message to echo.
     client
         .chat_actions()
-        .delete_message_for_me(&to, None, &target.id, target.from_me, false, None)
+        .delete_message_for_me(&to, None, target.id.as_str(), target.from_me, false, None)
         .await
         .map_err(client_err)?;
     Ok(None)
@@ -192,7 +188,7 @@ pub async fn fetch_message_history(
 ) -> Result<String, WamuxError> {
     client
         .fetch_message_history(
-            &chat,
+            chat.as_lib(),
             oldest_msg_id,
             oldest_msg_from_me,
             oldest_msg_timestamp_ms,
@@ -212,17 +208,17 @@ pub async fn send_presence(client: &Client, chat: Jid, state: &str) -> Result<()
             .map_err(client_err),
         "composing" => client
             .chatstate()
-            .send_composing(&chat)
+            .send_composing(chat.as_lib())
             .await
             .map_err(client_err),
         "recording" => client
             .chatstate()
-            .send_recording(&chat)
+            .send_recording(chat.as_lib())
             .await
             .map_err(client_err),
         "paused" => client
             .chatstate()
-            .send_paused(&chat)
+            .send_paused(chat.as_lib())
             .await
             .map_err(client_err),
         other => Err(WamuxError::InvalidArgument(format!(
@@ -251,17 +247,19 @@ pub async fn mark_read(
 ) -> Result<(), WamuxError> {
     let ids: Vec<&str> = message_ids.iter().map(String::as_str).collect();
     client
-        .mark_as_read(chat, sender, &ids)
+        .mark_as_read(chat.as_lib(), sender.map(Jid::as_lib), &ids)
         .await
         .map_err(client_err)
 }
 
-fn proto_key_to_wa(key: &pb::MessageKey) -> wa::MessageKey {
+/// The wa key of a target. An absent participant (a DM) relays as the absent
+/// field, never `Some("")` (#20).
+pub(crate) fn wa_message_key(target: &MessageTarget) -> wa::MessageKey {
     wa::MessageKey {
-        remote_jid: Some(key.remote_jid.clone()),
-        id: Some(key.id.clone()),
-        from_me: Some(key.from_me),
-        participant: nonempty_string(&key.participant),
+        remote_jid: Some(target.chat.to_string()),
+        id: Some(target.id.to_string()),
+        from_me: Some(target.from_me),
+        participant: target.participant.as_ref().map(Jid::to_string),
     }
 }
 
@@ -270,7 +268,7 @@ fn proto_key_to_wa(key: &pb::MessageKey) -> wa::MessageKey {
 /// consumed it could not be exercised from a test at all.
 pub fn send_result_to_proto(
     message_id: String,
-    to: &Jid,
+    to: &LibJid,
     fanout: Option<RecipientFanout>,
 ) -> pb::SendResult {
     pb::SendResult {
@@ -295,7 +293,7 @@ pub fn recipient_fanout_to_proto(fanout: RecipientFanout) -> pb::RecipientFanout
 
 /// The key of a message this account just sent: the one the RPC answers with
 /// and the one its echo carries, so the two can never disagree.
-pub fn sent_message_key(message_id: String, to: &Jid) -> pb::MessageKey {
+pub fn sent_message_key(message_id: String, to: &LibJid) -> pb::MessageKey {
     pb::MessageKey {
         remote_jid: to.to_string(),
         id: message_id,
@@ -305,308 +303,5 @@ pub fn sent_message_key(message_id: String, to: &Jid) -> pb::MessageKey {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use super::*;
-
-    fn key_in(chat: &str) -> pb::MessageKey {
-        pb::MessageKey {
-            remote_jid: chat.to_string(),
-            id: "3EB0TARGET".to_string(),
-            from_me: true,
-            participant: String::new(),
-        }
-    }
-
-    /// Issue #41: only a revoke of a status is refused; deleting a status for
-    /// me, and revoking anything in a real chat, still go through.
-    #[test]
-    fn only_a_status_revoke_is_refused() {
-        let status = key_in("status@broadcast");
-        assert!(matches!(
-            refuse_status_revoke(&status, true),
-            Err(WamuxError::InvalidArgument(_))
-        ));
-        assert!(refuse_status_revoke(&status, false).is_ok());
-        for chat in ["5511999000111@s.whatsapp.net", "120363041234567890@g.us"] {
-            assert!(refuse_status_revoke(&key_in(chat), true).is_ok(), "{chat}");
-        }
-    }
-
-    #[test]
-    fn send_result_maps_to_proto_key_with_from_me() {
-        let proto = send_result_to_proto(
-            "3EB0ABCDEF".to_string(),
-            &Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
-            None,
-        );
-        let key = proto.key.expect("key must be set");
-        assert_eq!(key.remote_jid, "5511999999999@s.whatsapp.net");
-        assert_eq!(key.id, "3EB0ABCDEF");
-        assert!(key.from_me);
-        assert!(key.participant.is_empty());
-        // The lib's SendResult carries no server timestamp; we pin 0 so the
-        // edge knows the field is a placeholder, not a real clock reading.
-        assert_eq!(proto.server_timestamp, 0);
-    }
-
-    // Issue #47: the four facts cross as the library counted them.
-    #[test]
-    fn a_dm_send_relays_its_recipient_fanout() {
-        let mut fanout = RecipientFanout::default();
-        fanout.addressed = 3;
-        fanout.encrypted = 2;
-        fanout.skipped_primary = true;
-        fanout.had_unregistered_device = true;
-        let proto = send_result_to_proto(
-            "3EB0ABCDEF".to_string(),
-            &Jid::from_str("5511999999999@s.whatsapp.net").unwrap(),
-            Some(fanout),
-        );
-        let relayed = proto.recipient_fanout.expect("a DM carries its fan-out");
-        assert_eq!((relayed.addressed, relayed.encrypted), (3, 2));
-        assert!(relayed.skipped_primary);
-        assert!(relayed.had_unregistered_device);
-    }
-
-    // A self-chat is zeros, present; a non-DM send is absent. The two must not
-    // collapse into one another on the wire.
-    #[test]
-    fn a_self_chat_fanout_stays_apart_from_a_non_dm_send() {
-        let to = Jid::from_str("5511999999999@s.whatsapp.net").unwrap();
-        let self_chat =
-            send_result_to_proto("A".to_string(), &to, Some(RecipientFanout::default()));
-        assert_eq!(
-            self_chat.recipient_fanout,
-            Some(pb::RecipientFanout::default())
-        );
-        let group = send_result_to_proto("B".to_string(), &to, None);
-        assert_eq!(group.recipient_fanout, None);
-    }
-
-    #[test]
-    fn a_device_count_past_u32_saturates() {
-        let mut fanout = RecipientFanout::default();
-        fanout.addressed = usize::MAX;
-        assert_eq!(recipient_fanout_to_proto(fanout).addressed, u32::MAX);
-    }
-
-    #[test]
-    fn proto_key_with_participant_maps_to_some() {
-        let key = pb::MessageKey {
-            remote_jid: "120363001234567890@g.us".to_string(),
-            id: "MSG-1".to_string(),
-            from_me: false,
-            participant: "5511888888888@s.whatsapp.net".to_string(),
-        };
-        let wa_key = proto_key_to_wa(&key);
-        assert_eq!(
-            wa_key.remote_jid.as_deref(),
-            Some("120363001234567890@g.us")
-        );
-        assert_eq!(wa_key.id.as_deref(), Some("MSG-1"));
-        assert_eq!(wa_key.from_me, Some(false));
-        assert_eq!(
-            wa_key.participant.as_deref(),
-            Some("5511888888888@s.whatsapp.net")
-        );
-    }
-
-    // Proto3 has no optional string here: empty string is the wire encoding
-    // of "no participant", so it must become None, never Some("").
-    #[test]
-    fn proto_key_empty_participant_maps_to_none() {
-        let key = pb::MessageKey {
-            remote_jid: "5511999999999@s.whatsapp.net".to_string(),
-            id: "MSG-2".to_string(),
-            from_me: true,
-            participant: String::new(),
-        };
-        let wa_key = proto_key_to_wa(&key);
-        assert_eq!(wa_key.participant, None);
-        assert_eq!(wa_key.from_me, Some(true));
-    }
-
-    fn full_preview() -> pb::LinkPreview {
-        pb::LinkPreview {
-            matched_text: "https://example.com/post".to_string(),
-            title: "A title".to_string(),
-            description: "A description".to_string(),
-            jpeg_thumbnail: vec![0xff, 0xd8, 0xff],
-            preview_type: 1, // VIDEO
-        }
-    }
-
-    /// Content-only request: routing fields stay at their (ignored) defaults.
-    fn text_req(text: &str) -> pb::SendTextRequest {
-        pb::SendTextRequest {
-            text: text.to_string(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn plain_text_stays_conversation() {
-        let message = build_text_message(&text_req("oi")).unwrap();
-        assert_eq!(message.conversation.as_deref(), Some("oi"));
-        assert!(message.extended_text_message.is_unset());
-    }
-
-    #[test]
-    fn link_preview_forces_extended_with_fields_relayed_verbatim() {
-        let message = build_text_message(&pb::SendTextRequest {
-            link_preview: Some(full_preview()),
-            ..text_req("look https://example.com/post")
-        })
-        .unwrap();
-        assert!(message.conversation.is_none());
-        let ext = message.extended_text_message.expect("must be extended");
-        assert_eq!(ext.text.as_deref(), Some("look https://example.com/post"));
-        assert_eq!(
-            ext.matched_text.as_deref(),
-            Some("https://example.com/post")
-        );
-        assert_eq!(ext.title.as_deref(), Some("A title"));
-        assert_eq!(ext.description.as_deref(), Some("A description"));
-        assert_eq!(ext.jpeg_thumbnail.as_deref(), Some(&[0xff, 0xd8, 0xff][..]));
-        assert_eq!(ext.preview_type, Some(PreviewType::VIDEO));
-    }
-
-    // Proto3 defaults inside a present LinkPreview (empty string/bytes,
-    // preview_type 0=NONE) relay as ABSENT waproto fields, never Some("").
-    #[test]
-    fn link_preview_empty_fields_map_to_none() {
-        let preview = pb::LinkPreview {
-            matched_text: "https://example.com".to_string(),
-            title: String::new(),
-            description: String::new(),
-            jpeg_thumbnail: vec![],
-            preview_type: 0,
-        };
-        let ext = build_text_message(&pb::SendTextRequest {
-            link_preview: Some(preview),
-            ..text_req("https://example.com")
-        })
-        .unwrap()
-        .extended_text_message
-        .expect("preview presence alone must force extended");
-        assert_eq!(ext.matched_text.as_deref(), Some("https://example.com"));
-        assert_eq!(ext.title, None);
-        assert_eq!(ext.description, None);
-        assert_eq!(ext.jpeg_thumbnail, None);
-        assert_eq!(ext.preview_type, None);
-    }
-
-    // Regression (code-review 2026-06-11): a preview-only extended text must
-    // NOT carry a present-but-empty ContextInfo — regular clients send the
-    // field absent, and an empty submessage is a fingerprintable wire shape.
-    #[test]
-    fn link_preview_only_leaves_context_absent() {
-        let ext = build_text_message(&pb::SendTextRequest {
-            link_preview: Some(full_preview()),
-            ..text_req("https://example.com")
-        })
-        .unwrap()
-        .extended_text_message
-        .expect("preview presence alone must force extended");
-        assert!(ext.context_info.is_unset());
-    }
-
-    // Regression (code-review 2026-06-11): quoting in a DM leaves both
-    // participant fields empty; that must relay as the absent field, never
-    // Some("") — an empty JID on the WhatsApp wire.
-    #[test]
-    fn dm_quote_with_empty_participants_maps_participant_to_none() {
-        let quote = pb::QuoteContext {
-            quoted: Some(pb::MessageKey {
-                remote_jid: "5511999999999@s.whatsapp.net".to_string(),
-                id: "QUOTED-DM".to_string(),
-                from_me: false,
-                participant: String::new(),
-            }),
-            participant: String::new(),
-        };
-        let ext = build_text_message(&pb::SendTextRequest {
-            quote: Some(quote),
-            ..text_req("re: that")
-        })
-        .unwrap()
-        .extended_text_message
-        .expect("quote forces extended");
-        let context = ext.context_info.expect("quote must build a context");
-        assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-DM"));
-        assert_eq!(context.participant, None);
-    }
-
-    #[test]
-    fn ephemeral_text_sets_context_expiration() {
-        let message = build_text_message(&pb::SendTextRequest {
-            ephemeral_seconds: 86_400,
-            ..text_req("fugaz")
-        })
-        .unwrap();
-        let ext = message.extended_text_message.expect("must be extended");
-        let context = ext.context_info.expect("context_info must be set");
-        assert_eq!(context.expiration, Some(86_400));
-        // Nothing else rode along: no mentions, no quote.
-        assert!(context.mentioned_jid.is_empty());
-        assert_eq!(context.stanza_id, None);
-    }
-
-    #[test]
-    fn preview_mentions_quote_and_ephemeral_compose_in_one_extended() {
-        let message = build_text_message(&pb::SendTextRequest {
-            mentions: vec![pb::Mention {
-                jid: "5511888888888@s.whatsapp.net".to_string(),
-            }],
-            quote: Some(pb::QuoteContext {
-                quoted: Some(pb::MessageKey {
-                    remote_jid: "120363001234567890@g.us".to_string(),
-                    id: "QUOTED-1".to_string(),
-                    from_me: false,
-                    participant: "5511777777777@s.whatsapp.net".to_string(),
-                }),
-                participant: String::new(),
-            }),
-            link_preview: Some(full_preview()),
-            ephemeral_seconds: 90,
-            ..text_req("all of it")
-        })
-        .unwrap();
-        let ext = message.extended_text_message.expect("must be extended");
-        assert_eq!(
-            ext.matched_text.as_deref(),
-            Some("https://example.com/post")
-        );
-        let context = ext.context_info.expect("context_info must be set");
-        assert_eq!(
-            context.mentioned_jid,
-            vec!["5511888888888@s.whatsapp.net".to_string()]
-        );
-        assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-1"));
-        // Quote participant falls back to the quoted key's participant.
-        assert_eq!(
-            context.participant.as_deref(),
-            Some("5511777777777@s.whatsapp.net")
-        );
-        assert_eq!(context.expiration, Some(90));
-    }
-
-    // ephemeral_seconds == 0 means "not ephemeral": even when other context
-    // exists, expiration must stay absent (the core invents no duration).
-    #[test]
-    fn zero_ephemeral_leaves_expiration_absent() {
-        let ext = build_text_message(&pb::SendTextRequest {
-            mentions: vec![pb::Mention {
-                jid: "5511888888888@s.whatsapp.net".to_string(),
-            }],
-            ..text_req("@you")
-        })
-        .unwrap()
-        .extended_text_message
-        .expect("mentions force extended");
-        let context = ext.context_info.expect("context_info must be set");
-        assert_eq!(context.expiration, None);
-    }
-}
+#[path = "messaging_tests.rs"]
+mod tests;

@@ -30,3 +30,4 @@ mod rich;
 mod sends;
 mod status;
 mod statuses;
+mod typed_inputs;

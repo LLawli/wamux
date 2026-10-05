@@ -18,13 +18,14 @@ use std::time::Duration;
 use tokio::sync::broadcast::{Receiver, error::RecvError};
 use whatsapp_rust::pair_code::PairCodeOptions;
 
-use wamux::domain::{jid_parse, messaging};
+use wamux::domain::messaging;
 use wamux::proto::v1 as pb;
 use wamux::state::AccountHandle;
 use wamux_tools::inproc::{database_url_from, init_tracing, open_registry, resolve_or_create};
 use wamux_tools::live_env::{account_ref_from, process_env};
 use wamux_tools::qr::{ascii_qr, open_in_viewer, write_qr_png};
 use wamux_tools::report::Report;
+use wamux_types::{Jid, OutgoingText};
 
 const QR_PNG: &str = "/tmp/wamux-qr.png";
 /// How long a pairing may take before the run gives up and fails.
@@ -203,15 +204,15 @@ async fn send_self_message(
     let Some(client) = handle.client().await else {
         return report.fail("Messaging.SendText(self)", "no client available");
     };
-    let jid = match jid_parse::parse_jid(&target) {
+    let jid = match Jid::parse(&target) {
         Ok(jid) => jid,
         Err(e) => return report.fail("Messaging.SendText(self)", format!("bad jid: {e}")),
     };
-    let request = pb::SendTextRequest {
+    let text = OutgoingText {
         text: "wamux: pareamento + envio OK".to_string(),
         ..Default::default()
     };
-    match messaging::send_text(&client, jid, &request).await {
+    match messaging::send_text(&client, jid, &text).await {
         Ok(result) => report.accepted(
             "Messaging.SendText(self)",
             format!("id={}", result.message_id),
