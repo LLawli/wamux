@@ -7,23 +7,28 @@ use wacore::iq::groups::{
     GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupParticipatingIq,
     GroupSubject, ParticipantChangeResponse,
 };
+use wamux_types::Jid;
 use whatsapp_rust::Client;
 use whatsapp_rust::features::{GroupParticipant, MembershipRequest, PreviousDescription};
 
-use crate::domain::jid_parse::{parse_jid, parse_jids};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
-fn invalid<E: std::fmt::Display>(e: E) -> WamuxError {
-    WamuxError::InvalidArgument(e.to_string())
+/// The library's own jids, which is what `client.groups()` takes. Cloning
+/// is cheap and the conversion is the one place the newtype is unwrapped.
+fn lib_jids(participants: &[Jid]) -> Vec<whatsapp_rust::Jid> {
+    participants
+        .iter()
+        .map(|jid| jid.as_lib().clone())
+        .collect()
 }
 
 pub async fn create_group(
     client: &Client,
     subject: &str,
-    participants: &[String],
+    participants: &[Jid],
 ) -> Result<pb::GroupJidResponse, WamuxError> {
-    let parts = parse_jids(participants)?;
+    let parts: Vec<whatsapp_rust::Jid> = lib_jids(participants);
     let mut options = GroupCreateOptions::new(subject);
     options.participants = parts
         .into_iter()
@@ -114,14 +119,13 @@ fn participant_change(c: ParticipantChangeResponse) -> pb::ParticipantChange {
 
 pub async fn add_participants(
     client: &Client,
-    group: &str,
-    participants: &[String],
+    group: &Jid,
+    participants: &[Jid],
 ) -> Result<pb::ParticipantsResponse, WamuxError> {
-    let jid = parse_jid(group)?;
-    let parts = parse_jids(participants)?;
+    let parts: Vec<whatsapp_rust::Jid> = lib_jids(participants);
     client
         .groups()
-        .add_participants(&jid, &parts)
+        .add_participants(group.as_lib(), &parts)
         .await
         .map(participant_changes)
         .map_err(client_err)
@@ -129,14 +133,13 @@ pub async fn add_participants(
 
 pub async fn remove_participants(
     client: &Client,
-    group: &str,
-    participants: &[String],
+    group: &Jid,
+    participants: &[Jid],
 ) -> Result<pb::ParticipantsResponse, WamuxError> {
-    let jid = parse_jid(group)?;
-    let parts = parse_jids(participants)?;
+    let parts: Vec<whatsapp_rust::Jid> = lib_jids(participants);
     client
         .groups()
-        .remove_participants(&jid, &parts)
+        .remove_participants(group.as_lib(), &parts)
         .await
         .map(participant_changes)
         .map_err(client_err)
@@ -144,14 +147,13 @@ pub async fn remove_participants(
 
 pub async fn promote(
     client: &Client,
-    group: &str,
-    participants: &[String],
+    group: &Jid,
+    participants: &[Jid],
 ) -> Result<pb::ParticipantsResponse, WamuxError> {
-    let jid = parse_jid(group)?;
-    let parts = parse_jids(participants)?;
+    let parts: Vec<whatsapp_rust::Jid> = lib_jids(participants);
     client
         .groups()
-        .promote_participants(&jid, &parts)
+        .promote_participants(group.as_lib(), &parts)
         .await
         .map(participant_changes)
         .map_err(client_err)
@@ -159,36 +161,35 @@ pub async fn promote(
 
 pub async fn demote(
     client: &Client,
-    group: &str,
-    participants: &[String],
+    group: &Jid,
+    participants: &[Jid],
 ) -> Result<pb::ParticipantsResponse, WamuxError> {
-    let jid = parse_jid(group)?;
-    let parts = parse_jids(participants)?;
+    let parts: Vec<whatsapp_rust::Jid> = lib_jids(participants);
     client
         .groups()
-        .demote_participants(&jid, &parts)
+        .demote_participants(group.as_lib(), &parts)
         .await
         .map(participant_changes)
         .map_err(client_err)
 }
 
-pub async fn set_subject(client: &Client, group: &str, subject: &str) -> Result<(), WamuxError> {
-    let jid = parse_jid(group)?;
-    let subject = GroupSubject::new(subject).map_err(invalid)?;
+pub async fn set_subject(client: &Client, group: &Jid, subject: &str) -> Result<(), WamuxError> {
+    let subject =
+        GroupSubject::new(subject).map_err(|e| WamuxError::InvalidArgument(e.to_string()))?;
     client
         .groups()
-        .set_subject(&jid, subject)
+        .set_subject(group.as_lib(), subject)
         .await
         .map_err(client_err)
 }
 
 pub async fn set_description(
     client: &Client,
-    group: &str,
+    group: &Jid,
     description: &str,
 ) -> Result<(), WamuxError> {
-    let jid = parse_jid(group)?;
-    let description = GroupDescription::new(description).map_err(invalid)?;
+    let description = GroupDescription::new(description)
+        .map_err(|e| WamuxError::InvalidArgument(e.to_string()))?;
     client
         .groups()
         // 0.7 types the third argument as `PreviousDescription`, the server's
@@ -198,23 +199,26 @@ pub async fn set_description(
         // to pass one. `Absent` would 409 on any group that already has a
         // description, so it is not the safe literal translation of the old
         // `None` it looks like.
-        .set_description(&jid, Some(description), PreviousDescription::Resolve)
+        .set_description(
+            group.as_lib(),
+            Some(description),
+            PreviousDescription::Resolve,
+        )
         .await
         .map_err(client_err)
 }
 
 pub async fn get_metadata(
     client: &Client,
-    group: &str,
+    group: &Jid,
 ) -> Result<pb::GroupMetadataResponse, WamuxError> {
-    let jid = parse_jid(group)?;
     // main split 0.7.0's `get_metadata` into `fetch_metadata` (protocol data
     // only) plus an opt-in `resolve_participant_addresses` backfill (#30). The
     // roster is one of the few places the server volunteers a username/PN pair
     // at all (issue #1), so GetGroupMetadata keeps asking for both.
     let mut metadata = client
         .groups()
-        .fetch_metadata(&jid)
+        .fetch_metadata(group.as_lib())
         .await
         .map_err(client_err)?;
     client
@@ -228,13 +232,12 @@ pub async fn get_metadata(
 
 pub async fn invite_link(
     client: &Client,
-    group: &str,
+    group: &Jid,
     reset: bool,
 ) -> Result<pb::InviteLinkResponse, WamuxError> {
-    let jid = parse_jid(group)?;
     let link = client
         .groups()
-        .get_invite_link(&jid, reset)
+        .get_invite_link(group.as_lib(), reset)
         .await
         .map_err(client_err)?;
     Ok(pb::InviteLinkResponse { link })
@@ -259,9 +262,12 @@ pub async fn join_with_invite(
     })
 }
 
-pub async fn leave(client: &Client, group: &str) -> Result<(), WamuxError> {
-    let jid = parse_jid(group)?;
-    client.groups().leave(&jid).await.map_err(client_err)
+pub async fn leave(client: &Client, group: &Jid) -> Result<(), WamuxError> {
+    client
+        .groups()
+        .leave(group.as_lib())
+        .await
+        .map_err(client_err)
 }
 
 /// List the groups the account participates in (summary + projected metadata).
@@ -311,20 +317,18 @@ pub fn group_summaries(groups: Vec<whatsapp_rust::GroupMetadata>) -> Vec<pb::Gro
     summaries
 }
 
-pub async fn set_announce(client: &Client, group: &str, announce: bool) -> Result<(), WamuxError> {
-    let jid = parse_jid(group)?;
+pub async fn set_announce(client: &Client, group: &Jid, announce: bool) -> Result<(), WamuxError> {
     client
         .groups()
-        .set_announce(&jid, announce)
+        .set_announce(group.as_lib(), announce)
         .await
         .map_err(client_err)
 }
 
-pub async fn set_locked(client: &Client, group: &str, locked: bool) -> Result<(), WamuxError> {
-    let jid = parse_jid(group)?;
+pub async fn set_locked(client: &Client, group: &Jid, locked: bool) -> Result<(), WamuxError> {
     client
         .groups()
-        .set_locked(&jid, locked)
+        .set_locked(group.as_lib(), locked)
         .await
         .map_err(client_err)
 }
@@ -333,13 +337,12 @@ pub async fn set_locked(client: &Client, group: &str, locked: bool) -> Result<()
 /// per-message ephemeral flag the edge sets on SendText/SendMedia.
 pub async fn set_ephemeral(
     client: &Client,
-    group: &str,
+    group: &Jid,
     expiration_seconds: u32,
 ) -> Result<(), WamuxError> {
-    let jid = parse_jid(group)?;
     client
         .groups()
-        .set_ephemeral(&jid, expiration_seconds)
+        .set_ephemeral(group.as_lib(), expiration_seconds)
         .await
         .map_err(client_err)
 }
@@ -362,12 +365,11 @@ pub async fn preview_invite(
 
 /// Set or remove the group photo. An empty `image` means remove: `set_group`
 /// asserts (panics) on empty bytes, so empty MUST route to `remove_group`.
-pub async fn set_photo(client: &Client, group: &str, image: Vec<u8>) -> Result<(), WamuxError> {
-    let jid = parse_jid(group)?;
+pub async fn set_photo(client: &Client, group: &Jid, image: Vec<u8>) -> Result<(), WamuxError> {
     let spec = if image.is_empty() {
-        SetProfilePictureSpec::remove_group(&jid)
+        SetProfilePictureSpec::remove_group(group.as_lib())
     } else {
-        SetProfilePictureSpec::set_group(&jid, image)
+        SetProfilePictureSpec::set_group(group.as_lib(), image)
     };
     client.execute(spec).await.map_err(client_err)?;
     Ok(())
@@ -377,12 +379,11 @@ pub async fn set_photo(client: &Client, group: &str, image: Vec<u8>) -> Result<(
 /// bytes (mirrors metadata_json: the edge owns any shaping/filtering).
 pub async fn membership_requests(
     client: &Client,
-    group: &str,
+    group: &Jid,
 ) -> Result<pb::MembershipRequestsResponse, WamuxError> {
-    let jid = parse_jid(group)?;
     let requests = client
         .groups()
-        .get_membership_requests(&jid)
+        .get_membership_requests(group.as_lib())
         .await
         .map_err(client_err)?;
     Ok(pb::MembershipRequestsResponse {
@@ -397,14 +398,13 @@ fn requests_json(requests: &[MembershipRequest]) -> Vec<u8> {
 
 pub async fn approve_membership(
     client: &Client,
-    group: &str,
-    participants: &[String],
+    group: &Jid,
+    participants: &[Jid],
 ) -> Result<pb::ParticipantsResponse, WamuxError> {
-    let jid = parse_jid(group)?;
-    let parts = parse_jids(participants)?;
+    let parts: Vec<whatsapp_rust::Jid> = lib_jids(participants);
     client
         .groups()
-        .approve_membership_requests(&jid, &parts)
+        .approve_membership_requests(group.as_lib(), &parts)
         .await
         .map(participant_changes)
         .map_err(client_err)
@@ -412,14 +412,13 @@ pub async fn approve_membership(
 
 pub async fn reject_membership(
     client: &Client,
-    group: &str,
-    participants: &[String],
+    group: &Jid,
+    participants: &[Jid],
 ) -> Result<pb::ParticipantsResponse, WamuxError> {
-    let jid = parse_jid(group)?;
-    let parts = parse_jids(participants)?;
+    let parts: Vec<whatsapp_rust::Jid> = lib_jids(participants);
     client
         .groups()
-        .reject_membership_requests(&jid, &parts)
+        .reject_membership_requests(group.as_lib(), &parts)
         .await
         .map(participant_changes)
         .map_err(client_err)

@@ -1,4 +1,4 @@
-//! Transport-agnostic logic: building bots, mapping events, parsing jids,
+//! Transport-agnostic logic: building bots, mapping events,
 //! and the send/media/group/contact helpers used by the thin service layer.
 
 pub mod bot_factory;
@@ -8,7 +8,6 @@ pub mod event_mapping;
 pub mod groups;
 pub mod interactive_reply;
 pub mod isolate;
-pub mod jid_parse;
 pub mod lid_mapping;
 pub mod media_transfer;
 pub mod messaging;

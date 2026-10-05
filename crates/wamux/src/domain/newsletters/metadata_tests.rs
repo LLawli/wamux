@@ -114,24 +114,14 @@ fn absent_optional_fields_stay_at_proto3_defaults() {
 }
 
 // #56: the library's NotFound is the contract's NotFound, not the Unavailable
-// every other library error defaults to.
+// every other library error defaults to. #116: and the message names the
+// channel, where "account ... not found" named the wrong thing.
 #[test]
 fn a_missing_channel_is_not_found() {
     let err = newsletter_err(NewsletterError::NotFound(
         CHANNEL.parse().expect("channel jid"),
     ));
-    assert_eq!(tonic::Status::from(err).code(), tonic::Code::NotFound);
-}
-
-// A zero page size asks the server for nothing; it must read as the caller's
-// mistake, not as an empty channel.
-#[test]
-fn a_zero_count_is_an_invalid_argument() {
-    let err = require_at_least_one("count", 0).expect_err("0 must be refused");
-    assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
-    assert!(
-        err.to_string().contains("count must be at least 1"),
-        "{err}"
-    );
-    assert!(require_at_least_one("count", 1).is_ok());
+    let status = tonic::Status::from(err);
+    assert_eq!(status.code(), tonic::Code::NotFound);
+    assert_eq!(status.message(), format!("newsletter {CHANNEL} not found"));
 }

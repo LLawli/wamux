@@ -69,7 +69,18 @@ pub(crate) fn require_typed_jid(jid: Option<pb::Jid>) -> Result<wamux_types::Jid
         .and_then(wamux_types::Jid::try_from)
 }
 
-/// Extract a required proto sub-message, or `InvalidArgument("missing <name>")`.
-pub(crate) fn require_field<T>(field: Option<T>, name: &str) -> Result<T, WamuxError> {
-    field.ok_or_else(|| WamuxError::InvalidArgument(format!("missing {name}")))
+/// The error for a required proto sub-message that is absent. Concrete rather
+/// than a generic `require_field<T>` (#116): callers write
+/// `.ok_or_else(|| missing_field("target"))?`.
+pub(crate) fn missing_field(name: &str) -> WamuxError {
+    WamuxError::InvalidArgument(format!("missing {name}"))
+}
+
+/// A batch of jid strings into `Jid`s, in order; the first bad one fails the
+/// lot (#116).
+pub(crate) fn parse_jids(values: &[String]) -> Result<Vec<wamux_types::Jid>, WamuxError> {
+    values
+        .iter()
+        .map(|value| wamux_types::Jid::parse(value))
+        .collect()
 }

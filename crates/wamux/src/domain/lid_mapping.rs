@@ -8,10 +8,10 @@
 use std::sync::Arc;
 
 use wacore::store::traits::{Backend, LidPnMappingEntry};
+use wamux_types::LidPnQuery;
 use whatsapp_rust::lid_pn_cache::LidPnEntry;
 use whatsapp_rust::{Client, Server};
 
-use crate::domain::jid_parse::parse_jids;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
@@ -20,12 +20,14 @@ use crate::proto::v1 as pb;
 /// One result per query, in request order, so the caller can zip them back.
 pub async fn resolve_lid_pn(
     client: &Client,
-    jids: &[String],
+    queries: &[LidPnQuery],
 ) -> Result<Vec<pb::LidPnResult>, WamuxError> {
-    let parsed = parse_jids(jids)?;
-    let mut results = Vec::with_capacity(parsed.len());
-    for (query, jid) in jids.iter().zip(parsed) {
-        let entry = client.get_lid_pn_entry(&jid).await.map_err(client_err)?;
+    let mut results = Vec::with_capacity(queries.len());
+    for query in queries {
+        let entry = client
+            .get_lid_pn_entry(query.jid.as_lib())
+            .await
+            .map_err(client_err)?;
         results.push(lid_pn_result(query, entry));
     }
     Ok(results)
@@ -44,9 +46,10 @@ pub async fn list_lid_mappings(
 
 /// A cache/store hit becomes `found=true` + the pair; a miss keeps the query so
 /// the caller can tell which of a batch went unanswered.
-fn lid_pn_result(query: &str, entry: Option<LidPnEntry>) -> pb::LidPnResult {
+fn lid_pn_result(query: &LidPnQuery, entry: Option<LidPnEntry>) -> pb::LidPnResult {
     pb::LidPnResult {
-        query: query.to_string(),
+        // The text as sent (#116), not the parsed jid: a `@c.us` query comes back `@c.us`.
+        query: query.query.clone(),
         found: entry.is_some(),
         mapping: entry.map(|e| {
             lid_pn_mapping(
@@ -88,58 +91,5 @@ fn side_jid(user: &str, server: Server) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use whatsapp_rust::lid_pn_cache::LearningSource;
-
-    fn stored(lid: &str, phone: &str) -> LidPnMappingEntry {
-        LidPnMappingEntry {
-            lid: lid.to_string(),
-            phone_number: phone.to_string(),
-            created_at: 1_717_932_000,
-            updated_at: 1_717_932_001,
-            learning_source: "usync".to_string(),
-        }
-    }
-
-    #[test]
-    fn stored_pair_renders_both_sides_as_full_jids() {
-        let mapping = stored_mapping(&stored("169815004184633", "5511999000111"));
-        assert_eq!(mapping.lid, "169815004184633@lid");
-        assert_eq!(mapping.pn, "5511999000111@s.whatsapp.net");
-        assert_eq!(mapping.created_at, 1_717_932_000);
-        assert_eq!(mapping.learning_source, "usync");
-    }
-
-    // A half-written row must not become the JID "@lid", which parses and would
-    // then be relayed onward by an edge as if it named someone.
-    #[test]
-    fn missing_user_part_stays_empty_not_a_bare_server() {
-        let mapping = stored_mapping(&stored("", "5511999000111"));
-        assert!(mapping.lid.is_empty(), "got {:?}", mapping.lid);
-        assert_eq!(mapping.pn, "5511999000111@s.whatsapp.net");
-    }
-
-    #[test]
-    fn a_miss_keeps_the_query_and_carries_no_mapping() {
-        let result = lid_pn_result("169815004184633@lid", None);
-        assert_eq!(result.query, "169815004184633@lid");
-        assert!(!result.found);
-        assert!(result.mapping.is_none());
-    }
-
-    #[test]
-    fn a_hit_relays_the_library_learning_source_verbatim() {
-        let entry = LidPnEntry::with_timestamp(
-            "169815004184633".to_string(),
-            "5511999000111".to_string(),
-            1_717_932_000,
-            LearningSource::PeerLidMessage,
-        );
-        let result = lid_pn_result("169815004184633@lid", Some(entry));
-        assert!(result.found);
-        let mapping = result.mapping.expect("a hit carries the pair");
-        assert_eq!(mapping.pn, "5511999000111@s.whatsapp.net");
-        assert_eq!(mapping.learning_source, "peer_lid_message");
-    }
-}
+#[path = "lid_mapping_tests.rs"]
+mod tests;

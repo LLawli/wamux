@@ -7,14 +7,14 @@
 //! these rows by jid. Nothing new is implemented against WhatsApp here; the
 //! library already asks, the core just relays the answer.
 
+use wamux_types::{Jid, NewsletterHistoryQuery};
+use whatsapp_rust::Client;
 use whatsapp_rust::features::{
     NewsletterError, NewsletterMessage, NewsletterMetadata, NewsletterRole, NewsletterState,
     NewsletterVerification,
 };
-use whatsapp_rust::{Client, Jid};
 
 use crate::domain::event_mapping::project_content;
-use crate::domain::jid_parse::parse_jid;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
@@ -60,11 +60,10 @@ pub async fn list_subscribed(client: &Client) -> Result<pb::NewsletterList, Wamu
     })
 }
 
-pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, WamuxError> {
-    let jid = parse_jid(jid)?;
+pub async fn get_metadata(client: &Client, jid: &Jid) -> Result<pb::Newsletter, WamuxError> {
     let found = client
         .newsletter()
-        .get_metadata(&jid)
+        .get_metadata(jid.as_lib())
         .await
         .map_err(newsletter_err)?;
     Ok(metadata_to_proto(&found))
@@ -75,8 +74,10 @@ pub async fn get_metadata(client: &Client, jid: &str) -> Result<pb::Newsletter, 
 /// rejections (IQ or MEX) into `WaServer`.
 fn newsletter_err(err: NewsletterError) -> WamuxError {
     match err {
+        // Its own variant (#116): `AccountNotFound` would have wrapped this in
+        // "account ... not found", naming the wrong thing.
         NewsletterError::NotFound(jid) => {
-            WamuxError::AccountNotFound(format!("no newsletter metadata for {jid}"))
+            WamuxError::NotFound(format!("newsletter {jid} not found"))
         }
         other => client_err(other),
     }
@@ -145,38 +146,25 @@ fn role_token(role: &NewsletterRole) -> String {
 /// on no payload — which is the whole reason this RPC is here.
 pub async fn get_messages(
     client: &Client,
-    req: &pb::GetNewsletterMessagesRequest,
+    query: &NewsletterHistoryQuery,
 ) -> Result<pb::NewsletterMessageList, WamuxError> {
-    let jid: Jid = parse_jid(&req.jid)?;
-    require_at_least_one("count", req.count)?;
-    // 0 is proto3's "absent": start at the newest rather than before row zero.
-    let before = (req.before != 0).then_some(req.before);
     let rows = client
         .newsletter()
-        .get_messages(jid, req.count, before)
+        .get_messages(query.jid.as_lib().clone(), query.count, query.before)
         .await
         .map_err(client_err)?;
     Ok(pb::NewsletterMessageList {
-        messages: rows.iter().map(|row| row_to_proto(row, &req.jid)).collect(),
+        messages: rows
+            .iter()
+            .map(|row| row_to_proto(row, &query.jid))
+            .collect(),
     })
-}
-
-/// A page size (`count`, `limit`) is the caller's to choose, and 0 asks the
-/// server for nothing. Refused here so it answers InvalidArgument instead of an
-/// empty list, which reads as "this channel has no history".
-fn require_at_least_one(field: &str, value: u32) -> Result<(), WamuxError> {
-    if value == 0 {
-        return Err(WamuxError::InvalidArgument(format!(
-            "{field} must be at least 1, got 0"
-        )));
-    }
-    Ok(())
 }
 
 /// Project one library row onto the wire shape. Every token is the server's
 /// own (`*_raw`, `edit`), so an absent `type` relays as absence rather than as
 /// the `text` the typed field defaults to (#1558).
-fn row_to_proto(row: &NewsletterMessage, chat: &str) -> pb::NewsletterMessage {
+fn row_to_proto(row: &NewsletterMessage, chat: &Jid) -> pb::NewsletterMessage {
     pb::NewsletterMessage {
         message: Some(row_to_inbound(row, chat)),
         server_id: row.server_id,
@@ -217,15 +205,18 @@ fn row_to_proto(row: &NewsletterMessage, chat: &str) -> pb::NewsletterMessage {
 /// `key.from_me` and nothing fills `sender`, `push_name` or the alt-namespace
 /// jids: a row the server described sparsely does not gain values it never had.
 /// `chat` is the jid the caller addressed, not something read off the row.
-fn row_to_inbound(row: &NewsletterMessage, chat: &str) -> pb::InboundMessage {
+fn row_to_inbound(row: &NewsletterMessage, chat: &Jid) -> pb::InboundMessage {
+    // The jid prints as the caller wrote it for a `@newsletter`; `project_content`
+    // (event_mapping, #74) still takes text.
+    let chat_text: String = chat.to_string();
     let mut out = pb::InboundMessage {
         key: Some(pb::MessageKey {
-            remote_jid: chat.to_string(),
+            remote_jid: chat_text.clone(),
             id: row.message_id.clone(),
             from_me: row.is_sender,
             participant: String::new(),
         }),
-        chat: chat.to_string(),
+        chat: chat_text.clone(),
         timestamp: millis_from_seconds(row.timestamp),
         raw_message: row
             .message
@@ -235,7 +226,7 @@ fn row_to_inbound(row: &NewsletterMessage, chat: &str) -> pb::InboundMessage {
         ..Default::default()
     };
     if let Some(message) = &row.message {
-        project_content(&mut out, message, chat);
+        project_content(&mut out, message, &chat_text);
     }
     out
 }

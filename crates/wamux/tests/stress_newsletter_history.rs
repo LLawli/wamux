@@ -17,6 +17,7 @@ use wacore_binary::builder::NodeBuilder;
 use wamux::domain::newsletters;
 use wamux::proto::v1 as pb;
 use wamux::stress::MockWaServer;
+use wamux_types::NewsletterHistoryQuery;
 use whatsapp_rust::Client;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
@@ -141,13 +142,15 @@ fn page(rows: Vec<Node>) -> Node {
         .build()
 }
 
-fn history_request(count: u32) -> pb::GetNewsletterMessagesRequest {
-    pb::GetNewsletterMessagesRequest {
+/// The page the RPC asks for, converted the way the service converts it (#116).
+fn history_request(count: u32) -> NewsletterHistoryQuery {
+    NewsletterHistoryQuery::try_from(pb::GetNewsletterMessagesRequest {
         account: None,
         jid: CHANNEL.to_string(),
         count,
         before: 0,
-    }
+    })
+    .expect("a valid history request")
 }
 
 /// The core's answer to one page.

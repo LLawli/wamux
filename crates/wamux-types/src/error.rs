@@ -17,6 +17,12 @@ pub enum WamuxError {
     #[error("account not found: {0}")]
     AccountNotFound(String),
 
+    /// Something other than an account is missing, a channel for one (#116).
+    /// The message says what and relays as written: `AccountNotFound` would
+    /// wrap it in "account ... not found", which named the wrong thing.
+    #[error("not found: {0}")]
+    NotFound(String),
+
     #[error("account is not connected")]
     NotConnected,
 
@@ -61,6 +67,10 @@ impl From<WamuxError> for tonic::Status {
             WamuxError::AccountNotFound(id) => {
                 tracing::debug!(account = %id, "account not found");
                 Status::not_found(format!("account {id} not found"))
+            }
+            WamuxError::NotFound(message) => {
+                tracing::debug!(%message, "not found");
+                Status::not_found(message.clone())
             }
             WamuxError::NotConnected => {
                 tracing::debug!("account is not connected");

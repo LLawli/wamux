@@ -101,3 +101,14 @@ fn a_non_ascii_server_text_skips_the_trailer_but_keeps_the_code() {
     assert!(status.metadata().get("wa-text").is_none());
     assert!(status.message().contains("não"));
 }
+
+// #116: a missing channel is NotFound with a message that names the channel,
+// relayed as written, not wrapped in "account ... not found".
+#[test]
+fn not_found_relays_its_message_verbatim() {
+    assert_status(
+        WamuxError::NotFound("newsletter 120363144038483540@newsletter not found".into()),
+        Code::NotFound,
+        "newsletter 120363144038483540@newsletter not found",
+    );
+}

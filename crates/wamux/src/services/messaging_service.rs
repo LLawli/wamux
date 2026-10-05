@@ -12,7 +12,7 @@ use wamux_types::{
 use whatsapp_rust::SendResult;
 
 use super::media_stream::MediaChunks;
-use super::{account_of, client_of, own_jid, require_field, require_typed_jid};
+use super::{account_of, client_of, missing_field, own_jid, require_typed_jid};
 use crate::domain::messaging::{
     self, recipient_fanout_to_proto, send_result_to_proto, sent_message_key,
 };
@@ -155,7 +155,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let target = MessageTarget::try_from(require_field(req.target, "target")?)?;
+        let target = MessageTarget::try_from(req.target.ok_or_else(|| missing_field("target"))?)?;
         let result = messaging::send_reaction(&client, &target, &req.emoji).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
@@ -166,7 +166,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let raw_key = require_field(req.target, "target")?;
+        let raw_key = req.target.ok_or_else(|| missing_field("target"))?;
         let target = MessageTarget::try_from(raw_key.clone())?;
         let result = messaging::edit_message(&client, &target, &req.new_text).await?;
         self.echo(&handle, &client, &result).await;
@@ -189,7 +189,7 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::DeleteMessageRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let raw_key = require_field(req.target, "target")?;
+        let raw_key = req.target.ok_or_else(|| missing_field("target"))?;
         let (handle, client, target) = self
             .delete_target(req.account.as_ref(), raw_key.clone(), req.for_everyone)
             .await?;
@@ -282,7 +282,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let target = MessageTarget::try_from(require_field(req.target, "target")?)?;
+        let target = MessageTarget::try_from(req.target.ok_or_else(|| missing_field("target"))?)?;
         chat_actions::star_message(&client, &target, req.starred).await?;
         Ok(Response::new(pb::Empty {}))
     }

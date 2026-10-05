@@ -9,6 +9,9 @@
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
+use wamux_types::{
+    Jid, NewsletterAddOnsQuery, NewsletterHistoryQuery, NewsletterJid, NewsletterPollVote,
+};
 
 use super::client_of;
 use crate::domain::newsletters;
@@ -44,7 +47,7 @@ impl NewsletterService for NewsletterSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            newsletters::get_metadata(&client, &req.jid).await?,
+            newsletters::get_metadata(&client, &Jid::parse(&req.jid)?).await?,
         ))
     }
 
@@ -54,8 +57,9 @@ impl NewsletterService for NewsletterSvc {
     ) -> Result<Response<pb::NewsletterMessageList>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let query = NewsletterHistoryQuery::try_from(req)?;
         Ok(Response::new(
-            newsletters::get_messages(&client, &req).await?,
+            newsletters::get_messages(&client, &query).await?,
         ))
     }
 
@@ -65,8 +69,9 @@ impl NewsletterService for NewsletterSvc {
     ) -> Result<Response<pb::SendNewsletterPollVoteResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let vote = NewsletterPollVote::try_from(req)?;
         Ok(Response::new(
-            newsletters::send_poll_vote(&client, &req).await?,
+            newsletters::send_poll_vote(&client, &vote).await?,
         ))
     }
 
@@ -76,8 +81,9 @@ impl NewsletterService for NewsletterSvc {
     ) -> Result<Response<pb::NewsletterMyAddOnsList>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let query = NewsletterAddOnsQuery::try_from(req)?;
         Ok(Response::new(
-            newsletters::get_my_addons(&client, &req).await?,
+            newsletters::get_my_addons(&client, &query).await?,
         ))
     }
 
@@ -88,7 +94,7 @@ impl NewsletterService for NewsletterSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            newsletters::subscribe_live_updates(&client, &req.jid).await?,
+            newsletters::subscribe_live_updates(&client, NewsletterJid::parse(&req.jid)?).await?,
         ))
     }
 }

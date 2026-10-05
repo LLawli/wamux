@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
+use wamux_types::Jid;
 
-use super::client_of;
+use super::{client_of, parse_jids};
 use crate::domain::groups;
 use crate::proto::v1 as pb;
 use crate::proto::v1::group_service_server::GroupService;
@@ -29,7 +30,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::create_group(&client, &req.subject, &req.participants).await?,
+            groups::create_group(&client, &req.subject, &parse_jids(&req.participants)?).await?,
         ))
     }
 
@@ -39,7 +40,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let results = groups::add_participants(&client, &req.group_jid, &req.participants).await?;
+        let results = groups::add_participants(
+            &client,
+            &Jid::parse(&req.group_jid)?,
+            &parse_jids(&req.participants)?,
+        )
+        .await?;
         Ok(Response::new(results))
     }
 
@@ -49,8 +55,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let results =
-            groups::remove_participants(&client, &req.group_jid, &req.participants).await?;
+        let results = groups::remove_participants(
+            &client,
+            &Jid::parse(&req.group_jid)?,
+            &parse_jids(&req.participants)?,
+        )
+        .await?;
         Ok(Response::new(results))
     }
 
@@ -60,7 +70,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let results = groups::promote(&client, &req.group_jid, &req.participants).await?;
+        let results = groups::promote(
+            &client,
+            &Jid::parse(&req.group_jid)?,
+            &parse_jids(&req.participants)?,
+        )
+        .await?;
         Ok(Response::new(results))
     }
 
@@ -70,7 +85,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let results = groups::demote(&client, &req.group_jid, &req.participants).await?;
+        let results = groups::demote(
+            &client,
+            &Jid::parse(&req.group_jid)?,
+            &parse_jids(&req.participants)?,
+        )
+        .await?;
         Ok(Response::new(results))
     }
 
@@ -80,7 +100,7 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_subject(&client, &req.group_jid, &req.text).await?;
+        groups::set_subject(&client, &Jid::parse(&req.group_jid)?, &req.text).await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -90,7 +110,7 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_description(&client, &req.group_jid, &req.text).await?;
+        groups::set_description(&client, &Jid::parse(&req.group_jid)?, &req.text).await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -101,7 +121,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::get_metadata(&client, &req.group_jid).await?,
+            groups::get_metadata(&client, &Jid::parse(&req.group_jid)?).await?,
         ))
     }
 
@@ -112,7 +132,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::invite_link(&client, &req.group_jid, false).await?,
+            groups::invite_link(&client, &Jid::parse(&req.group_jid)?, false).await?,
         ))
     }
 
@@ -123,7 +143,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::invite_link(&client, &req.group_jid, true).await?,
+            groups::invite_link(&client, &Jid::parse(&req.group_jid)?, true).await?,
         ))
     }
 
@@ -154,7 +174,7 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::leave(&client, &req.group_jid).await?;
+        groups::leave(&client, &Jid::parse(&req.group_jid)?).await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -164,7 +184,7 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_announce(&client, &req.group_jid, req.enabled).await?;
+        groups::set_announce(&client, &Jid::parse(&req.group_jid)?, req.enabled).await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -174,7 +194,7 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_locked(&client, &req.group_jid, req.enabled).await?;
+        groups::set_locked(&client, &Jid::parse(&req.group_jid)?, req.enabled).await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -184,7 +204,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_ephemeral(&client, &req.group_jid, req.expiration_seconds).await?;
+        groups::set_ephemeral(
+            &client,
+            &Jid::parse(&req.group_jid)?,
+            req.expiration_seconds,
+        )
+        .await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -205,7 +230,7 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_photo(&client, &req.group_jid, req.image).await?;
+        groups::set_photo(&client, &Jid::parse(&req.group_jid)?, req.image).await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -216,7 +241,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::membership_requests(&client, &req.group_jid).await?,
+            groups::membership_requests(&client, &Jid::parse(&req.group_jid)?).await?,
         ))
     }
 
@@ -226,8 +251,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let results =
-            groups::approve_membership(&client, &req.group_jid, &req.participants).await?;
+        let results = groups::approve_membership(
+            &client,
+            &Jid::parse(&req.group_jid)?,
+            &parse_jids(&req.participants)?,
+        )
+        .await?;
         Ok(Response::new(results))
     }
 
@@ -237,7 +266,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::ParticipantsResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let results = groups::reject_membership(&client, &req.group_jid, &req.participants).await?;
+        let results = groups::reject_membership(
+            &client,
+            &Jid::parse(&req.group_jid)?,
+            &parse_jids(&req.participants)?,
+        )
+        .await?;
         Ok(Response::new(results))
     }
 }

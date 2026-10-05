@@ -20,11 +20,17 @@
 use serde_json::{Value, json};
 use wamux::domain::newsletters;
 use wamux::stress::MockWaServer;
+use wamux_types::Jid;
 
 #[allow(dead_code)]
 mod common;
 
 const CHANNEL: &str = "120363144038483540@newsletter";
+
+/// The channel as the domain takes it since #116: parsed at the boundary.
+fn channel() -> Jid {
+    Jid::parse(CHANNEL).expect("channel jid")
+}
 
 /// The live-captured channel node, with the three enum fields in the server's
 /// own spelling.
@@ -77,7 +83,7 @@ async fn core_relays_the_servers_tokens_lowercased() {
     ];
     for (state, verification, role) in cases {
         answer_one_channel(&mock, channel_node(state, verification, role));
-        let out = newsletters::get_metadata(&client, CHANNEL)
+        let out = newsletters::get_metadata(&client, &channel())
             .await
             .expect("core get_metadata");
         assert_eq!(out.state, state.to_lowercase(), "state {state}");
@@ -103,7 +109,7 @@ async fn core_answers_not_found_for_a_missing_channel() {
 
     for (label, node) in [("live", non_existing_node()), ("null", Value::Null)] {
         answer_one_channel(&mock, node);
-        let err = newsletters::get_metadata(&client, CHANNEL)
+        let err = newsletters::get_metadata(&client, &channel())
             .await
             .expect_err("a missing channel is not a Newsletter");
         assert_eq!(
@@ -168,7 +174,7 @@ async fn core_relays_a_mex_refusal_as_the_servers_code() {
         .to_string(),
     );
     let status = tonic::Status::from(
-        newsletters::get_metadata(&client, CHANNEL)
+        newsletters::get_metadata(&client, &channel())
             .await
             .expect_err("a refused query is an error"),
     );
@@ -189,7 +195,7 @@ async fn accepted_an_unmodelled_role_relays_as_empty() {
     let client = logged.client.clone();
 
     answer_one_channel(&mock, channel_node("ACTIVE", "VERIFIED", "MODERATOR"));
-    let out = newsletters::get_metadata(&client, CHANNEL)
+    let out = newsletters::get_metadata(&client, &channel())
         .await
         .expect("core get_metadata");
     assert_eq!(
@@ -218,7 +224,7 @@ async fn accepted_absent_state_and_verification_read_as_defaults() {
         .expect("thread object")
         .remove("verification");
     answer_one_channel(&mock, node);
-    let out = newsletters::get_metadata(&client, CHANNEL)
+    let out = newsletters::get_metadata(&client, &channel())
         .await
         .expect("core get_metadata");
     assert_eq!(

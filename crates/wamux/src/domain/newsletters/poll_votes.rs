@@ -7,19 +7,12 @@
 //! keyed on. The library owns the stanza (upstream #1552, #1554, #1555); the
 //! core validates the request, relays it, and hands back what came out.
 
-use wamux_types::NewsletterJid;
-use whatsapp_rust::{Client, Jid};
+use wamux_types::{NewsletterAddOnsQuery, NewsletterJid, NewsletterPollVote};
+use whatsapp_rust::Client;
 
-use super::{millis_from_seconds, require_at_least_one};
+use super::millis_from_seconds;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
-
-/// WA Web's own ceiling (`REPEATED_CHILD(<vote>, 0, 1000)` in
-/// `WASmaxOutMessagePublishNewsletterPollVoteMixin`), which the library also
-/// enforces with a private constant. Checked here so an oversized vote answers
-/// InvalidArgument: the library's `InvalidRequest` would reach the caller
-/// through `client_err` as Unavailable, which reads as "the core is down".
-const MAX_POLL_VOTE_OPTIONS: usize = 1000;
 
 /// Vote in a channel poll. The list is the whole selection: it replaces the
 /// previous vote on the server, and an empty one removes it. The answer is the
@@ -29,18 +22,15 @@ const MAX_POLL_VOTE_OPTIONS: usize = 1000;
 /// puts no message in the channel. `GetMyNewsletterAddOns` reads it back.
 pub async fn send_poll_vote(
     client: &Client,
-    req: &pb::SendNewsletterPollVoteRequest,
+    vote: &NewsletterPollVote,
 ) -> Result<pb::SendNewsletterPollVoteResponse, WamuxError> {
-    let jid = require_newsletter_jid(&req.jid)?;
-    if req.server_id == 0 {
-        return Err(WamuxError::InvalidArgument(
-            "server_id must name the poll, got 0".to_string(),
-        ));
-    }
-    let hashes = option_hashes(&req.option_hashes)?;
     let stanza_id = client
         .newsletter()
-        .send_poll_vote(&jid, req.server_id, &hashes)
+        .send_poll_vote(
+            vote.jid.as_jid().as_lib(),
+            vote.server_id,
+            &vote.option_hashes,
+        )
         .await
         .map_err(client_err)?;
     Ok(pb::SendNewsletterPollVoteResponse { stanza_id })
@@ -51,13 +41,11 @@ pub async fn send_poll_vote(
 /// count every follower.
 pub async fn get_my_addons(
     client: &Client,
-    req: &pb::GetMyNewsletterAddOnsRequest,
+    query: &NewsletterAddOnsQuery,
 ) -> Result<pb::NewsletterMyAddOnsList, WamuxError> {
-    let jid = require_newsletter_jid(&req.jid)?;
-    require_at_least_one("limit", req.limit)?;
     let addons = client
         .newsletter()
-        .get_my_addons(&jid, req.limit)
+        .get_my_addons(query.jid.as_jid().as_lib(), query.limit)
         .await
         .map_err(client_err)?;
     Ok(pb::NewsletterMyAddOnsList {
@@ -70,48 +58,14 @@ pub async fn get_my_addons(
 /// Renewing before that runs out is the caller's timer, not the core's.
 pub async fn subscribe_live_updates(
     client: &Client,
-    jid: &str,
+    jid: NewsletterJid,
 ) -> Result<pb::SubscribeNewsletterLiveUpdatesResponse, WamuxError> {
-    let jid = require_newsletter_jid(jid)?;
     let duration_seconds = client
         .newsletter()
-        .subscribe_live_updates(jid)
+        .subscribe_live_updates(jid.as_jid().as_lib().clone())
         .await
         .map_err(client_err)?;
     Ok(pb::SubscribeNewsletterLiveUpdatesResponse { duration_seconds })
-}
-
-/// A jid on the `newsletter` server. Anything else is refused here rather than
-/// by the library, for the same Status reason as `MAX_POLL_VOTE_OPTIONS`.
-fn require_newsletter_jid(value: &str) -> Result<Jid, WamuxError> {
-    Ok(NewsletterJid::parse(value)?.as_jid().clone().into_lib())
-}
-
-/// The wire's `repeated bytes` as the library's fixed-size hashes: each exactly
-/// 32 bytes, at most `MAX_POLL_VOTE_OPTIONS`, none repeated.
-fn option_hashes(raw: &[Vec<u8>]) -> Result<Vec<[u8; 32]>, WamuxError> {
-    if raw.len() > MAX_POLL_VOTE_OPTIONS {
-        return Err(WamuxError::InvalidArgument(format!(
-            "a poll vote names at most {MAX_POLL_VOTE_OPTIONS} options, got {}",
-            raw.len()
-        )));
-    }
-    let mut hashes: Vec<[u8; 32]> = Vec::with_capacity(raw.len());
-    for (index, bytes) in raw.iter().enumerate() {
-        let hash: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
-            WamuxError::InvalidArgument(format!(
-                "option_hashes[{index}] must be 32 bytes (sha256 of the option name), got {}",
-                bytes.len()
-            ))
-        })?;
-        if hashes.contains(&hash) {
-            return Err(WamuxError::InvalidArgument(format!(
-                "option_hashes[{index}] repeats an earlier option"
-            )));
-        }
-        hashes.push(hash);
-    }
-    Ok(hashes)
 }
 
 /// One message's add-ons. Presence carries meaning, so absence stays absence:
@@ -130,7 +84,3 @@ fn my_addons_to_proto(addons: &whatsapp_rust::NewsletterMyAddOns) -> pb::Newslet
         }),
     }
 }
-
-#[cfg(test)]
-#[path = "poll_votes_tests.rs"]
-mod tests;
