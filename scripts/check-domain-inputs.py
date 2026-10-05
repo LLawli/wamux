@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""#63 / #115: no generated `pb::*` input struct reaches `domain/` or `state/`.
+"""#63 / #115 / #116: no generated `pb::*` input struct and no `String`
+identifier reaches `domain/` or `state/`.
 
 Usage: scripts/check-domain-inputs.py [--root DIR]   (DIR defaults to the repo)
 
@@ -12,14 +13,18 @@ this check fails when a function in `crates/wamux/src/domain` or
 `&pb::XHeader`, `&[pb::Mention]`, `Option<&pb::QuoteContext>`,
 `Vec<pb::PollVote>`, ...).
 
+#116 adds the other half of #63: an identifier travels as a named type, not a
+string. A parameter or field named for one (`group`, `jid`, `jids`,
+`participant(s)`, `chat`, `sender`, `creator`, `voter`, `recipient(s)`,
+`query`) typed `&str`, `String`, `&[String]` or `Vec<String>` fails too.
+
 Not flagged: building a response or an event (`-> pb::SendResult`,
 `pb::SendResult { .. }`), which the proto issues (#72-#74) reach. Test files
 (`*_tests.rs`, `tests.rs`, anything under a `tests/` directory) are skipped:
 tests build requests to feed the conversions.
 
 PENDING names the files that still take one, each with the issue that removes
-it. A pending file with no hit fails too, so the list only shrinks: #116
-empties it. The scan must read at least MIN_SCANNED files, so a scan that
+it. A pending file with no hit fails too, so the list only shrinks. The scan must read at least MIN_SCANNED files, so a scan that
 reads nothing cannot pass.
 """
 import argparse
@@ -30,13 +35,16 @@ REPO = Path(__file__).resolve().parent.parent
 SCANNED = ("crates/wamux/src/domain", "crates/wamux/src/state")
 MIN_SCANNED = 20
 PENDING = {
-    "crates/wamux/src/domain/newsletters.rs": "#116 (newsletters)",
-    "crates/wamux/src/domain/newsletters/poll_votes.rs": "#116 (newsletters)",
-    "crates/wamux/src/domain/event_mapping.rs": "#74 (map_sent builds the echo event from its wire key)",
+    "crates/wamux/src/domain/event_mapping.rs": "#74 (event construction: map_sent's wire key, chat and sender)",
 }
 INPUT = re.compile(
     r":\s*(?:(?:Option|Vec)<|&|\[|mut\s+)*pb::[A-Za-z0-9_:]*?"
     r"(?:Request|Header|MessageKey|Mention|QuoteContext|LinkPreview|MediaDescriptor|PollVote|Reply)\b"
+)
+
+STRING_ID = re.compile(
+    r"\b(?:group|jid|jids|participant|participants|chat|sender|creator|voter|recipient|recipients|query)"
+    r"\s*:\s*(?:&\[String\]|Vec<String>|&str|String)\s*[,)]"
 )
 
 
@@ -45,17 +53,17 @@ def is_test_file(path: Path) -> bool:
 
 
 def inputs(path: Path) -> list[tuple[int, str]]:
-    """(line, text) of each `pb::*` input type outside a `//` comment."""
+    """(line, text) of each `pb::*` input or `String` identifier outside a `//` comment."""
     hits = []
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         code = line.split("//", 1)[0]
-        if INPUT.search(code):
+        if INPUT.search(code) or STRING_ID.search(code):
             hits.append((number, line.strip()))
     return hits
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="no pb:: inputs in domain/ and state/ (#115)")
+    parser = argparse.ArgumentParser(description="no pb:: inputs or String ids in domain/ and state/ (#115, #116)")
     parser.add_argument("--root", type=Path, default=REPO)
     args = parser.parse_args(argv)
     problems: list[str] = []
@@ -81,7 +89,7 @@ def main(argv: list[str]) -> int:
         print("domain input check FAILED (convert at the service into a wamux-types type):")
         print("\n".join(f"  - {p}" for p in problems))
         return 1
-    print(f"no pb:: input in {scanned} domain/state files ({len(PENDING)} pending: {', '.join(sorted(set(PENDING.values())))})")
+    print(f"no pb:: input or String id in {scanned} domain/state files ({len(PENDING)} pending: {', '.join(sorted(set(PENDING.values())))})")
     return 0
 
 
