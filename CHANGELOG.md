@@ -496,6 +496,27 @@ has to follow them.
 
 ### Changed
 
+- **Groups, contacts, channels and LID lookups take named types too** (issue
+  #116, part 3 of #63, which it closes). No function in `domain/` or `state/`
+  takes a generated `pb::*` input struct or an identifier as a string any more,
+  except event construction (#74). `scripts/check-domain-inputs.py` now fails
+  on either.
+  - The new types: `NewsletterHistoryQuery`, `NewsletterPollVote`,
+    `NewsletterAddOnsQuery` and `LidPnQuery`. A group, a participant, a
+    contact and a channel are a `Jid`. `domain/jid_parse.rs` is gone; its
+    helpers were the `Jid` constructors.
+  - Nothing changes on the wire except one message. A channel that does not
+    exist still answers NotFound, but the message is now `newsletter <jid> not
+    found`; it read `account no newsletter metadata for <jid> not found`. It
+    has a `WamuxError::NotFound` variant of its own.
+  - A group RPC and GetNewsletterMetadata/GetNewsletterMessages still accept a
+    jid on any server, as before: whether to refuse one is #96 and #99.
+    ResolveLidPn still echoes each query as it was sent.
+  - `require_field<T>` and `groups::invalid<E>` are concrete now.
+    `run_isolated` stays generic, recorded as the one exception: each call
+    passes a closure of its own type, and the concrete form would be a boxed
+    trait object.
+
 - **The messaging domain takes its own types, not the wire's** (issue #115,
   part 2 of #63). The services convert a request once, at the boundary, into a
   `wamux-types` type, and `domain/` and `state/` never see a generated
