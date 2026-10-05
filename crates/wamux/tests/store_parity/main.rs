@@ -27,6 +27,7 @@ mod atomicity;
 mod batches_protocol;
 mod batches_signal;
 mod blobs;
+mod concurrency;
 mod harness;
 mod maintenance;
 mod msg_secret;

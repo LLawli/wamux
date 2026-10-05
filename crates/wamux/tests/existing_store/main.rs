@@ -3,6 +3,9 @@
 //! tests/fixtures/store-0f40e34/README.md); the parity suite only proves the
 //! new code reads back what the new code wrote.
 //!
+//! Turso (#106) opens the SQLite fixture too, and `turso_roundtrip` moves one
+//! file back and forth between the two families.
+//!
 //! Each engine's half is a pair: `reads_back` checks every getter against
 //! `values`, `keeps_working` writes, creates and deletes on top of the old rows.
 
@@ -13,6 +16,8 @@ mod common;
 
 mod checks;
 mod fixture;
+#[cfg(feature = "turso")]
+mod turso_roundtrip;
 mod values;
 
 use sqlx::SqlitePool;
@@ -41,6 +46,20 @@ async fn postgres_store_written_before_unification_keeps_working() {
     let (store, db) = fixture::postgres().await;
     checks::keeps_working(&store, fixture::POSTGRES_ACCOUNT).await;
     fixture::drop_postgres(store, db).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_store_written_before_unification_reads_back() {
+    let (store, _dir) = fixture::turso().await;
+    checks::reads_back(&store, fixture::SQLITE_ACCOUNT).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_store_written_before_unification_keeps_working() {
+    let (store, _dir) = fixture::turso().await;
+    checks::keeps_working(&store, fixture::SQLITE_ACCOUNT).await;
 }
 
 /// The premise of #65's "one `$N` string for both engines": sqlx-sqlite binds a

@@ -4,7 +4,7 @@
 # restating the stages in YAML, so there is exactly one definition of "green".
 #
 # Usage:
-#   scripts/ci.sh                # fmt + clippy (default & stress) + tests + fast stress tests
+#   scripts/ci.sh                # fmt + clippy (default, stress & turso) + tests + fast stress tests
 #   scripts/ci.sh --full         # also the #[ignore] scale tests (load, keepalive, M3)
 #   scripts/ci.sh --no-postgres  # only the gates that need no database
 #
@@ -47,6 +47,18 @@ must_run_pkg_tests() {
 }
 must_run_tests() { must_run_pkg_tests wamux "$@"; }
 
+# The Turso engine (#106) is behind the daemon's off-by-default `turso`
+# feature, so its tests exist only in a `--features turso` build. Its storage
+# cases name the engine (`turso_`, `turso_and_sqlite_`) and need no database;
+# the unit tests are the `$N` rewrite, the DSN and the scheme dispatch.
+turso_storage_cases() {
+  must_run_tests --features turso --lib storage::
+  must_run_tests --features turso --test storage_backend turso_
+  must_run_tests --features turso --test bincode_upgrade turso_
+  must_run_tests --features turso --test store_parity turso_
+  must_run_tests --features turso --test existing_store turso_
+}
+
 # wamux-tools (#64): the shared client, the env contract, the exit code, and
 # the built binaries refusing a bad config. Every suite but inproc runs its
 # daemon fixture on SQLite; inproc is Postgres-backed like the bins it serves.
@@ -81,6 +93,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 stage "clippy (--features stress)"
 cargo clippy --workspace --all-targets --features wamux/stress,wamux-tools/stress -- -D warnings
 
+# #106: the Turso family compiles only with its feature on; lint it too.
+stage "clippy (--features turso)"
+cargo clippy --workspace --all-targets --features wamux/turso -- -D warnings
+
 stage "no duplicate gRPC/HTTP crates"
 scripts/check-dup-deps.sh
 
@@ -111,6 +127,11 @@ scripts/check-store-coverage.py
 # the store defaults doc. Needs cargo (metadata, offline), not the database.
 stage "store trait defaults"
 scripts/check-store-defaults.py
+
+# #106: two engine families run the same statements, so they are written once
+# in storage/statements/ and never inline in a family. Pure text check.
+stage "store SQL written once"
+scripts/check-store-sql-shared.py
 
 # #67: a sleep in a test is a synchronization bug unless it says why it is not
 # one. Pure text check over the sources, so both modes run it.
@@ -154,6 +175,11 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   # #65: a store the pre-unification code wrote, opened on the unified SQL.
   must_run_tests --test existing_store sqlite_
 
+  stage "no-postgres: turso engine (storage cases and service suites)"
+  turso_storage_cases
+  WAMUX_TEST_ENGINE=turso must_run_tests --features turso --test grpc_server \
+    --test event_subscription --test reflection
+
   stage "no-postgres: wamux-tools (sqlite daemon fixture)"
   must_run_pkg_tests wamux-tools "${TOOLS_NO_PG_SUITES[@]}"
 
@@ -186,6 +212,14 @@ cargo test -p wamux
 # gate for #67 checks the skip removes exactly the prefixed tests).
 stage "tests (sqlite engine)"
 WAMUX_TEST_ENGINE=sqlite cargo test -p wamux -- --skip postgres_ --skip sqlite_ --skip both_engines_
+
+# Same suite, Turso engine (#106), in a `--features turso` build. The tests
+# that name an engine are skipped as above, `turso_` included: those are the
+# storage cases, run by name right before.
+stage "tests (turso engine)"
+turso_storage_cases
+WAMUX_TEST_ENGINE=turso cargo test -p wamux --features turso -- --skip postgres_ \
+  --skip sqlite_ --skip both_engines_ --skip turso_
 
 stage "tests (wamux-tools)"
 must_run_pkg_tests wamux-tools --test '*'

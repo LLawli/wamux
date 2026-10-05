@@ -101,6 +101,69 @@ impl RawProbe for SqlStore {
     }
 }
 
+/// The Turso half of `RawProbe` (#106). Raw SQL writes `?1`: turso binds `$N`
+/// by appearance, and the rewrite belongs to the engine, not to the probe.
+#[cfg(feature = "turso")]
+mod turso_probe {
+    use async_trait::async_trait;
+    use turso::Value;
+    use wamux::storage::turso::TursoStore;
+
+    use super::RawProbe;
+    use crate::common;
+
+    async fn column(store: &TursoStore, table: &str, column: &str, device_id: i32) -> Vec<Value> {
+        let sql = format!("SELECT {column} FROM {table} WHERE device_id = ?1");
+        let rows = common::turso_rows(store, &sql, vec![Value::Integer(device_id.into())]).await;
+        rows.into_iter().map(|mut row| row.remove(0)).collect()
+    }
+
+    #[async_trait]
+    impl RawProbe for TursoStore {
+        async fn column_bytes(
+            &self,
+            table: &str,
+            column_name: &str,
+            device_id: i32,
+        ) -> Vec<Vec<u8>> {
+            let mut out: Vec<Vec<u8>> = column(self, table, column_name, device_id)
+                .await
+                .into_iter()
+                .map(|v| match v {
+                    Value::Blob(bytes) => bytes,
+                    other => panic!("{table}.{column_name} on turso is not a blob: {other:?}"),
+                })
+                .collect();
+            out.sort();
+            out
+        }
+
+        async fn column_text(&self, table: &str, column_name: &str, device_id: i32) -> Vec<String> {
+            let mut out: Vec<String> = column(self, table, column_name, device_id)
+                .await
+                .into_iter()
+                .map(|v| match v {
+                    Value::Text(text) => text,
+                    other => panic!("{table}.{column_name} on turso is not text: {other:?}"),
+                })
+                .collect();
+            out.sort();
+            out
+        }
+
+        // Stored as INTEGER 0/1, like SQLite.
+        async fn prekey_uploaded(&self, device_id: i32, id: u32) -> Option<bool> {
+            let sql = "SELECT uploaded FROM prekeys WHERE device_id = ?1 AND id = ?2";
+            let params = vec![Value::Integer(device_id.into()), Value::Integer(id.into())];
+            let rows = common::turso_rows(self, sql, params).await;
+            rows.into_iter().next().map(|row| match &row[0] {
+                Value::Integer(flag) => *flag != 0,
+                other => panic!("prekeys.uploaded on turso is not an integer: {other:?}"),
+            })
+        }
+    }
+}
+
 /// One engine under test. The SQLite temp dir lives as long as the harness.
 pub struct Harness {
     pub storage: Arc<dyn StorageEngine>,
@@ -122,6 +185,17 @@ pub async fn postgres() -> Harness {
 /// A fresh SQLite file per test.
 pub async fn sqlite() -> Harness {
     let (storage, dir) = common::sqlite_engine().await;
+    Harness {
+        storage: storage.clone(),
+        raw: storage,
+        _dir: Some(dir),
+    }
+}
+
+/// A fresh Turso file per test (#106).
+#[cfg(feature = "turso")]
+pub async fn turso() -> Harness {
+    let (storage, dir) = common::turso_engine().await;
     Harness {
         storage: storage.clone(),
         raw: storage,

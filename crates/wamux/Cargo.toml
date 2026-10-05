@@ -36,6 +36,11 @@ stress = [
     "wacore-noise/test-util",
 ]
 
+# Turso storage engine (#106): `turso://` DSNs. Off by default, so the shipped
+# daemon and THIRD-PARTY-LICENSES carry none of its ~180 crates; a build without
+# it refuses `turso://` with a clear error. Experimental: see docs/DEPLOYMENT.md.
+turso = ["dep:turso"]
+
 [[bin]]
 name = "wamux"
 path = "src/main.rs"
@@ -53,10 +58,12 @@ tower.workspace = true
 futures = "0.3"
 async-trait = "0.1"
 
-# storage: both engines, always compiled. No feature gate: the DSN scheme picks
-# one at startup, and gating would sprinkle #[cfg] across the storage module for
-# the sole benefit of a slightly smaller binary.
+# storage: Postgres and SQLite (sqlx) are always compiled, no feature gate: the DSN
+# scheme picks one at startup, and gating would sprinkle #[cfg] across the module
+# for the sole benefit of a slightly smaller binary. The Turso family is the one
+# exception, because it carries ~180 crates: see the `turso` feature (#106).
 sqlx.workspace = true
+turso = { workspace = true, optional = true }
 
 thiserror = "2"
 anyhow.workspace = true

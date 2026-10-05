@@ -5,48 +5,20 @@
 //! Writes: the one-row statement in a loop inside ONE transaction, so a batch
 //! is one connection and one commit, all or nothing. A key repeated in a batch
 //! is written in order, so the last one wins. Reads: one query per
-//! `READ_CHUNK` values (`batch_sql`).
+//! `READ_CHUNK` values (`batch_chunks`).
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use wacore::store::error::Result;
 
 use super::SqlPool;
 use super::SqlTx;
-use super::batch_sql::{READ_CHUNK, in_placeholders, padded_chunks};
-
-pub(super) const PUT_IDENTITY: &str = "INSERT INTO identities (address, key, device_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (address, device_id) DO UPDATE SET key = EXCLUDED.key";
-pub(super) const DELETE_IDENTITY: &str =
-    "DELETE FROM identities WHERE address = $1 AND device_id = $2";
-pub(super) const PUT_SESSION: &str = "INSERT INTO sessions (address, record, device_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (address, device_id) DO UPDATE SET record = EXCLUDED.record";
-pub(super) const DELETE_SESSION: &str =
-    "DELETE FROM sessions WHERE address = $1 AND device_id = $2";
-pub(super) const STORE_PREKEY: &str = "INSERT INTO prekeys (id, key, uploaded, device_id)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (id, device_id) DO UPDATE
-     SET key = EXCLUDED.key, uploaded = EXCLUDED.uploaded";
-pub(super) const DELETE_PREKEY: &str = "DELETE FROM prekeys WHERE id = $1 AND device_id = $2";
-pub(super) const PUT_SENDER_KEY: &str = "INSERT INTO sender_keys (address, record, device_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (address, device_id) DO UPDATE SET record = EXCLUDED.record";
-pub(super) const DELETE_SENDER_KEY: &str =
-    "DELETE FROM sender_keys WHERE address = $1 AND device_id = $2";
-
-// The statement text is the same for every call and never varies by
-// deployment, so it is built once, not per call.
-static SELECT_SESSIONS: LazyLock<String> = LazyLock::new(|| {
-    let list = in_placeholders(2, READ_CHUNK);
-    format!("SELECT address, record FROM sessions WHERE device_id = $1 AND address IN ({list})")
-});
-static SELECT_PREKEYS: LazyLock<String> = LazyLock::new(|| {
-    let list = in_placeholders(2, READ_CHUNK);
-    format!("SELECT id, key FROM prekeys WHERE device_id = $1 AND id IN ({list})")
-});
+use crate::storage::batch_chunks::padded_chunks;
+use crate::storage::statements::signal::{
+    DELETE_IDENTITY, DELETE_PREKEY, DELETE_SENDER_KEY, DELETE_SESSION, PUT_IDENTITY,
+    PUT_SENDER_KEY, PUT_SESSION, SELECT_PREKEYS, SELECT_SESSIONS, STORE_PREKEY,
+};
 
 pub(super) async fn put_identities(
     pool: &SqlPool,

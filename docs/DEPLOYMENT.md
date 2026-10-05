@@ -20,11 +20,46 @@ The `database_url` scheme picks the engine, and nothing else needs to change:
 ```
 postgres://user:pass@host:5432/wamux    # many accounts; a database server
 sqlite:///var/lib/wamux/wamux.db        # single host; no server, file created if absent
+turso:///var/lib/wamux/wamux.db         # EXPERIMENTAL, see below; needs a --features turso build
 ```
 
 SQLite pins its pool to one connection so the process serializes its own
 writes, which is correct for a handful of accounts and a bottleneck for many.
 Postgres is the answer when accounts pile up.
+
+### Turso (experimental)
+
+`turso://<path>` runs the same schema on the native `turso` crate (a Rust
+rewrite of SQLite) instead of sqlx. It is a third engine for a single host, not
+a replacement for either of the others. What to know before choosing it:
+
+- **It is a build option.** The `turso` cargo feature is off by default and the
+  release binaries do not carry it, so the shipped daemon refuses a `turso://`
+  DSN with an error naming the missing feature. Build with
+  `cargo build --release --features turso`.
+- **The DSN is a path and nothing else.** `turso:///abs/x.db` is `/abs/x.db`,
+  `turso://x.db` is the relative `x.db`. A query string (`?mode=rwc`) is refused
+  rather than ignored: turso has no options, and silently dropping one would
+  hand you a different store than you asked for.
+- **Same file as `sqlite://`, both ways.** It applies the SQLite migrations and
+  records them in `_sqlx_migrations` exactly as sqlx does, so a store created
+  under `sqlite://` opens under `turso://` and the reverse, nothing converted.
+  The way back is the exit if turso ever misbehaves, and it is tested. Do it
+  with the daemon stopped.
+- **The lock trap: one process, one opener.** The file lock is a POSIX lock of
+  the process, so opening and closing ANY descriptor of the `.db` inside the
+  same process drops it, and a commit can be lost (reproduced on turso 0.8.1).
+  The daemon never opens the file any other way, and neither may anything you
+  embed next to it. Never run two daemons on one file either.
+- **Durability.** The connection runs `synchronous = FULL` (turso only documents
+  OFF and FULL), the journal is WAL, and `foreign_keys` is on. That is slower on
+  every commit than the SQLite engine's `NORMAL`, in exchange for no lost commit
+  on power loss.
+- **One connection.** Every account shares it behind a mutex, like SQLite's
+  one-connection pool. There is no `BEGIN CONCURRENT` / MVCC mode: it would leave
+  the file unreadable by the `sqlite3` tool and by `sqlite://`.
+- **Not stress-tested.** The store and service suites run on it; the stress
+  harness does not. Prefer Postgres for many accounts.
 
 ## Native (systemd)
 

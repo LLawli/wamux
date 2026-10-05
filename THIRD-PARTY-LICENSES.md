@@ -43,7 +43,7 @@ dev-dependencies are excluded because they never reach the binary.
 | bytes | 1.12.1 | MIT |
 | castaway | 0.2.4 | MIT |
 | cbc | 0.2.1 | MIT OR Apache-2.0 |
-| cc | 1.2.63 | MIT OR Apache-2.0 |
+| cc | 1.6.0 | MIT OR Apache-2.0 |
 | cfg-if | 1.0.4 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
 | chrono | 0.4.45 | MIT OR Apache-2.0 |
@@ -83,7 +83,7 @@ dev-dependencies are excluded because they never reach the binary.
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
 | fastrand | 2.4.1 | Apache-2.0 OR MIT |
 | figment | 0.10.19 | MIT OR Apache-2.0 |
-| find-msvc-tools | 0.1.9 | MIT OR Apache-2.0 |
+| find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 |
 | fixedbitset | 0.5.7 | MIT OR Apache-2.0 |
 | flate2 | 1.1.9 | MIT OR Apache-2.0 |
 | flume | 0.11.1 | Apache-2.0/MIT |
@@ -126,13 +126,13 @@ dev-dependencies are excluded because they never reach the binary.
 | hyper | 1.10.1 | MIT |
 | hyper-timeout | 0.5.2 | MIT OR Apache-2.0 |
 | hyper-util | 0.1.20 | MIT |
-| icu_collections | 2.2.0 | Unicode-3.0 |
-| icu_locale_core | 2.2.0 | Unicode-3.0 |
-| icu_normalizer | 2.2.0 | Unicode-3.0 |
-| icu_normalizer_data | 2.2.0 | Unicode-3.0 |
-| icu_properties | 2.2.0 | Unicode-3.0 |
-| icu_properties_data | 2.2.0 | Unicode-3.0 |
-| icu_provider | 2.2.0 | Unicode-3.0 |
+| icu_collections | 2.3.0 | Unicode-3.0 |
+| icu_locale_core | 2.3.0 | Unicode-3.0 |
+| icu_normalizer | 2.3.0 | Unicode-3.0 |
+| icu_normalizer_data | 2.3.0 | Unicode-3.0 |
+| icu_properties | 2.3.0 | Unicode-3.0 |
+| icu_properties_data | 2.3.0 | Unicode-3.0 |
+| icu_provider | 2.3.1 | Unicode-3.0 |
 | ident_case | 1.0.1 | MIT/Apache-2.0 |
 | idna | 1.1.0 | MIT OR Apache-2.0 |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
@@ -276,7 +276,7 @@ dev-dependencies are excluded because they never reach the binary.
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 |
 | thiserror-impl | 2.0.20 | MIT OR Apache-2.0 |
 | thread_local | 1.1.9 | MIT OR Apache-2.0 |
-| tinystr | 0.8.3 | Unicode-3.0 |
+| tinystr | 0.8.4 | Unicode-3.0 |
 | tinyvec | 1.11.0 | Zlib OR Apache-2.0 OR MIT |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib |
 | tokio | 1.53.1 | MIT |
@@ -338,7 +338,7 @@ dev-dependencies are excluded because they never reach the binary.
 | whatsapp-rust-ureq-http-client | 0.7.0 | MIT |
 | whoami | 1.6.1 | Apache-2.0 OR BSL-1.0 OR MIT |
 | winnow | 0.7.15 | MIT |
-| writeable | 0.6.3 | Unicode-3.0 |
+| writeable | 0.6.4 | Unicode-3.0 |
 | x25519-dalek | 3.0.0 | BSD-3-Clause |
 | yansi | 1.0.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
@@ -347,9 +347,9 @@ dev-dependencies are excluded because they never reach the binary.
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.7 | Unicode-3.0 |
 | zeroize | 1.9.0 | Apache-2.0 OR MIT |
-| zerotrie | 0.2.4 | Unicode-3.0 |
-| zerovec | 0.11.6 | Unicode-3.0 |
-| zerovec-derive | 0.11.3 | Unicode-3.0 |
+| zerotrie | 0.2.5 | Unicode-3.0 |
+| zerovec | 0.11.8 | Unicode-3.0 |
+| zerovec-derive | 0.11.6 | Unicode-3.0 |
 | zlib-rs | 0.6.7 | Zlib |
 | zmij | 1.0.21 | MIT |
 
@@ -994,7 +994,7 @@ END OF TERMS AND CONDITIONS
 
 ### LICENSE: 18 crate(s)
 
-<details><summary>icu_collections 2.2.0, icu_locale_core 2.2.0, icu_normalizer 2.2.0, icu_normalizer_data 2.2.0, icu_properties 2.2.0, icu_properties_data 2.2.0, ...</summary>
+<details><summary>icu_collections 2.3.0, icu_locale_core 2.3.0, icu_normalizer 2.3.0, icu_normalizer_data 2.3.0, icu_properties 2.3.0, icu_properties_data 2.3.0, ...</summary>
 
 ```
 UNICODE LICENSE V3
@@ -2339,7 +2339,7 @@ SOFTWARE.
 
 ### LICENSE-MIT: 5 crate(s)
 
-<details><summary>cc 1.2.63, cfg-if 1.0.4, find-msvc-tools 0.1.9, pkg-config 0.3.33, socket2 0.6.4</summary>
+<details><summary>cc 1.6.0, cfg-if 1.0.4, find-msvc-tools 0.1.14, pkg-config 0.3.33, socket2 0.6.4</summary>
 
 ```
 Copyright (c) 2014 Alex Crichton

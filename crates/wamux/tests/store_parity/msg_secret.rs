@@ -74,6 +74,12 @@ async fn sqlite_msg_secrets_round_trip_with_ts_and_isolate() {
     msg_secrets_round_trip_with_ts_and_isolate(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_msg_secrets_round_trip_with_ts_and_isolate() {
+    msg_secrets_round_trip_with_ts_and_isolate(harness::turso().await).await;
+}
+
 /// A redelivery merges into the existing row: the later deadline wins, `0`
 /// ("never") beats any deadline, a `message_ts` of `0` ("unknown") never
 /// clobbers a known one, and the secret itself is replaced. The deadline is
@@ -137,6 +143,12 @@ async fn sqlite_msg_secret_upsert_never_shortens_retention() {
     msg_secret_upsert_never_shortens_retention(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_msg_secret_upsert_never_shortens_retention() {
+    msg_secret_upsert_never_shortens_retention(harness::turso().await).await;
+}
+
 /// `expires_at = 0` is "never" and is skipped by the sweep; a deadline equal to
 /// the cutoff has passed (`<=`), one after it has not.
 async fn expired_msg_secrets_skip_never_and_respect_cutoff(h: Harness) {
@@ -183,4 +195,10 @@ async fn postgres_expired_msg_secrets_skip_never_and_respect_cutoff() {
 #[tokio::test]
 async fn sqlite_expired_msg_secrets_skip_never_and_respect_cutoff() {
     expired_msg_secrets_skip_never_and_respect_cutoff(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_expired_msg_secrets_skip_never_and_respect_cutoff() {
+    expired_msg_secrets_skip_never_and_respect_cutoff(harness::turso().await).await;
 }

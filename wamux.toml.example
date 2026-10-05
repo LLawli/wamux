@@ -9,12 +9,17 @@ socket_mode = 432
 # socket_group = "wamux"
 
 # Database DSN. The scheme picks the storage engine:
-#   postgres:// (or postgresql://) — the multi-account default
-#   sqlite://   — single file, no server; created if absent
+#   postgres:// (or postgresql://)  the multi-account default
+#   sqlite://   single file, no server; created if absent
+#   turso://    EXPERIMENTAL single file through the native turso crate; needs a
+#                 binary built with `--features turso` (see docs/DEPLOYMENT.md).
+#                 A path only, no query string: turso://<path>
 # e.g. database_url = "sqlite:///var/lib/wamux/wamux.db"
+#      database_url = "turso:///var/lib/wamux/wamux.db"
 database_url = "postgres://wamux:wamux@localhost:5432/wamux"
-# Postgres pool size. Ignored under sqlite://, which pins the pool to one
-# connection so the process serializes its own writes.
+# Postgres pool size. Ignored under sqlite:// (which pins the pool to one
+# connection so the process serializes its own writes) and under turso://
+# (one connection behind a mutex).
 db_max_connections = 16
 
 # Per-account in-memory replay ring (events kept for quick reconnect).

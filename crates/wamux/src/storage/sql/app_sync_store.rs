@@ -9,22 +9,20 @@ use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::error::Result;
 use wacore::store::traits::{AppStateSyncKey, AppSyncStore};
 
-use super::app_sync_sql::{self, SET_VERSION};
+use super::app_sync_sql;
 use super::{SqlBackend, SqlTx};
 use crate::storage::blob_codec::{
     decode_app_state_sync_key, decode_hash_state, encode_app_state_sync_key, encode_hash_state,
+};
+use crate::storage::statements::app_sync::{
+    CLEAR_MUTATION_MACS, DELETE_VERSION, GET_MUTATION_MAC, GET_SYNC_KEY, GET_VERSION,
+    LATEST_SYNC_KEY_ID, SET_SYNC_KEY, SET_VERSION,
 };
 
 #[async_trait]
 impl AppSyncStore for SqlBackend {
     async fn get_sync_key(&self, key_id: &[u8]) -> Result<Option<AppStateSyncKey>> {
-        let row = scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT key_data FROM app_state_keys WHERE key_id = $1 AND device_id = $2",
-            key_id,
-            self.device_id
-        )?;
+        let row = scalar_optional_sql!(Vec<u8>, &self.pool, GET_SYNC_KEY, key_id, self.device_id)?;
         match row {
             None => Ok(None),
             Some(bytes) => Ok(Some(decode_app_state_sync_key(&bytes)?)),
@@ -33,14 +31,7 @@ impl AppSyncStore for SqlBackend {
 
     async fn set_sync_key(&self, key_id: &[u8], key: AppStateSyncKey) -> Result<()> {
         let data = encode_app_state_sync_key(&key);
-        execute_sql!(
-            &self.pool,
-            "INSERT INTO app_state_keys (key_id, key_data, device_id) VALUES ($1, $2, $3)
-             ON CONFLICT (key_id, device_id) DO UPDATE SET key_data = EXCLUDED.key_data",
-            key_id,
-            &data,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, SET_SYNC_KEY, key_id, &data, self.device_id)?;
         Ok(())
     }
 
@@ -50,13 +41,7 @@ impl AppSyncStore for SqlBackend {
     // Collapsing both into `HashState::default()` made an empty collection
     // re-request a snapshot forever, so a missing row now reads as `None`.
     async fn get_version(&self, name: &str) -> Result<Option<HashState>> {
-        let row = scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT state_data FROM app_state_versions WHERE name = $1 AND device_id = $2",
-            name,
-            self.device_id
-        )?;
+        let row = scalar_optional_sql!(Vec<u8>, &self.pool, GET_VERSION, name, self.device_id)?;
         match row {
             None => Ok(None),
             Some(bytes) => Ok(Some(decode_hash_state(&bytes)?)),
@@ -67,12 +52,7 @@ impl AppSyncStore for SqlBackend {
     /// A missing row is a no-op, not an error; only this device's row is
     /// touched.
     async fn delete_version(&self, name: &str) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM app_state_versions WHERE name = $1 AND device_id = $2",
-            name,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, DELETE_VERSION, name, self.device_id)?;
         Ok(())
     }
 
@@ -97,8 +77,7 @@ impl AppSyncStore for SqlBackend {
         scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
-            "SELECT value_mac FROM app_state_mutation_macs
-             WHERE name = $1 AND index_mac = $2 AND device_id = $3",
+            GET_MUTATION_MAC,
             name,
             index_mac,
             self.device_id
@@ -115,22 +94,12 @@ impl AppSyncStore for SqlBackend {
     /// the snapshot rebuilds the ltHash from scratch, so a MAC left over from
     /// the pre-snapshot timeline would corrupt the next patch's ltHash.
     async fn clear_mutation_macs(&self, name: &str) -> Result<()> {
-        execute_sql!(
-            &self.pool,
-            "DELETE FROM app_state_mutation_macs WHERE name = $1 AND device_id = $2",
-            name,
-            self.device_id
-        )?;
+        execute_sql!(&self.pool, CLEAR_MUTATION_MACS, name, self.device_id)?;
         Ok(())
     }
 
     async fn get_latest_sync_key_id(&self) -> Result<Option<Vec<u8>>> {
-        scalar_optional_sql!(
-            Vec<u8>,
-            &self.pool,
-            "SELECT key_id FROM app_state_keys WHERE device_id = $1 ORDER BY key_id DESC LIMIT 1",
-            self.device_id
-        )
+        scalar_optional_sql!(Vec<u8>, &self.pool, LATEST_SYNC_KEY_ID, self.device_id)
     }
 
     // --- Throughput overrides (#104), see `app_sync_sql` ---

@@ -64,6 +64,12 @@ async fn sqlite_identities_batch_round_trips_and_deletes() {
     identities_batch_round_trips_and_deletes(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_identities_batch_round_trips_and_deletes() {
+    identities_batch_round_trips_and_deletes(harness::turso().await).await;
+}
+
 async fn sessions_batch_round_trips_and_deletes(h: Harness) {
     let t = h.two_accounts("batch-sessions").await;
     let mut batch: Vec<(Arc<str>, Bytes)> = (0..MANY).map(|i| (address(i), record(i))).collect();
@@ -100,6 +106,12 @@ async fn postgres_sessions_batch_round_trips_and_deletes() {
 #[tokio::test]
 async fn sqlite_sessions_batch_round_trips_and_deletes() {
     sessions_batch_round_trips_and_deletes(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sessions_batch_round_trips_and_deletes() {
+    sessions_batch_round_trips_and_deletes(harness::turso().await).await;
 }
 
 async fn prekeys_batch_round_trips_and_removes(h: Harness) {
@@ -143,6 +155,12 @@ async fn sqlite_prekeys_batch_round_trips_and_removes() {
     prekeys_batch_round_trips_and_removes(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_prekeys_batch_round_trips_and_removes() {
+    prekeys_batch_round_trips_and_removes(harness::turso().await).await;
+}
+
 async fn sender_keys_batch_round_trips_and_deletes(h: Harness) {
     let t = h.two_accounts("batch-sender-keys").await;
     let batch = [
@@ -182,4 +200,10 @@ async fn postgres_sender_keys_batch_round_trips_and_deletes() {
 #[tokio::test]
 async fn sqlite_sender_keys_batch_round_trips_and_deletes() {
     sender_keys_batch_round_trips_and_deletes(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sender_keys_batch_round_trips_and_deletes() {
+    sender_keys_batch_round_trips_and_deletes(harness::turso().await).await;
 }

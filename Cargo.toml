@@ -44,6 +44,11 @@ sqlx = { version = "0.8", default-features = false, features = [
     "migrate",
     "uuid",
 ] }
+# Third storage engine family (#106), behind the daemon's `turso` feature. Exact
+# pin: pre-1.0 and fast-moving, and its `$N` binding (by appearance, not by
+# number) is pinned by a test. No default features: they pull tantivy (fts) and
+# mimalloc, and tantivy brings an unsound `lru` (RUSTSEC-2026-0253).
+turso = { version = "=0.8.1", default-features = false }
 
 # whatsapp-rust stack (Postgres backend => drop the default `sqlite-storage`).
 #

@@ -12,11 +12,14 @@ pub struct Config {
     /// Optional owning group name to chown the socket to.
     pub socket_group: Option<String>,
     /// Database DSN. The scheme picks the storage engine:
-    /// `postgres://` / `postgresql://` or `sqlite://` (file path; created if
-    /// absent). Anything else fails at startup.
+    /// `postgres://` / `postgresql://`, `sqlite://` (file path; created if
+    /// absent) or `turso://<path>` (experimental, #106: a file path, no options,
+    /// and only in a binary built with the `turso` cargo feature; without it the
+    /// daemon refuses to start). Anything else fails at startup.
     pub database_url: String,
     /// Postgres pool size. Ignored by the SQLite engine, which pins its pool to
-    /// a single connection to serialize writes (see `storage::sql::connect_sqlite`).
+    /// a single connection to serialize writes (see `storage::sql::connect_sqlite`),
+    /// and by the Turso engine, which has one connection behind a mutex.
     pub db_max_connections: u32,
     /// Per-account in-memory replay ring capacity.
     pub event_ring_capacity: usize,

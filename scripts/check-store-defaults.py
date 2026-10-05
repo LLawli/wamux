@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 # Engine families under storage/ (#65): one impl of each trait per family.
-FAMILIES = ("sql",)
+FAMILIES = ("sql", "turso")
 MIN_TRAIT_DEFAULTS = 36
 DOC = Path("docs") / "store-trait-defaults.md"
 ASYNC_FN = re.compile(r"\basync\s+fn\s+(\w+)")

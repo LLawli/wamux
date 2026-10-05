@@ -1,4 +1,5 @@
-//! Batched reads with a fixed-size `IN` list (#104).
+//! Batched reads with a fixed-size `IN` list (#104), shared by both engine
+//! families (#106): the text of those statements lives in `statements`.
 //!
 //! One statement text per method: every chunk binds exactly `READ_CHUNK`
 //! values, and a short last chunk is padded by repeating one of its values
@@ -9,10 +10,10 @@ use std::collections::HashSet;
 use std::hash::Hash;
 
 /// Values bound per batched read: one `IN` list of this many placeholders.
-pub(super) const READ_CHUNK: usize = 100;
+pub const READ_CHUNK: usize = 100;
 
 /// `$first, $first+1, ..., $first+count-1`, comma-separated.
-pub(super) fn in_placeholders(first: usize, count: usize) -> String {
+pub fn in_placeholders(first: usize, count: usize) -> String {
     let numbered: Vec<String> = (first..first + count).map(|n| format!("${n}")).collect();
     numbered.join(", ")
 }
@@ -21,7 +22,7 @@ pub(super) fn in_placeholders(first: usize, count: usize) -> String {
 /// by repeating its own last value. Duplicates are dropped first, so a value
 /// asked for twice cannot come back twice from two different chunks; the
 /// caller maps results back to the request itself when it needs positions.
-pub(super) fn padded_chunks<T: Clone + Eq + Hash>(items: &[T]) -> Vec<Vec<T>> {
+pub fn padded_chunks<T: Clone + Eq + Hash>(items: &[T]) -> Vec<Vec<T>> {
     let mut seen: HashSet<T> = HashSet::new();
     let unique: Vec<T> = items
         .iter()
@@ -60,5 +61,5 @@ mod padding_tests {
 }
 
 #[cfg(test)]
-#[path = "batch_sql_tests.rs"]
+#[path = "batch_chunks_tests.rs"]
 mod tests;

@@ -1,6 +1,7 @@
 //! The engine-neutral bodies: every getter against what `0f40e34` wrote, then
 //! new writes, a new account and a cascade on top of those rows.
 
+use async_trait::async_trait;
 use uuid::Uuid;
 use wacore::store::traits::Backend;
 use wamux::storage::StorageEngine;
@@ -14,7 +15,42 @@ const FIXTURE_DEVICE_ID: i32 = 1;
 
 const DEVICE_PB: &[u8] = include_bytes!("../fixtures/store-0f40e34/device.pb");
 
-pub async fn reads_back(store: &SqlStore, account: Uuid) {
+/// An engine plus the one read the trait has no getter for. Implemented for
+/// both families (#106), so every body here runs on each engine unchanged.
+#[async_trait]
+pub trait FixtureStore: StorageEngine {
+    /// `prekeys.uploaded` of the fixture account's prekey `id`.
+    async fn prekey_uploaded(&self, id: u32) -> bool;
+}
+
+#[async_trait]
+impl FixtureStore for SqlStore {
+    async fn prekey_uploaded(&self, id: u32) -> bool {
+        prekey_uploaded(self, id).await
+    }
+}
+
+/// Turso binds `$N` by appearance (#106), so the raw read writes `?N`.
+#[cfg(feature = "turso")]
+#[async_trait]
+impl FixtureStore for wamux::storage::turso::TursoStore {
+    async fn prekey_uploaded(&self, id: u32) -> bool {
+        let sql = "SELECT uploaded FROM prekeys WHERE device_id = ?1 AND id = ?2";
+        let params = vec![
+            turso::Value::Integer(FIXTURE_DEVICE_ID.into()),
+            turso::Value::Integer(id.into()),
+        ];
+        match crate::common::turso_rows(self, sql, params)
+            .await
+            .as_slice()
+        {
+            [row] => row[0] == turso::Value::Integer(1),
+            other => panic!("prekey {id}: expected one row, got {other:?}"),
+        }
+    }
+}
+
+pub async fn reads_back(store: &dyn FixtureStore, account: Uuid) {
     check_account_row(store, account).await;
     let b = store.device_backend(FIXTURE_DEVICE_ID);
     check_device(&*b).await;
@@ -26,7 +62,7 @@ pub async fn reads_back(store: &SqlStore, account: Uuid) {
     check_sent_and_secrets(&*b).await;
 }
 
-async fn check_account_row(store: &SqlStore, account: Uuid) {
+async fn check_account_row(store: &dyn FixtureStore, account: Uuid) {
     let rows = store.list_accounts().await.expect("list accounts");
     assert_eq!(rows.len(), 1, "the fixture holds one account");
     let row = &rows[0];
@@ -66,11 +102,11 @@ async fn check_signal(b: &dyn Backend) {
     assert_eq!(sender_key.as_deref(), Some(SENDER_KEY));
 }
 
-async fn check_prekeys(store: &SqlStore, b: &dyn Backend) {
+async fn check_prekeys(store: &dyn FixtureStore, b: &dyn Backend) {
     for (id, record, uploaded) in PREKEYS {
         let loaded = b.load_prekey(id).await.unwrap().expect("prekey");
         assert_eq!(&loaded[..], record, "prekey {id}");
-        assert_eq!(prekey_uploaded(store, id).await, uploaded, "prekey {id}");
+        assert_eq!(store.prekey_uploaded(id).await, uploaded, "prekey {id}");
     }
     assert_eq!(b.get_max_prekey_id().await.unwrap(), 8);
 }
@@ -186,7 +222,7 @@ async fn check_sent_and_secrets(b: &dyn Backend) {
 /// After the old rows: a new write on the old account reads back, a new
 /// account gets a `device_id` past the old one (the IDENTITY sequence and
 /// SQLite's AUTOINCREMENT survived), and deleting the old account cascades.
-pub async fn keeps_working(store: &SqlStore, account: Uuid) {
+pub async fn keeps_working(store: &dyn FixtureStore, account: Uuid) {
     let old = store.device_backend(FIXTURE_DEVICE_ID);
     old.put_session("5511900000001.1", &[0x99, 0x00])
         .await

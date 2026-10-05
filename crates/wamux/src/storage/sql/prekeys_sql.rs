@@ -7,10 +7,12 @@ use wacore::store::error::Result;
 
 use super::SqlPool;
 use crate::storage::sqlx_error::db;
+use crate::storage::statements::signal::MARK_PREKEY_UPLOADED;
 
 /// Mark the prekeys as uploaded. Written per driver, side by side, because
 /// Postgres binds one array (`= ANY($2)`) while SQLite has no array bind and
-/// takes one statement per id, in one transaction.
+/// takes one statement per id, in one transaction. The SQLite statement is in
+/// `statements::signal`, shared with Turso (#106); the array one stays here.
 pub(super) async fn mark_uploaded(pool: &SqlPool, device_id: i32, ids: &[u32]) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
@@ -35,7 +37,7 @@ async fn mark_uploaded_array(pool: &PgPool, device_id: i32, ids: &[u32]) -> Resu
 async fn mark_uploaded_each(pool: &SqlitePool, device_id: i32, ids: &[u32]) -> Result<()> {
     let mut tx = pool.begin().await.map_err(db)?;
     for id in ids {
-        sqlx::query("UPDATE prekeys SET uploaded = TRUE WHERE id = $1 AND device_id = $2")
+        sqlx::query(MARK_PREKEY_UPLOADED)
             .bind(*id as i32)
             .bind(device_id)
             .execute(&mut *tx)

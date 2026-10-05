@@ -7,6 +7,7 @@ use wacore::store::error::Result;
 
 use super::SqlPool;
 use crate::storage::blob_codec::now_secs;
+use crate::storage::statements::tc_token::{STORE_RECEIVED, TOUCH_SENDER_TIMESTAMP};
 
 /// Advance only `sender_timestamp`, never backwards. A missing row is created
 /// with an empty token and `token_timestamp = sender_timestamp`; an existing row
@@ -21,16 +22,7 @@ pub(super) async fn touch_sender_timestamp(
 ) -> Result<()> {
     execute_sql!(
         pool,
-        "INSERT INTO tc_tokens
-            (jid, token, token_timestamp, sender_timestamp, device_id, updated_at)
-         VALUES ($1, $5, $2, $2, $3, $4)
-         ON CONFLICT (jid, device_id) DO UPDATE SET
-            sender_timestamp = CASE
-                WHEN COALESCE(tc_tokens.sender_timestamp, $2) > $2
-                    THEN COALESCE(tc_tokens.sender_timestamp, $2)
-                ELSE $2
-            END,
-            updated_at = EXCLUDED.updated_at",
+        TOUCH_SENDER_TIMESTAMP,
         jid,
         sender_timestamp,
         device_id,
@@ -52,15 +44,7 @@ pub(super) async fn store_received(
 ) -> Result<()> {
     execute_sql!(
         pool,
-        "INSERT INTO tc_tokens
-            (jid, token, token_timestamp, sender_timestamp, device_id, updated_at)
-         VALUES ($1, $2, $3, NULL, $4, $5)
-         ON CONFLICT (jid, device_id) DO UPDATE SET
-            token = EXCLUDED.token,
-            token_timestamp = EXCLUDED.token_timestamp,
-            updated_at = EXCLUDED.updated_at
-         WHERE length(tc_tokens.token) = 0
-            OR EXCLUDED.token_timestamp >= tc_tokens.token_timestamp",
+        STORE_RECEIVED,
         jid,
         token,
         token_timestamp,

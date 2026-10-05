@@ -2,35 +2,17 @@
 //! ones (#104). Kept out of `app_sync_store.rs` for the `*_store.rs` rule.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 use wacore::appstate::hash::HashState;
 use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::error::Result;
 
-use super::batch_sql::{READ_CHUNK, in_placeholders, padded_chunks};
 use super::{SqlPool, SqlTx};
+use crate::storage::batch_chunks::padded_chunks;
 use crate::storage::blob_codec::encode_hash_state;
-
-pub(super) const SET_VERSION: &str =
-    "INSERT INTO app_state_versions (name, state_data, device_id) VALUES ($1, $2, $3)
-     ON CONFLICT (name, device_id) DO UPDATE SET state_data = EXCLUDED.state_data";
-pub(super) const PUT_MUTATION_MAC: &str =
-    "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (name, index_mac, device_id)
-     DO UPDATE SET version = EXCLUDED.version, value_mac = EXCLUDED.value_mac";
-pub(super) const DELETE_MUTATION_MAC: &str = "DELETE FROM app_state_mutation_macs
-     WHERE name = $1 AND index_mac = $2 AND device_id = $3";
-
-// Same text on every call and never varies by deployment: built once.
-static SELECT_MUTATION_MACS: LazyLock<String> = LazyLock::new(|| {
-    let list = in_placeholders(3, READ_CHUNK);
-    format!(
-        "SELECT index_mac, value_mac FROM app_state_mutation_macs
-         WHERE name = $1 AND device_id = $2 AND index_mac IN ({list})"
-    )
-});
+use crate::storage::statements::app_sync::{
+    DELETE_MUTATION_MAC, PUT_MUTATION_MAC, SELECT_MUTATION_MACS, SET_VERSION,
+};
 
 // `mut tx: &mut SqlTx`: `execute_sql!(in tx, ..)` takes `&mut tx`, so the binding itself is mut.
 pub(super) async fn put_macs_in(

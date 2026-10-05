@@ -5,14 +5,16 @@
 //! `ProtocolStore`, `DeviceStore`, plus `MsgSecretStore`) on a `SqlPool`; since
 //! `Backend` is a blanket impl over them, that makes it a `Backend`. Statements
 //! are `$N` strings that run on both drivers; `macros` expands each one per
-//! driver. Only four places write a string per driver, because the dialects
-//! have no common form there: `accounts` (UUID vs TEXT), `prekeys_sql`
-//! (array bind vs a loop), `maintenance_sql` (SQLite upkeep vs Postgres
-//! autovacuum) and the `blob_format` row lock in `bincode_upgrade`.
+//! driver. The text lives in `storage::statements` (#106), shared with the
+//! turso family, so no SQL is spelled here except the forms with no common
+//! shape: `prekeys_sql` (Postgres array bind) and the `blob_format` row lock in
+//! `bincode_upgrade`. Code per driver, with no SQL of its own, stays in
+//! `accounts` (UUID vs TEXT binds) and `maintenance_sql` (SQLite upkeep vs
+//! Postgres autovacuum).
 //!
 //! Multi-tenancy: one shared pool, one `SqlBackend` per account, each carrying
-//! the integer `device_id` that scopes every row. A future engine that is not
-//! sqlx (#106) is a sibling family behind `StorageEngine`, not a variant here.
+//! the integer `device_id` that scopes every row. The engine that is not sqlx
+//! (#106) is a sibling family behind `StorageEngine`, not a variant here.
 
 #[macro_use]
 mod macros;
@@ -20,7 +22,6 @@ mod macros;
 mod accounts;
 mod app_sync_sql;
 mod app_sync_store;
-mod batch_sql;
 mod bincode_upgrade;
 mod connect;
 mod device_store;
@@ -28,7 +29,6 @@ mod maintenance_sql;
 mod msg_secret_store;
 mod prekeys_sql;
 mod protocol_batch_sql;
-mod protocol_rows;
 mod protocol_store;
 mod signal_sql;
 mod signal_store;
@@ -43,6 +43,7 @@ use wacore::store::error::{Result as StoreResult, StoreError};
 use wacore::store::traits::Backend;
 
 use crate::storage::engine::{AccountRow, StorageEngine};
+use crate::storage::statements::PING;
 
 pub use connect::{connect_postgres, connect_sqlite};
 pub(crate) use transaction::SqlTx;
@@ -140,7 +141,7 @@ impl StorageEngine for SqlStore {
         // A trivial round-trip: proves the pool can hand out a live connection,
         // which is exactly what readiness means here.
         on_sql_pool!(&self.pool, |conn| {
-            sqlx::query("SELECT 1").execute(conn).await.is_ok()
+            sqlx::query(PING).execute(conn).await.is_ok()
         })
     }
 }

@@ -45,6 +45,12 @@ async fn sqlite_identities_round_trip_overwrite_delete_and_isolate() {
     identities_round_trip_overwrite_delete_and_isolate(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_identities_round_trip_overwrite_delete_and_isolate() {
+    identities_round_trip_overwrite_delete_and_isolate(harness::turso().await).await;
+}
+
 async fn sessions_round_trip_overwrite_delete_and_isolate(h: Harness) {
     let t = h.two_accounts("sessions").await;
     assert_eq!(t.ba.get_session(ALICE).await.unwrap(), None);
@@ -77,6 +83,12 @@ async fn postgres_sessions_round_trip_overwrite_delete_and_isolate() {
 #[tokio::test]
 async fn sqlite_sessions_round_trip_overwrite_delete_and_isolate() {
     sessions_round_trip_overwrite_delete_and_isolate(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sessions_round_trip_overwrite_delete_and_isolate() {
+    sessions_round_trip_overwrite_delete_and_isolate(harness::turso().await).await;
 }
 
 async fn prekeys_store_load_remove_and_max_are_scoped(h: Harness) {
@@ -121,6 +133,12 @@ async fn sqlite_prekeys_store_load_remove_and_max_are_scoped() {
     prekeys_store_load_remove_and_max_are_scoped(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_prekeys_store_load_remove_and_max_are_scoped() {
+    prekeys_store_load_remove_and_max_are_scoped(harness::turso().await).await;
+}
+
 /// UPDATE, never upsert: a prekey consumed between the upload snapshot and this
 /// call must stay deleted, or the server is handed a key we cannot answer.
 async fn mark_prekeys_uploaded_updates_without_resurrecting(h: Harness) {
@@ -157,6 +175,12 @@ async fn postgres_mark_prekeys_uploaded_updates_without_resurrecting() {
 #[tokio::test]
 async fn sqlite_mark_prekeys_uploaded_updates_without_resurrecting() {
     mark_prekeys_uploaded_updates_without_resurrecting(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_mark_prekeys_uploaded_updates_without_resurrecting() {
+    mark_prekeys_uploaded_updates_without_resurrecting(harness::turso().await).await;
 }
 
 async fn signed_prekeys_round_trip_list_remove_and_isolate(h: Harness) {
@@ -201,6 +225,12 @@ async fn sqlite_signed_prekeys_round_trip_list_remove_and_isolate() {
     signed_prekeys_round_trip_list_remove_and_isolate(harness::sqlite().await).await;
 }
 
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_signed_prekeys_round_trip_list_remove_and_isolate() {
+    signed_prekeys_round_trip_list_remove_and_isolate(harness::turso().await).await;
+}
+
 async fn sender_keys_round_trip_overwrite_delete_and_isolate(h: Harness) {
     const GROUP_ADDR: &str = "120363000000000000@g.us::alice@s.whatsapp.net";
     let t = h.two_accounts("sender-keys").await;
@@ -231,4 +261,10 @@ async fn postgres_sender_keys_round_trip_overwrite_delete_and_isolate() {
 #[tokio::test]
 async fn sqlite_sender_keys_round_trip_overwrite_delete_and_isolate() {
     sender_keys_round_trip_overwrite_delete_and_isolate(harness::sqlite().await).await;
+}
+
+#[cfg(feature = "turso")]
+#[tokio::test]
+async fn turso_sender_keys_round_trip_overwrite_delete_and_isolate() {
+    sender_keys_round_trip_overwrite_delete_and_isolate(harness::turso().await).await;
 }

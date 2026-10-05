@@ -58,7 +58,7 @@ class CheckStoreCoverage(unittest.TestCase):
     def test_repo_passes_with_every_method_called(self):
         result = subprocess.run([str(CHECK)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f"store coverage ok: {FLOOR} methods per family (sql)", result.stdout)
+        self.assertIn(f"store coverage ok: {FLOOR} methods per family (sql, turso)", result.stdout)
 
     def test_unreferenced_method_fails_and_is_named(self):
         names = fake_names(FLOOR)
