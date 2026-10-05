@@ -8,9 +8,9 @@ use anyhow::Context as _;
 use tracing_subscriber::EnvFilter;
 use wamux::state::{AccountHandle, AccountRegistry, RegistryTuning};
 use wamux::storage::sql::SqlStore;
+use wamux_types::{AccountRef, ExternalRef};
 
 use crate::live_env::EnvLookup;
-use crate::socket_client::account_ref;
 
 pub const DATABASE_URL_VAR: &str = "DATABASE_URL";
 /// The dockerized dev database from CLAUDE.md.
@@ -67,7 +67,7 @@ pub async fn resolve_or_create(
     registry: &Arc<AccountRegistry>,
     external_ref: &str,
 ) -> anyhow::Result<(Arc<AccountHandle>, bool)> {
-    if let Ok(handle) = registry.resolve(Some(&account_ref(external_ref))) {
+    if let Ok(handle) = registry.resolve(&AccountRef::External(ExternalRef::new(external_ref))) {
         return Ok((handle, false));
     }
     let handle = registry

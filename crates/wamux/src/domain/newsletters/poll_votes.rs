@@ -7,10 +7,10 @@
 //! keyed on. The library owns the stanza (upstream #1552, #1554, #1555); the
 //! core validates the request, relays it, and hands back what came out.
 
-use whatsapp_rust::{Client, Jid, Server};
+use wamux_types::NewsletterJid;
+use whatsapp_rust::{Client, Jid};
 
 use super::{millis_from_seconds, require_at_least_one};
-use crate::domain::jid_parse::parse_jid;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
@@ -84,13 +84,7 @@ pub async fn subscribe_live_updates(
 /// A jid on the `newsletter` server. Anything else is refused here rather than
 /// by the library, for the same Status reason as `MAX_POLL_VOTE_OPTIONS`.
 fn require_newsletter_jid(value: &str) -> Result<Jid, WamuxError> {
-    let jid = parse_jid(value)?;
-    if jid.server != Server::Newsletter {
-        return Err(WamuxError::InvalidArgument(format!(
-            "'{value}' is not a channel: expected a jid ending in @newsletter"
-        )));
-    }
-    Ok(jid)
+    Ok(NewsletterJid::parse(value)?.as_jid().clone().into_lib())
 }
 
 /// The wire's `repeated bytes` as the library's fixed-size hashes: each exactly

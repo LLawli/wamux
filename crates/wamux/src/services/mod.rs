@@ -11,14 +11,17 @@ pub mod contact_service;
 pub mod event_service;
 pub mod group_service;
 pub mod media_service;
+mod media_stream;
 pub mod messaging_service;
 pub mod newsletter_service;
 
 use std::sync::Arc;
 
 use tonic::Status;
+use wamux_types::AccountRef;
 use whatsapp_rust::Client;
 
+use crate::error::WamuxError;
 use crate::proto::v1 as pb;
 use crate::state::{AccountHandle, AccountRegistry};
 
@@ -47,11 +50,8 @@ pub(crate) async fn account_of(
     registry: &AccountRegistry,
     account_ref: Option<&pb::AccountRef>,
 ) -> Result<(Arc<AccountHandle>, Arc<Client>), Status> {
-    let handle = registry.resolve(account_ref)?;
-    let client = handle
-        .client()
-        .await
-        .ok_or_else(|| Status::failed_precondition("account is not connected"))?;
+    let handle = registry.resolve(&AccountRef::from_proto(account_ref)?)?;
+    let client = handle.client().await.ok_or(WamuxError::NotConnected)?;
     Ok((handle, client))
 }
 
@@ -63,13 +63,13 @@ pub(crate) fn own_jid(client: &Client) -> String {
 }
 
 /// Extract a `Jid` string from an optional proto `Jid`, erroring if absent.
-pub(crate) fn require_jid(jid: Option<pb::Jid>) -> Result<String, Status> {
+pub(crate) fn require_jid(jid: Option<pb::Jid>) -> Result<String, WamuxError> {
     jid.map(|j| j.value)
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| Status::invalid_argument("missing jid"))
+        .ok_or_else(|| WamuxError::InvalidArgument("missing jid".to_string()))
 }
 
 /// Extract a required proto sub-message, or `InvalidArgument("missing <name>")`.
-pub(crate) fn require_field<T>(field: Option<T>, name: &str) -> Result<T, Status> {
-    field.ok_or_else(|| Status::invalid_argument(format!("missing {name}")))
+pub(crate) fn require_field<T>(field: Option<T>, name: &str) -> Result<T, WamuxError> {
+    field.ok_or_else(|| WamuxError::InvalidArgument(format!("missing {name}")))
 }

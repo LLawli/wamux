@@ -48,6 +48,8 @@ path = "src/main.rs"
 [dependencies]
 # Generated gRPC types live in wamux-proto; lib.rs re-exports them as `wamux::proto`.
 wamux-proto.workspace = true
+# Named types and WamuxError (#63, #114).
+wamux-types.workspace = true
 tonic.workspace = true
 tonic-reflection = "0.14"
 prost.workspace = true

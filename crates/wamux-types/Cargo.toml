@@ -1,0 +1,29 @@
+[package]
+name = "wamux-types"
+version.workspace = true
+edition.workspace = true
+description = "The wamux domain's named types and error type, shared by every layer (#63)."
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# No doctests here: the CI script fails a package whose test output has any
+# "running 0 tests" line, and the empty doctest run prints exactly that (#114).
+[lib]
+doctest = false
+
+# Boundaries (scripts/check-crate-deps.sh): the generated contract, tonic for the
+# Status mapping, and the whatsapp-rust storage/binary layer for `Jid`,
+# `MediaType` and `StoreError`. Never `wamux`, `sqlx` or `whatsapp-rust`.
+[dependencies]
+wamux-proto.workspace = true
+tonic.workspace = true
+wacore.workspace = true
+wacore-binary.workspace = true
+thiserror = "2"
+anyhow.workspace = true
+tracing.workspace = true
+uuid.workspace = true

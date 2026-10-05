@@ -1,6 +1,7 @@
 //! Upload media for sending and download received media (lazy, from descriptor).
 
 use wacore::download::MediaType;
+use wamux_types::MediaKind;
 use whatsapp_rust::buffa;
 use whatsapp_rust::download::DownloadParams;
 use whatsapp_rust::upload::{UploadOptions, UploadResponse};
@@ -11,52 +12,9 @@ use whatsapp_rust::waproto::whatsapp::message::{
 use whatsapp_rust::{Client, Jid, SendResult};
 
 use crate::domain::outgoing_context::outgoing_context;
-use crate::domain::sticker_packs;
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_u32};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
-
-/// The five media kinds wamux relays, parsed ONCE from the wire string. Both
-/// the upload `MediaType` and the outgoing sub-message derive from this enum,
-/// so the two can never drift (code-review 2026-06-11: two independent string
-/// matches let a payload upload under one type yet ship mislabeled as image).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MediaKind {
-    Image,
-    Video,
-    Audio,
-    Document,
-    Sticker,
-}
-
-impl MediaKind {
-    pub(crate) fn parse(value: &str) -> Result<Self, WamuxError> {
-        Ok(match value {
-            "image" => Self::Image,
-            "video" => Self::Video,
-            "audio" => Self::Audio,
-            "document" => Self::Document,
-            "sticker" => Self::Sticker,
-            other => {
-                return Err(WamuxError::InvalidArgument(format!(
-                    "unknown media_type '{other}'"
-                )));
-            }
-        })
-    }
-
-    /// The wacore upload/download type for this kind (wacore's enum has many
-    /// more variants — history, app state — that are not relay media).
-    fn upload_type(self) -> MediaType {
-        match self {
-            Self::Image => MediaType::Image,
-            Self::Video => MediaType::Video,
-            Self::Audio => MediaType::Audio,
-            Self::Document => MediaType::Document,
-            Self::Sticker => MediaType::Sticker,
-        }
-    }
-}
 
 pub async fn send_media(
     client: &Client,
@@ -64,12 +22,12 @@ pub async fn send_media(
     header: &pb::SendMediaHeader,
     data: Vec<u8>,
 ) -> Result<SendResult, WamuxError> {
-    let kind = MediaKind::parse(&header.media_type)?;
+    let kind = MediaKind::parse_sendable(&header.media_type)?;
     let upload = client
-        .upload(data, kind.upload_type(), UploadOptions::new())
+        .upload(data, kind.media_type(), UploadOptions::new())
         .await
         .map_err(client_err)?;
-    let message = build_media_message(kind, header, upload.into());
+    let message = build_media_message(kind, header, upload.into())?;
     client.send_message(to, message).await.map_err(client_err)
 }
 
@@ -123,11 +81,15 @@ impl From<UploadResponse> for MediaUpload {
 /// plus the finished upload. Header fields relay verbatim; proto3 defaults
 /// (empty string/bytes, zero) map to absent waproto fields. The exhaustive
 /// `MediaKind` match (no catch-all) keeps builder and upload type in lockstep.
+///
+/// `MediaKind` also names the two download-only sticker pack kinds (#114);
+/// they have no outgoing sub-message, so they are refused here the way
+/// `parse_sendable` refuses them, rather than shipping an empty message.
 pub(crate) fn build_media_message(
     kind: MediaKind,
     header: &pb::SendMediaHeader,
     up: MediaUpload,
-) -> wa::Message {
+) -> Result<wa::Message, WamuxError> {
     // Each wa media sub-message carries its own ContextInfo; the shared
     // builder relays mentions + quote + ephemeral (or omits the field when
     // all three are the proto3 default), same composition as the text path.
@@ -136,7 +98,7 @@ pub(crate) fn build_media_message(
         header.quote.as_ref(),
         header.ephemeral_seconds,
     );
-    match kind {
+    let message = match kind {
         MediaKind::Image => wa::Message {
             image_message: buffa::MessageField::some(image_submessage(header, up, context)),
             ..Default::default()
@@ -164,7 +126,14 @@ pub(crate) fn build_media_message(
             sticker_message: buffa::MessageField::some(sticker_submessage(header, up, context)),
             ..Default::default()
         },
-    }
+        MediaKind::StickerPack | MediaKind::StickerPackThumbnail => {
+            return Err(WamuxError::InvalidArgument(format!(
+                "unknown media_type '{}'",
+                kind.token()
+            )));
+        }
+    };
+    Ok(message)
 }
 
 /// The five wa media sub-messages duplicate the exact same upload/mime/context
@@ -286,13 +255,10 @@ pub async fn download(
 }
 
 /// Download accepts the five sendable kinds plus the two a received sticker
-/// pack names (issue #58). Those two stay out of `MediaKind`, so SendMedia
-/// still refuses them.
+/// pack names (issue #58). SendMedia still refuses those two: it parses
+/// through `MediaKind::parse_sendable`.
 fn download_media_type(value: &str) -> Result<MediaType, WamuxError> {
-    if let Some(media_type) = sticker_packs::download_only_media_type(value) {
-        return Ok(media_type);
-    }
-    Ok(MediaKind::parse(value)?.upload_type())
+    Ok(MediaKind::parse_downloadable(value)?.media_type())
 }
 
 /// Build the download parameters, encrypted or not.
@@ -325,33 +291,54 @@ fn download_params(descriptor: &pb::MediaDescriptor, media_type: MediaType) -> D
 mod tests {
     use super::*;
 
+    /// The tests build sendable kinds only; the download-only kinds are
+    /// pinned by `a_download_only_kind_has_no_outgoing_message`.
+    fn build_media_message(
+        kind: MediaKind,
+        header: &pb::SendMediaHeader,
+        up: MediaUpload,
+    ) -> wa::Message {
+        super::build_media_message(kind, header, up).expect("sendable kind")
+    }
+
+    #[test]
+    fn a_download_only_kind_has_no_outgoing_message() {
+        for kind in [MediaKind::StickerPack, MediaKind::StickerPackThumbnail] {
+            let err = super::build_media_message(kind, &header("image"), fake_upload());
+            assert!(
+                matches!(err, Err(WamuxError::InvalidArgument(_))),
+                "{kind:?}"
+            );
+        }
+    }
+
     #[test]
     fn media_kind_parses_each_accepted_string_to_its_upload_type() {
         assert_eq!(
-            MediaKind::parse("image").unwrap().upload_type(),
+            MediaKind::parse_sendable("image").unwrap().media_type(),
             MediaType::Image
         );
         assert_eq!(
-            MediaKind::parse("video").unwrap().upload_type(),
+            MediaKind::parse_sendable("video").unwrap().media_type(),
             MediaType::Video
         );
         assert_eq!(
-            MediaKind::parse("audio").unwrap().upload_type(),
+            MediaKind::parse_sendable("audio").unwrap().media_type(),
             MediaType::Audio
         );
         assert_eq!(
-            MediaKind::parse("document").unwrap().upload_type(),
+            MediaKind::parse_sendable("document").unwrap().media_type(),
             MediaType::Document
         );
         assert_eq!(
-            MediaKind::parse("sticker").unwrap().upload_type(),
+            MediaKind::parse_sendable("sticker").unwrap().media_type(),
             MediaType::Sticker
         );
     }
 
     #[test]
     fn media_kind_unknown_value_is_invalid_argument_with_value() {
-        let err = MediaKind::parse("gif").unwrap_err();
+        let err = MediaKind::parse_sendable("gif").unwrap_err();
         match err {
             WamuxError::InvalidArgument(msg) => assert!(msg.contains("gif"), "got: {msg}"),
             other => panic!("expected InvalidArgument, got {other:?}"),
@@ -363,7 +350,7 @@ mod tests {
     #[test]
     fn media_kind_is_case_sensitive() {
         assert!(matches!(
-            MediaKind::parse("Image"),
+            MediaKind::parse_sendable("Image"),
             Err(WamuxError::InvalidArgument(_))
         ));
     }
@@ -394,7 +381,10 @@ mod tests {
     fn send_media_still_refuses_the_pack_tokens() {
         for value in ["sticker_pack", "sticker_pack_thumbnail"] {
             assert!(
-                matches!(MediaKind::parse(value), Err(WamuxError::InvalidArgument(_))),
+                matches!(
+                    MediaKind::parse_sendable(value),
+                    Err(WamuxError::InvalidArgument(_))
+                ),
                 "value: {value}"
             );
         }
@@ -742,7 +732,7 @@ mod tests {
         let kinds = ["video", "audio", "document", "sticker"];
         for kind in kinds {
             let message = build_media_message(
-                MediaKind::parse(kind).expect("test kinds are valid"),
+                MediaKind::parse_sendable(kind).expect("test kinds are valid"),
                 &pb::SendMediaHeader {
                     ephemeral_seconds: 604_800,
                     ..header(kind)
