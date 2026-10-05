@@ -496,6 +496,32 @@ has to follow them.
 
 ### Changed
 
+- **`wamux-types`: the domain's named types and its error, in a crate of
+  their own** (issue #114, part 1 of #63). For anyone using the `wamux` crate
+  as a library (today `crates/wamux-tools`). Nothing changes on the wire
+  except the two edge cases at the end of this entry.
+  - `Jid`, `GroupJid`, `NewsletterJid`, `AccountId`, `ExternalRef`,
+    `AccountRef` and `MessageId` are validated when they are built. `Jid`
+    wraps the library's parsed `Jid`, so the library's parse stays the one
+    normalization (`@c.us` comes out `@s.whatsapp.net`, as sends already did).
+  - One `MediaKind` replaces three: what SendMedia accepts, what a status can
+    be, and the two download-only sticker-pack types. Every `media_type`
+    token on the wire now comes from it.
+  - `WamuxError` and its `tonic::Status` mapping moved to the new crate, and
+    that mapping is now the only place a `Status` is built
+    (`scripts/check-status-sites.py`). The services no longer build any by
+    hand: "account is not connected" always goes through
+    `WamuxError::NotConnected`. The `Database(sqlx::Error)` variant is gone,
+    since nothing built it.
+  - `AccountRegistry::resolve` takes an `AccountRef`. `client_err` stays in
+    the daemon, which is the only crate that knows whatsapp-rust.
+  - The two edge cases that changed:
+    - a `wa-text` trailer whose text is not ASCII is now left out, where
+      before it carried the raw UTF-8 bytes in an ASCII trailer (the code
+      still rides `wa-code`, and the text stays in the status message);
+    - `account <uuid> not found` names the uuid in lowercase, whatever case
+      the request used.
+
 - **The stores write batches in one transaction and read them in one query
   per hundred** (issue #104). Seventeen wacore store methods that were left on
   their default, a loop over the one-row method, are now overridden on both
