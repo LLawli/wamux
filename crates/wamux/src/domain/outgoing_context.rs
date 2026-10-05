@@ -3,11 +3,11 @@
 //! message kind, so both builders call this instead of growing private copies
 //! (code-review 2026-06-11: the media path silently dropped quote/mentions).
 
+use wamux_types::{OutgoingContext, QuotedRef};
 use whatsapp_rust::buffa::MessageField;
 use whatsapp_rust::waproto::whatsapp as wa;
 
-use crate::domain::wire_defaults::{nonempty_string, nonzero_u32};
-use crate::proto::v1 as pb;
+use crate::domain::wire_defaults::nonzero_u32;
 
 /// Build the outgoing ContextInfo, or the unset field when every input is the
 /// proto3 default: a present-but-empty ContextInfo is a wire shape regular
@@ -16,110 +16,30 @@ use crate::proto::v1 as pb;
 /// Returns buffa's `MessageField` (waproto's sub-message slot since 0.7) rather
 /// than `Option<Box<_>>`, so every caller can drop it straight into the message
 /// literal without a conversion at each site.
-pub(crate) fn outgoing_context(
-    mentions: &[pb::Mention],
-    quote: Option<&pb::QuoteContext>,
-    ephemeral_seconds: u32,
-) -> MessageField<wa::ContextInfo> {
-    let mut context = wa::ContextInfo::default();
-    if !mentions.is_empty() {
-        context.mentioned_jid = mentions.iter().map(|m| m.jid.clone()).collect();
+pub(crate) fn outgoing_context(context: &OutgoingContext) -> MessageField<wa::ContextInfo> {
+    let mut info = wa::ContextInfo::default();
+    if !context.mentions.is_empty() {
+        info.mentioned_jid = context.mentions.iter().map(|jid| jid.to_string()).collect();
     }
-    copy_quote(&mut context, quote);
-    context.expiration = nonzero_u32(ephemeral_seconds);
-    if context == wa::ContextInfo::default() {
+    if let Some(quote) = &context.quote {
+        copy_quote(&mut info, quote);
+    }
+    info.expiration = nonzero_u32(context.ephemeral_seconds);
+    if info == wa::ContextInfo::default() {
         return MessageField::none();
     }
-    MessageField::some(context)
+    MessageField::some(info)
 }
 
-/// Quote relay: stanza_id + participant from the quoted key, the explicit
-/// `QuoteContext.participant` taking precedence. Proto3 empty strings (the
-/// normal DM-quote case has no participant) relay as ABSENT waproto fields,
-/// never `Some("")` — same rule `wire_defaults` pins everywhere else.
-fn copy_quote(context: &mut wa::ContextInfo, quote: Option<&pb::QuoteContext>) {
-    let Some(q) = quote else { return };
-    let Some(key) = &q.quoted else { return };
-    context.stanza_id = nonempty_string(&key.id);
-    context.participant =
-        nonempty_string(&q.participant).or_else(|| nonempty_string(&key.participant));
+/// Quote relay: the quoted stanza id and, in a group, its author. A DM quote
+/// has no participant, which relays as the ABSENT waproto field, never
+/// `Some("")`: the rule `wire_defaults` pins everywhere else. Which participant
+/// wins (the context's or the key's) was decided when the quote was parsed.
+fn copy_quote(info: &mut wa::ContextInfo, quote: &QuotedRef) {
+    info.stanza_id = Some(quote.id.to_string());
+    info.participant = quote.participant.as_ref().map(ToString::to_string);
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn quoted_key(participant: &str) -> pb::MessageKey {
-        pb::MessageKey {
-            remote_jid: "5511999999999@s.whatsapp.net".to_string(),
-            id: "QUOTED-1".to_string(),
-            from_me: false,
-            participant: participant.to_string(),
-        }
-    }
-
-    #[test]
-    fn all_default_inputs_yield_no_context() {
-        assert!(outgoing_context(&[], None, 0).is_unset());
-    }
-
-    // Quote with no quoted key carries nothing: still no context.
-    #[test]
-    fn quote_without_quoted_key_yields_no_context() {
-        let quote = pb::QuoteContext {
-            quoted: None,
-            participant: String::new(),
-        };
-        assert!(outgoing_context(&[], Some(&quote), 0).is_unset());
-    }
-
-    // Regression (code-review 2026-06-11): a DM quote has empty participants
-    // on both the QuoteContext and the quoted key; that must relay as the
-    // absent field, never Some("") — an empty JID on the wire.
-    #[test]
-    fn dm_quote_with_empty_participants_relays_participant_absent() {
-        let quote = pb::QuoteContext {
-            quoted: Some(quoted_key("")),
-            participant: String::new(),
-        };
-        let context = outgoing_context(&[], Some(&quote), 0).expect("quote must build a context");
-        assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-1"));
-        assert_eq!(context.participant, None);
-    }
-
-    #[test]
-    fn quote_participant_overrides_quoted_key_participant() {
-        let quote = pb::QuoteContext {
-            quoted: Some(quoted_key("5511777777777@s.whatsapp.net")),
-            participant: "5511888888888@s.whatsapp.net".to_string(),
-        };
-        let context = outgoing_context(&[], Some(&quote), 0).expect("quote must build a context");
-        assert_eq!(
-            context.participant.as_deref(),
-            Some("5511888888888@s.whatsapp.net")
-        );
-    }
-
-    #[test]
-    fn mentions_quote_and_ephemeral_compose() {
-        let mentions = [pb::Mention {
-            jid: "5511888888888@s.whatsapp.net".to_string(),
-        }];
-        let quote = pb::QuoteContext {
-            quoted: Some(quoted_key("5511777777777@s.whatsapp.net")),
-            participant: String::new(),
-        };
-        let context =
-            outgoing_context(&mentions, Some(&quote), 90).expect("inputs must build a context");
-        assert_eq!(
-            context.mentioned_jid,
-            vec!["5511888888888@s.whatsapp.net".to_string()]
-        );
-        assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-1"));
-        assert_eq!(
-            context.participant.as_deref(),
-            Some("5511777777777@s.whatsapp.net")
-        );
-        assert_eq!(context.expiration, Some(90));
-    }
-}
+#[path = "outgoing_context_tests.rs"]
+mod tests;

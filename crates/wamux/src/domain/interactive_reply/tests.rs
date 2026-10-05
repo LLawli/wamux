@@ -1,33 +1,38 @@
-use super::*;
+//! `interactive_reply` (#28, #115). Same assertions as before #115; the input
+//! is the domain's `InteractiveReply`. The cases about reading the request (a
+//! reply with no quote, an idless quote, no shape) moved with that reading to
+//! `wamux-types` (`messaging/rich_tests.rs`), with the same assertions.
+
+use wamux_types::{InteractiveReply, Jid, MessageId, QuotedRef, ReplyChoice};
+use whatsapp_rust::buffa::Message as _;
+use whatsapp_rust::waproto::whatsapp as wa;
+
+use super::build_interactive_reply;
+use crate::error::WamuxError;
 
 const OFFER_ID: &str = "FA3A44FC17B70123E1";
 const MERCHANT: &str = "218562899759170@lid";
 
-fn quote() -> pb::QuoteContext {
-    pb::QuoteContext {
-        quoted: Some(pb::MessageKey {
-            remote_jid: "5511999999999@s.whatsapp.net".to_string(),
-            id: OFFER_ID.to_string(),
-            from_me: false,
-            participant: MERCHANT.to_string(),
-        }),
-        participant: String::new(),
+fn quote() -> QuotedRef {
+    QuotedRef {
+        id: MessageId::new(OFFER_ID).unwrap(),
+        participant: Some(Jid::parse(MERCHANT).unwrap()),
     }
 }
 
-fn request(reply: pb::send_interactive_reply_request::Reply) -> pb::SendInteractiveReplyRequest {
-    pb::SendInteractiveReplyRequest {
-        quote: Some(quote()),
-        reply: Some(reply),
-        ..Default::default()
+fn request(choice: ReplyChoice) -> InteractiveReply {
+    InteractiveReply {
+        quote: quote(),
+        quoted_message: Vec::new(),
+        choice,
     }
 }
 
-fn button(selected_id: &str, display_text: &str) -> pb::send_interactive_reply_request::Reply {
-    pb::send_interactive_reply_request::Reply::Button(pb::ButtonReply {
+fn button(selected_id: &str, display_text: &str) -> ReplyChoice {
+    ReplyChoice::Button {
         selected_id: selected_id.to_string(),
         display_text: display_text.to_string(),
-    })
+    }
 }
 
 /// The captured shape: selectedButtonId, selectedDisplayText, contextInfo and
@@ -56,13 +61,11 @@ fn a_button_reply_names_the_choice_by_id() {
 #[test]
 fn a_list_reply_carries_the_row_id_title_and_description() {
     use wa::message::list_response_message::ListType;
-    let message = build_interactive_reply(&request(
-        pb::send_interactive_reply_request::Reply::List(pb::ListReply {
-            selected_row_id: "row_certificados".to_string(),
-            title: "Certificados Digitais".to_string(),
-            description: "Conheça e adquira".to_string(),
-        }),
-    ))
+    let message = build_interactive_reply(&request(ReplyChoice::List {
+        selected_row_id: "row_certificados".to_string(),
+        title: "Certificados Digitais".to_string(),
+        description: "Conheça e adquira".to_string(),
+    }))
     .expect("a quoted offer plus a shape is all it needs");
     let reply = message
         .list_response_message
@@ -84,13 +87,11 @@ fn a_list_reply_carries_the_row_id_title_and_description() {
 /// reply carries an explicit 0.
 #[test]
 fn a_template_reply_relays_index_zero_rather_than_dropping_it() {
-    let message = build_interactive_reply(&request(
-        pb::send_interactive_reply_request::Reply::Template(pb::TemplateReply {
-            selected_id: "quero_saber_mais".to_string(),
-            display_text: "Quero saber mais!".to_string(),
-            selected_index: 0,
-        }),
-    ))
+    let message = build_interactive_reply(&request(ReplyChoice::Template {
+        selected_id: "quero_saber_mais".to_string(),
+        display_text: "Quero saber mais!".to_string(),
+        selected_index: 0,
+    }))
     .expect("a quoted offer plus a shape is all it needs");
     let reply = message
         .template_button_reply_message
@@ -105,12 +106,11 @@ fn a_template_reply_relays_index_zero_rather_than_dropping_it() {
 
 #[test]
 fn a_template_reply_relays_a_nonzero_index_too() {
-    let message = build_interactive_reply(&request(
-        pb::send_interactive_reply_request::Reply::Template(pb::TemplateReply {
-            selected_index: 2,
-            ..Default::default()
-        }),
-    ))
+    let message = build_interactive_reply(&request(ReplyChoice::Template {
+        selected_id: String::new(),
+        display_text: String::new(),
+        selected_index: 2,
+    }))
     .expect("a quoted offer plus a shape is all it needs");
     let reply = message
         .template_button_reply_message
@@ -123,14 +123,12 @@ fn a_template_reply_relays_a_nonzero_index_too() {
 #[test]
 fn a_native_flow_reply_relays_its_payload_verbatim() {
     use wa::message::interactive_response_message::InteractiveResponseMessage as Which;
-    let message = build_interactive_reply(&request(
-        pb::send_interactive_reply_request::Reply::NativeFlow(pb::NativeFlowReply {
-            name: "galaxy_message".to_string(),
-            params_json: r#"{"screen":"WELCOME"}"#.to_string(),
-            body_text: "Enviado".to_string(),
-            version: 0,
-        }),
-    ))
+    let message = build_interactive_reply(&request(ReplyChoice::NativeFlow {
+        name: "galaxy_message".to_string(),
+        params_json: r#"{"screen":"WELCOME"}"#.to_string(),
+        body_text: "Enviado".to_string(),
+        version: 0,
+    }))
     .expect("a quoted offer plus a shape is all it needs");
     let reply = message
         .interactive_response_message
@@ -156,7 +154,7 @@ fn the_offer_payload_rides_in_the_quote_when_supplied() {
         conversation: Some("Escolha uma opção".to_string()),
         ..Default::default()
     };
-    let request = pb::SendInteractiveReplyRequest {
+    let request = InteractiveReply {
         quoted_message: offer.encode_to_vec(),
         ..request(button("op_1", "Um"))
     };
@@ -190,49 +188,12 @@ fn an_absent_offer_payload_leaves_the_quote_at_its_key() {
 /// rather than ride onto the wire as a quote nobody can read back.
 #[test]
 fn a_malformed_offer_payload_is_an_invalid_argument() {
-    let request = pb::SendInteractiveReplyRequest {
+    let request = InteractiveReply {
         // Field 1, length-delimited, claiming 60 bytes that are not there.
         quoted_message: vec![0x0a, 0x3c, 0x01, 0x02],
         ..request(button("op_1", "Um"))
     };
     let err = build_interactive_reply(&request).expect_err("garbage must be refused");
-    assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
-}
-
-/// A reply that names no offer is not a reply: the bot has nothing to tie the
-/// tap back to, and the failure would look like the bot ignoring the user.
-#[test]
-fn a_reply_without_a_quote_is_an_invalid_argument() {
-    let request = pb::SendInteractiveReplyRequest {
-        quote: None,
-        reply: Some(button("op_1", "Um")),
-        ..Default::default()
-    };
-    let err = build_interactive_reply(&request).expect_err("an unquoted reply must be refused");
-    assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
-}
-
-#[test]
-fn a_quote_without_a_stanza_id_is_an_invalid_argument() {
-    let mut empty = quote();
-    empty.quoted.as_mut().expect("the key is there").id = String::new();
-    let request = pb::SendInteractiveReplyRequest {
-        quote: Some(empty),
-        reply: Some(button("op_1", "Um")),
-        ..Default::default()
-    };
-    let err = build_interactive_reply(&request).expect_err("an idless quote must be refused");
-    assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
-}
-
-#[test]
-fn a_request_with_no_reply_shape_is_an_invalid_argument() {
-    let request = pb::SendInteractiveReplyRequest {
-        quote: Some(quote()),
-        reply: None,
-        ..Default::default()
-    };
-    let err = build_interactive_reply(&request).expect_err("a shapeless reply must be refused");
     assert!(matches!(err, WamuxError::InvalidArgument(_)), "{err}");
 }
 

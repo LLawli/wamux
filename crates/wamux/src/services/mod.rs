@@ -55,18 +55,18 @@ pub(crate) async fn account_of(
     Ok((handle, client))
 }
 
-/// This account's own jid, for the `sender` of a message it sent. Empty when
+/// This account's own jid, for the `sender` of a message it sent. `None` when
 /// the client has no phone jid yet -- absent relays as the proto3 default, the
 /// core does not substitute a placeholder.
-pub(crate) fn own_jid(client: &Client) -> String {
-    client.pn().map(|jid| jid.to_string()).unwrap_or_default()
+pub(crate) fn own_jid(client: &Client) -> Option<wamux_types::Jid> {
+    client.pn().map(wamux_types::Jid::from)
 }
 
-/// Extract a `Jid` string from an optional proto `Jid`, erroring if absent.
-pub(crate) fn require_jid(jid: Option<pb::Jid>) -> Result<String, WamuxError> {
-    jid.map(|j| j.value)
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| WamuxError::InvalidArgument("missing jid".to_string()))
+/// A required `pb::Jid` parsed into the domain's `Jid`: a missing or empty one
+/// is `InvalidArgument("missing jid")`, a malformed one names the value (#115).
+pub(crate) fn require_typed_jid(jid: Option<pb::Jid>) -> Result<wamux_types::Jid, WamuxError> {
+    jid.ok_or_else(|| WamuxError::InvalidArgument("missing jid".to_string()))
+        .and_then(wamux_types::Jid::try_from)
 }
 
 /// Extract a required proto sub-message, or `InvalidArgument("missing <name>")`.

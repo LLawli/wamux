@@ -36,6 +36,16 @@ impl Jid {
             .map_err(|e| WamuxError::InvalidArgument(format!("invalid jid '{value}': {e}")))
     }
 
+    /// A JID that may be absent, where proto3's empty string IS absence: a DM's
+    /// `participant`, MarkRead's `sender` (#20, #115). A non-empty value that
+    /// does not parse is still `InvalidArgument`.
+    pub fn parse_optional(value: &str) -> Result<Option<Self>, WamuxError> {
+        if value.is_empty() {
+            return Ok(None);
+        }
+        Self::parse(value).map(Some)
+    }
+
     /// The library's type, for calls into whatsapp-rust.
     pub fn as_lib(&self) -> &wacore_binary::Jid {
         &self.0

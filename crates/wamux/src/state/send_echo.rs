@@ -20,25 +20,34 @@
 use std::sync::Arc;
 
 use prost::Message as _;
+use wamux_types::{Jid, MessageId};
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use super::account_handle::AccountHandle;
 use crate::domain::event_mapping::map_sent;
+use crate::domain::messaging::sent_message_key;
 use crate::proto::v1 as pb;
 use crate::proto::v1::event_envelope::Event as WireEvent;
 
 /// Build the echo and put it on the bus. Best-effort by construction: a send
 /// that reached WhatsApp is not undone by a bus with no subscribers, so nothing
 /// here can fail the RPC.
+///
+/// The key is built here, from the id and the chat, with the same
+/// `sent_message_key` the RPC answers with, so the echo and the response can
+/// never disagree (#115). `sender` is this account's own phone jid, absent
+/// when the library has none yet.
 pub async fn publish_sent(
     handle: &Arc<AccountHandle>,
-    chat: &str,
-    sender: &str,
-    key: pb::MessageKey,
+    message_id: &MessageId,
+    chat: &Jid,
+    sender: Option<&Jid>,
     message: &wa::Message,
     replay_max_event_bytes: u64,
 ) {
-    let inbound = map_sent(key, chat, sender, now_millis(), message);
+    let key = sent_message_key(message_id.to_string(), chat.as_lib());
+    let sender = sender.map(Jid::to_string).unwrap_or_default();
+    let inbound = map_sent(key, &chat.to_string(), &sender, now_millis(), message);
     let envelope = pb::EventEnvelope {
         account_uuid: handle.uuid.to_string(),
         monotonic_seq: handle.next_seq(),
@@ -70,31 +79,5 @@ fn now_millis() -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn envelope(payload_len: usize) -> pb::EventEnvelope {
-        pb::EventEnvelope {
-            account_uuid: "a".to_string(),
-            monotonic_seq: 0,
-            ts_unix_ms: 0,
-            event: Some(WireEvent::Message(pb::InboundMessage {
-                raw_message: vec![0u8; payload_len],
-                ..Default::default()
-            })),
-        }
-    }
-
-    #[test]
-    fn no_cap_keeps_every_echo() {
-        assert!(fits_the_ring(&envelope(4096), 0));
-    }
-
-    // The echo answers to the same ring budget as a relayed event; a huge one
-    // must not evict the live history a reconnect depends on.
-    #[test]
-    fn an_echo_over_the_cap_stays_out_of_the_ring() {
-        assert!(!fits_the_ring(&envelope(4096), 64));
-        assert!(fits_the_ring(&envelope(8), 64));
-    }
-}
+#[path = "send_echo_tests.rs"]
+mod tests;

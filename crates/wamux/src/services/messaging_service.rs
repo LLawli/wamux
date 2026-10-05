@@ -5,11 +5,14 @@
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status, Streaming};
+use wamux_types::{
+    ContactCard, InteractiveReply, Jid, MessageId, MessageTarget, NewPoll, OutgoingMedia,
+    OutgoingText, PollVoteCast, PollVotesToTally, StatusMedia, StatusRevoke, StatusText,
+};
 use whatsapp_rust::SendResult;
 
 use super::media_stream::MediaChunks;
-use super::{account_of, client_of, own_jid, require_field, require_jid};
-use crate::domain::jid_parse::{parse_jid, parse_optional_jid};
+use super::{account_of, client_of, own_jid, require_field, require_typed_jid};
 use crate::domain::messaging::{
     self, recipient_fanout_to_proto, send_result_to_proto, sent_message_key,
 };
@@ -46,17 +49,48 @@ impl MessagingSvc {
         client: &whatsapp_rust::Client,
         result: &SendResult,
     ) {
-        let key = sent_message_key(result.message_id.clone(), &result.to);
-        let chat = key.remote_jid.clone();
+        // An echo without an id cannot be deduplicated by a consumer, so it is
+        // worse than no echo; the send itself already happened (#115).
+        let Ok(message_id) = MessageId::new(result.message_id.clone()) else {
+            tracing::warn!(chat = %result.to, "library returned an empty message id; echo skipped");
+            return;
+        };
         publish_sent(
             handle,
-            &chat,
-            &own_jid(client),
-            key,
+            &message_id,
+            &Jid::from(result.to.clone()),
+            own_jid(client).as_ref(),
             &result.message,
             self.registry.replay_max_event_bytes(),
         )
         .await;
+    }
+
+    /// The target of a DeleteMessage, with the account it acts on. A revoke for
+    /// everyone is checked for shape and for a status BEFORE the account is
+    /// looked up (#41); a delete-for-me looks the account up first, so an
+    /// unknown account still answers NotFound for a malformed key (#101).
+    async fn delete_target(
+        &self,
+        account: Option<&pb::AccountRef>,
+        key: pb::MessageKey,
+        for_everyone: bool,
+    ) -> Result<
+        (
+            Arc<crate::state::AccountHandle>,
+            Arc<whatsapp_rust::Client>,
+            MessageTarget,
+        ),
+        Status,
+    > {
+        if !for_everyone {
+            let (handle, client) = account_of(&self.registry, account).await?;
+            return Ok((handle, client, MessageTarget::try_from(key)?));
+        }
+        let target = MessageTarget::try_from(key)?;
+        messaging::refuse_status_revoke(&target, true)?;
+        let (handle, client) = account_of(&self.registry, account).await?;
+        Ok((handle, client, target))
     }
 
     /// Echo the send, then answer with its key. The shape of every send RPC
@@ -84,10 +118,10 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        // Routing resolved here; the whole request passes wire-shaped to the
-        // domain (same pattern as send_media's header).
-        let to = parse_jid(&require_jid(req.to.clone())?)?;
-        let result = messaging::send_text(&client, to, &req).await?;
+        // Routing resolved here; the content converts once, after it (#115).
+        let to = require_typed_jid(req.to.clone())?;
+        let text = OutgoingText::try_from(req)?;
+        let result = messaging::send_text(&client, to, &text).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -102,13 +136,16 @@ impl MessagingService for MessagingSvc {
             .into_send()?;
 
         let (handle, client) = account_of(&self.registry, header.account.as_ref()).await?;
-        let to = parse_jid(&require_jid(header.to.clone())?)?;
+        let to = require_typed_jid(header.to.clone())?;
 
         // Media always streams inline; the core never fetches URLs (that fetch
         // policy + SSRF surface is the edge's job).
         let data = chunks.collect_bytes(self.media_max_bytes).await?;
 
-        let result = media_transfer::send_media(&client, to, &header, data).await?;
+        // Converted after the bytes: the kind was read in the domain, after
+        // the stream, and the order of the errors is part of the contract.
+        let media = OutgoingMedia::try_from(header)?;
+        let result = media_transfer::send_media(&client, to, &media, data).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -118,7 +155,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let target = require_field(req.target, "target")?;
+        let target = MessageTarget::try_from(require_field(req.target, "target")?)?;
         let result = messaging::send_reaction(&client, &target, &req.emoji).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
@@ -129,14 +166,15 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let target = require_field(req.target, "target")?;
+        let raw_key = require_field(req.target, "target")?;
+        let target = MessageTarget::try_from(raw_key.clone())?;
         let result = messaging::edit_message(&client, &target, &req.new_text).await?;
         self.echo(&handle, &client, &result).await;
         // The response keeps naming the chat verbatim as the caller wrote it,
         // as before #38; the echo names the chat the library addressed.
         Ok(Response::new(pb::SendResult {
             key: Some(pb::MessageKey {
-                remote_jid: target.remote_jid,
+                remote_jid: raw_key.remote_jid,
                 id: result.message_id,
                 from_me: true,
                 participant: String::new(),
@@ -151,16 +189,17 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::DeleteMessageRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let target = require_field(req.target, "target")?;
-        messaging::refuse_status_revoke(&target, req.for_everyone)?;
-        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
+        let raw_key = require_field(req.target, "target")?;
+        let (handle, client, target) = self
+            .delete_target(req.account.as_ref(), raw_key.clone(), req.for_everyone)
+            .await?;
         let revoke = messaging::delete_message(&client, &target, req.for_everyone).await?;
         if let Some(result) = &revoke {
             self.echo(&handle, &client, result).await;
         }
         // A delete-for-me sends nothing, so it has no fan-out to report.
         Ok(Response::new(pb::SendResult {
-            key: Some(target),
+            key: Some(raw_key),
             server_timestamp: 0,
             recipient_fanout: revoke
                 .and_then(|result| result.recipient_fanout)
@@ -174,7 +213,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::FetchMessageHistoryResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         let session_id = messaging::fetch_message_history(
             &client,
             chat,
@@ -195,7 +234,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         messaging::send_presence(&client, chat, &req.state).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -206,11 +245,11 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         // Both of these were dropped on the floor before issue #20. `sender` is
         // optional (a DM's author is the chat itself); an empty `message_ids`
         // acknowledges nothing and the library emits no stanza.
-        let sender = parse_optional_jid(&req.sender.unwrap_or_default().value)?;
+        let sender = Jid::parse_optional(&req.sender.unwrap_or_default().value)?;
         messaging::mark_read(&client, &chat, sender.as_ref(), &req.message_ids).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -221,7 +260,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         chat_actions::mark_chat_read(&client, &chat).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -232,7 +271,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         chat_actions::mark_unread(&client, &chat).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -243,7 +282,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let target = require_field(req.target, "target")?;
+        let target = MessageTarget::try_from(require_field(req.target, "target")?)?;
         chat_actions::star_message(&client, &target, req.starred).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -254,7 +293,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         chat_actions::archive_chat(&client, chat, req.archived).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -265,7 +304,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         chat_actions::pin_chat(&client, chat, req.pinned).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -276,7 +315,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         chat_actions::mute_chat(&client, chat, req.muted, req.mute_until_ms).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -287,7 +326,7 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat)?)?;
+        let chat = require_typed_jid(req.chat)?;
         chat_actions::delete_chat(&client, chat, req.delete_media).await?;
         Ok(Response::new(pb::Empty {}))
     }
@@ -298,8 +337,9 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let to = parse_jid(&require_jid(req.to.clone())?)?;
-        let result = send_rich::send_contact(&client, to, &req).await?;
+        let to = require_typed_jid(req.to.clone())?;
+        let card = ContactCard::try_from(req)?;
+        let result = send_rich::send_contact(&client, to, &card).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -309,8 +349,9 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let to = parse_jid(&require_jid(req.to.clone())?)?;
-        let result = interactive_reply::send_interactive_reply(&client, to, &req).await?;
+        let to = require_typed_jid(req.to.clone())?;
+        let reply = InteractiveReply::try_from(req)?;
+        let result = interactive_reply::send_interactive_reply(&client, to, &reply).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -320,8 +361,9 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendPollResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let to = parse_jid(&require_jid(req.to.clone())?)?;
-        let (result, message_secret) = send_rich::send_poll(&client, to, &req).await?;
+        let to = require_typed_jid(req.to.clone())?;
+        let poll = NewPoll::from(req);
+        let (result, message_secret) = send_rich::send_poll(&client, to, &poll).await?;
         self.echo(&handle, &client, &result).await;
         // The poll key is the same key every send answers with; the
         // message_secret rides alongside so the edge can decrypt incoming votes.
@@ -338,8 +380,9 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let chat = parse_jid(&require_jid(req.chat.clone())?)?;
-        let result = polls::send_vote(&client, chat, &req).await?;
+        let chat = require_typed_jid(req.chat.clone())?;
+        let vote = PollVoteCast::try_from(req)?;
+        let result = polls::send_vote(&client, chat, &vote).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -352,7 +395,10 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::PollTally>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        Ok(Response::new(polls::aggregate_votes(&client, &req).await?))
+        let tally = PollVotesToTally::try_from(req)?;
+        Ok(Response::new(
+            polls::aggregate_votes(&client, &tally).await?,
+        ))
     }
 
     async fn post_status_text(
@@ -361,7 +407,8 @@ impl MessagingService for MessagingSvc {
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
         let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
-        let result = status::post_status_text(&client, &req).await?;
+        let post = StatusText::try_from(req)?;
+        let result = status::post_status_text(&client, &post).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -377,7 +424,8 @@ impl MessagingService for MessagingSvc {
         let (handle, client) = account_of(&self.registry, header.account.as_ref()).await?;
         // Same inline-only contract as SendMedia: the core fetches no URLs.
         let data = chunks.collect_bytes(self.media_max_bytes).await?;
-        let result = status::post_status_media(&client, &header, data).await?;
+        let post = StatusMedia::try_from(header)?;
+        let result = status::post_status_media(&client, &post, data).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -386,8 +434,11 @@ impl MessagingService for MessagingSvc {
         request: Request<pb::RevokeStatusRequest>,
     ) -> Result<Response<pb::SendResult>, Status> {
         let req = request.into_inner();
-        let revoke = status::parse_status_revoke(&req)?;
-        let (handle, client) = account_of(&self.registry, req.account.as_ref()).await?;
+        // Shape first, account second (#41): a malformed revoke is about the
+        // request, not the account.
+        let account = req.account.clone();
+        let revoke = StatusRevoke::try_from(req)?;
+        let (handle, client) = account_of(&self.registry, account.as_ref()).await?;
         let result = status::revoke_status(&client, revoke).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }

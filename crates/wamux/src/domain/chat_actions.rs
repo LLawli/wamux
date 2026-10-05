@@ -3,30 +3,30 @@
 //! across the account's linked devices. No policy lives here (the core never
 //! invents a mute duration or decides what "archived" means).
 
-use whatsapp_rust::{Client, Jid};
+use wamux_types::{Jid, MessageTarget};
+use whatsapp_rust::Client;
 
-use crate::domain::jid_parse::parse_jid;
 use crate::error::{WamuxError, client_err};
-use crate::proto::v1 as pb;
 
 /// Star or unstar a single message. The message-locating fields all come off
-/// the wire `MessageKey`: an empty `participant` is a DM (relayed as `None`,
-/// never an empty JID), exactly as `proto_key_to_wa` treats it elsewhere.
+/// the `MessageTarget`: a DM has no participant (relayed as `None`, never an
+/// empty JID), exactly as `wa_message_key` treats it elsewhere.
 pub async fn star_message(
     client: &Client,
-    target: &pb::MessageKey,
+    target: &MessageTarget,
     starred: bool,
 ) -> Result<(), WamuxError> {
-    let chat = parse_jid(&target.remote_jid)?;
-    let participant = parse_participant(&target.participant)?;
+    let chat = target.chat.as_lib();
+    let participant = target.participant.as_ref().map(Jid::as_lib);
+    let id = target.id.as_str();
     let actions = client.chat_actions();
     let result = if starred {
         actions
-            .star_message(&chat, participant.as_ref(), &target.id, target.from_me)
+            .star_message(chat, participant, id, target.from_me)
             .await
     } else {
         actions
-            .unstar_message(&chat, participant.as_ref(), &target.id, target.from_me)
+            .unstar_message(chat, participant, id, target.from_me)
             .await
     };
     result.map_err(client_err)
@@ -37,9 +37,9 @@ pub async fn star_message(
 pub async fn archive_chat(client: &Client, chat: Jid, archived: bool) -> Result<(), WamuxError> {
     let actions = client.chat_actions();
     let result = if archived {
-        actions.archive_chat(&chat, None).await
+        actions.archive_chat(chat.as_lib(), None).await
     } else {
-        actions.unarchive_chat(&chat, None).await
+        actions.unarchive_chat(chat.as_lib(), None).await
     };
     result.map_err(client_err)
 }
@@ -47,9 +47,9 @@ pub async fn archive_chat(client: &Client, chat: Jid, archived: bool) -> Result<
 pub async fn pin_chat(client: &Client, chat: Jid, pinned: bool) -> Result<(), WamuxError> {
     let actions = client.chat_actions();
     let result = if pinned {
-        actions.pin_chat(&chat).await
+        actions.pin_chat(chat.as_lib()).await
     } else {
-        actions.unpin_chat(&chat).await
+        actions.unpin_chat(chat.as_lib()).await
     };
     result.map_err(client_err)
 }
@@ -65,11 +65,11 @@ pub async fn mute_chat(
 ) -> Result<(), WamuxError> {
     let actions = client.chat_actions();
     let result = if !muted {
-        actions.unmute_chat(&chat).await
+        actions.unmute_chat(chat.as_lib()).await
     } else if mute_until_ms > 0 {
-        actions.mute_chat_until(&chat, mute_until_ms).await
+        actions.mute_chat_until(chat.as_lib(), mute_until_ms).await
     } else {
-        actions.mute_chat(&chat).await
+        actions.mute_chat(chat.as_lib()).await
     };
     result.map_err(client_err)
 }
@@ -87,7 +87,7 @@ pub async fn mute_chat(
 pub async fn mark_chat_read(client: &Client, chat: &Jid) -> Result<(), WamuxError> {
     client
         .chat_actions()
-        .mark_chat_as_read(chat, true, None)
+        .mark_chat_as_read(chat.as_lib(), true, None)
         .await
         .map_err(client_err)
 }
@@ -95,7 +95,7 @@ pub async fn mark_chat_read(client: &Client, chat: &Jid) -> Result<(), WamuxErro
 pub async fn mark_unread(client: &Client, chat: &Jid) -> Result<(), WamuxError> {
     client
         .chat_actions()
-        .mark_chat_as_read(chat, false, None)
+        .mark_chat_as_read(chat.as_lib(), false, None)
         .await
         .map_err(client_err)
 }
@@ -106,46 +106,7 @@ pub async fn mark_unread(client: &Client, chat: &Jid) -> Result<(), WamuxError> 
 pub async fn delete_chat(client: &Client, chat: Jid, delete_media: bool) -> Result<(), WamuxError> {
     client
         .chat_actions()
-        .delete_chat(&chat, delete_media, None)
+        .delete_chat(chat.as_lib(), delete_media, None)
         .await
         .map_err(client_err)
-}
-
-/// Parse the optional group participant: proto3's empty string is "no
-/// participant" (a DM), which maps to `None`, never a parsed empty JID.
-fn parse_participant(value: &str) -> Result<Option<Jid>, WamuxError> {
-    if value.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(parse_jid(value)?))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Proto3 has no presence on `participant`: an empty string is the DM case
-    // and must become None, never Some(<empty jid>).
-    #[test]
-    fn empty_participant_parses_to_none() {
-        assert_eq!(parse_participant("").unwrap(), None);
-    }
-
-    #[test]
-    fn group_participant_parses_to_some_jid() {
-        let participant = parse_participant("5511888888888@s.whatsapp.net")
-            .unwrap()
-            .expect("non-empty participant must be Some");
-        assert_eq!(participant.to_string(), "5511888888888@s.whatsapp.net");
-    }
-
-    // A malformed participant is the edge's mistake, surfaced as InvalidArgument
-    // (the core never silently drops a bad JID into None).
-    #[test]
-    fn garbage_participant_is_invalid_argument() {
-        assert!(matches!(
-            parse_participant("not a jid"),
-            Err(WamuxError::InvalidArgument(_))
-        ));
-    }
 }

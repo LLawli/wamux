@@ -1,7 +1,6 @@
 //! Upload media for sending and download received media (lazy, from descriptor).
 
-use wacore::download::MediaType;
-use wamux_types::MediaKind;
+use wamux_types::{DownloadableMedia, Jid, MediaKind, OutgoingMedia};
 use whatsapp_rust::buffa;
 use whatsapp_rust::download::DownloadParams;
 use whatsapp_rust::upload::{UploadOptions, UploadResponse};
@@ -9,26 +8,27 @@ use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::{
     AudioMessage, DocumentMessage, ImageMessage, StickerMessage, VideoMessage,
 };
-use whatsapp_rust::{Client, Jid, SendResult};
+use whatsapp_rust::{Client, SendResult};
 
 use crate::domain::outgoing_context::outgoing_context;
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_u32};
 use crate::error::{WamuxError, client_err};
-use crate::proto::v1 as pb;
 
 pub async fn send_media(
     client: &Client,
     to: Jid,
-    header: &pb::SendMediaHeader,
+    media: &OutgoingMedia,
     data: Vec<u8>,
 ) -> Result<SendResult, WamuxError> {
-    let kind = MediaKind::parse_sendable(&header.media_type)?;
     let upload = client
-        .upload(data, kind.media_type(), UploadOptions::new())
+        .upload(data, media.kind.media_type(), UploadOptions::new())
         .await
         .map_err(client_err)?;
-    let message = build_media_message(kind, header, upload.into())?;
-    client.send_message(to, message).await.map_err(client_err)
+    let message = build_media_message(media, upload.into())?;
+    client
+        .send_message(to.into_lib(), message)
+        .await
+        .map_err(client_err)
 }
 
 /// The upload fields the outgoing sub-messages need, owned by wamux.
@@ -77,7 +77,7 @@ impl From<UploadResponse> for MediaUpload {
     }
 }
 
-/// Pure construction of the outgoing media `wa::Message` from the wire header
+/// Pure construction of the outgoing media `wa::Message` from the parsed header
 /// plus the finished upload. Header fields relay verbatim; proto3 defaults
 /// (empty string/bytes, zero) map to absent waproto fields. The exhaustive
 /// `MediaKind` match (no catch-all) keeps builder and upload type in lockstep.
@@ -86,18 +86,14 @@ impl From<UploadResponse> for MediaUpload {
 /// they have no outgoing sub-message, so they are refused here the way
 /// `parse_sendable` refuses them, rather than shipping an empty message.
 pub(crate) fn build_media_message(
-    kind: MediaKind,
-    header: &pb::SendMediaHeader,
+    header: &OutgoingMedia,
     up: MediaUpload,
 ) -> Result<wa::Message, WamuxError> {
     // Each wa media sub-message carries its own ContextInfo; the shared
     // builder relays mentions + quote + ephemeral (or omits the field when
     // all three are the proto3 default), same composition as the text path.
-    let context = outgoing_context(
-        &header.mentions,
-        header.quote.as_ref(),
-        header.ephemeral_seconds,
-    );
+    let context = outgoing_context(&header.context);
+    let kind = header.kind;
     let message = match kind {
         MediaKind::Image => wa::Message {
             image_message: buffa::MessageField::some(image_submessage(header, up, context)),
@@ -162,7 +158,7 @@ macro_rules! submessage_with_upload {
 }
 
 fn video_submessage(
-    header: &pb::SendMediaHeader,
+    header: &OutgoingMedia,
     up: MediaUpload,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::VideoMessage {
@@ -182,7 +178,7 @@ fn video_submessage(
 }
 
 fn audio_submessage(
-    header: &pb::SendMediaHeader,
+    header: &OutgoingMedia,
     up: MediaUpload,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::AudioMessage {
@@ -204,7 +200,7 @@ fn audio_submessage(
 }
 
 fn document_submessage(
-    header: &pb::SendMediaHeader,
+    header: &OutgoingMedia,
     up: MediaUpload,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::DocumentMessage {
@@ -220,7 +216,7 @@ fn document_submessage(
 }
 
 fn sticker_submessage(
-    header: &pb::SendMediaHeader,
+    header: &OutgoingMedia,
     up: MediaUpload,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::StickerMessage {
@@ -228,7 +224,7 @@ fn sticker_submessage(
 }
 
 fn image_submessage(
-    header: &pb::SendMediaHeader,
+    header: &OutgoingMedia,
     up: MediaUpload,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::message::ImageMessage {
@@ -245,20 +241,12 @@ fn image_submessage(
 /// Lazy download from a descriptor the edge got off an inbound message event.
 pub async fn download(
     client: &Client,
-    descriptor: &pb::MediaDescriptor,
+    descriptor: &DownloadableMedia,
 ) -> Result<Vec<u8>, WamuxError> {
-    let media_type = download_media_type(&descriptor.media_type)?;
     client
-        .download_from_params(&download_params(descriptor, media_type))
+        .download_from_params(&download_params(descriptor))
         .await
         .map_err(client_err)
-}
-
-/// Download accepts the five sendable kinds plus the two a received sticker
-/// pack names (issue #58). SendMedia still refuses those two: it parses
-/// through `MediaKind::parse_sendable`.
-fn download_media_type(value: &str) -> Result<MediaType, WamuxError> {
-    Ok(MediaKind::parse_downloadable(value)?.media_type())
 }
 
 /// Build the download parameters, encrypted or not.
@@ -274,7 +262,10 @@ fn download_media_type(value: &str) -> Result<MediaType, WamuxError> {
 /// `MediaDecryption::Plaintext`, which verifies `file_sha256` rather than
 /// skipping verification. So this widens what the core can relay without
 /// loosening what it checks.
-fn download_params(descriptor: &pb::MediaDescriptor, media_type: MediaType) -> DownloadParams {
+///
+/// The kind may be one of the two a received sticker pack names (issue #58);
+/// SendMedia still refuses those, through `MediaKind::parse_sendable`.
+fn download_params(descriptor: &DownloadableMedia) -> DownloadParams {
     let encrypted = !descriptor.media_key.is_empty();
     DownloadParams {
         direct_path: descriptor.direct_path.clone(),
@@ -283,471 +274,10 @@ fn download_params(descriptor: &pb::MediaDescriptor, media_type: MediaType) -> D
         // Only meaningful alongside a key: it is the hash of the ENCRYPTED bytes.
         file_enc_sha256: encrypted.then(|| descriptor.file_enc_sha256.clone()),
         file_length: descriptor.file_length,
-        media_type,
+        media_type: descriptor.kind.media_type(),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The tests build sendable kinds only; the download-only kinds are
-    /// pinned by `a_download_only_kind_has_no_outgoing_message`.
-    fn build_media_message(
-        kind: MediaKind,
-        header: &pb::SendMediaHeader,
-        up: MediaUpload,
-    ) -> wa::Message {
-        super::build_media_message(kind, header, up).expect("sendable kind")
-    }
-
-    #[test]
-    fn a_download_only_kind_has_no_outgoing_message() {
-        for kind in [MediaKind::StickerPack, MediaKind::StickerPackThumbnail] {
-            let err = super::build_media_message(kind, &header("image"), fake_upload());
-            assert!(
-                matches!(err, Err(WamuxError::InvalidArgument(_))),
-                "{kind:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn media_kind_parses_each_accepted_string_to_its_upload_type() {
-        assert_eq!(
-            MediaKind::parse_sendable("image").unwrap().media_type(),
-            MediaType::Image
-        );
-        assert_eq!(
-            MediaKind::parse_sendable("video").unwrap().media_type(),
-            MediaType::Video
-        );
-        assert_eq!(
-            MediaKind::parse_sendable("audio").unwrap().media_type(),
-            MediaType::Audio
-        );
-        assert_eq!(
-            MediaKind::parse_sendable("document").unwrap().media_type(),
-            MediaType::Document
-        );
-        assert_eq!(
-            MediaKind::parse_sendable("sticker").unwrap().media_type(),
-            MediaType::Sticker
-        );
-    }
-
-    #[test]
-    fn media_kind_unknown_value_is_invalid_argument_with_value() {
-        let err = MediaKind::parse_sendable("gif").unwrap_err();
-        match err {
-            WamuxError::InvalidArgument(msg) => assert!(msg.contains("gif"), "got: {msg}"),
-            other => panic!("expected InvalidArgument, got {other:?}"),
-        }
-    }
-
-    // The match arms are exact lowercase literals: "Image" must be rejected.
-    // Pinned so a future "helpful" case-fold doesn't sneak policy into the core.
-    #[test]
-    fn media_kind_is_case_sensitive() {
-        assert!(matches!(
-            MediaKind::parse_sendable("Image"),
-            Err(WamuxError::InvalidArgument(_))
-        ));
-    }
-
-    // Issue #58: DownloadMedia takes a received pack and its thumbnail, and
-    // still routes the five sendable kinds and refuses anything else.
-    #[test]
-    fn download_accepts_the_pack_tokens_on_top_of_the_five_kinds() {
-        let resolved = ["sticker_pack", "sticker_pack_thumbnail", "sticker"]
-            .map(|v| download_media_type(v).expect("accepted for download"));
-        assert_eq!(
-            resolved,
-            [
-                MediaType::StickerPack,
-                MediaType::StickerPackThumbnail,
-                MediaType::Sticker
-            ]
-        );
-        assert!(matches!(
-            download_media_type("gif"),
-            Err(WamuxError::InvalidArgument(_))
-        ));
-    }
-
-    // The pack tokens are download-only: SendMedia parses through MediaKind,
-    // which must keep refusing them, since there is no sub-message to build.
-    #[test]
-    fn send_media_still_refuses_the_pack_tokens() {
-        for value in ["sticker_pack", "sticker_pack_thumbnail"] {
-            assert!(
-                matches!(
-                    MediaKind::parse_sendable(value),
-                    Err(WamuxError::InvalidArgument(_))
-                ),
-                "value: {value}"
-            );
-        }
-    }
-
-    fn descriptor(media_key: Vec<u8>, file_enc_sha256: Vec<u8>) -> pb::MediaDescriptor {
-        pb::MediaDescriptor {
-            direct_path: "/v/t62.7118-24/enc".to_string(),
-            media_key,
-            file_enc_sha256,
-            file_sha256: vec![9u8; 32],
-            file_length: 2048,
-            mime_type: "image/jpeg".to_string(),
-            media_type: "image".to_string(),
-        }
-    }
-
-    // Ordinary encrypted media: the key rides through and decryption happens.
-    #[test]
-    fn a_descriptor_with_a_key_downloads_as_encrypted() {
-        let params = download_params(&descriptor(vec![1u8; 32], vec![2u8; 32]), MediaType::Image);
-        assert_eq!(params.media_key.as_deref(), Some(&[1u8; 32][..]));
-        assert_eq!(params.file_enc_sha256.as_deref(), Some(&[2u8; 32][..]));
-        assert_eq!(params.file_sha256, vec![9u8; 32]);
-    }
-
-    // REGRESSION (issue #6): a channel's media carries no key at all. It must
-    // download as plaintext rather than fail, and `file_sha256` must survive —
-    // it is the only thing authenticating those bytes.
-    #[test]
-    fn a_keyless_descriptor_downloads_as_plaintext_and_keeps_its_hash() {
-        let params = download_params(&descriptor(Vec::new(), Vec::new()), MediaType::Image);
-        assert!(params.media_key.is_none());
-        assert!(params.file_enc_sha256.is_none());
-        assert_eq!(params.file_sha256, vec![9u8; 32]);
-        assert_eq!(params.file_length, 2048);
-    }
-
-    // An enc hash without a key is not a half-encrypted download: without the
-    // key there is nothing to decrypt, so carrying it would only invite the
-    // library to validate a hash of bytes it never produces.
-    #[test]
-    fn an_enc_hash_without_a_key_is_dropped() {
-        let params = download_params(&descriptor(Vec::new(), vec![2u8; 32]), MediaType::Image);
-        assert!(params.media_key.is_none());
-        assert!(params.file_enc_sha256.is_none());
-    }
-
-    fn fake_upload() -> MediaUpload {
-        MediaUpload {
-            url: "https://mmg.whatsapp.net/v/t62.7118-24/enc".to_string(),
-            direct_path: "/v/t62.7118-24/enc".to_string(),
-            media_key: [1u8; 32],
-            file_enc_sha256: [2u8; 32],
-            file_sha256: [3u8; 32],
-            file_length: 1234,
-            media_key_timestamp: 1_756_800_000,
-            // wacore computes one for audio and video only; the fixture carries
-            // it so a builder that drops it fails a test (issue #18).
-            streaming_sidecar: Some(vec![9u8; 3]),
-        }
-    }
-
-    /// An upload of a kind wacore builds no sidecar for.
-    fn upload_without_sidecar() -> MediaUpload {
-        MediaUpload {
-            streaming_sidecar: None,
-            ..fake_upload()
-        }
-    }
-
-    fn header(media_type: &str) -> pb::SendMediaHeader {
-        pb::SendMediaHeader {
-            media_type: media_type.to_string(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn image_message_carries_upload_mime_and_caption() {
-        let message = build_media_message(
-            MediaKind::Image,
-            &pb::SendMediaHeader {
-                mime_type: "image/jpeg".to_string(),
-                caption: "a caption".to_string(),
-                ..header("image")
-            },
-            fake_upload(),
-        );
-        let img = message.image_message.expect("image_message must be set");
-        assert_eq!(img.url.as_deref(), Some(fake_upload().url.as_str()));
-        assert_eq!(img.direct_path.as_deref(), Some("/v/t62.7118-24/enc"));
-        assert_eq!(img.media_key.as_deref(), Some(&[1u8; 32][..]));
-        assert_eq!(img.file_sha256.as_deref(), Some(&[3u8; 32][..]));
-        assert_eq!(img.file_enc_sha256.as_deref(), Some(&[2u8; 32][..]));
-        assert_eq!(img.file_length, Some(1234));
-        assert_eq!(img.mimetype.as_deref(), Some("image/jpeg"));
-        assert_eq!(img.caption.as_deref(), Some("a caption"));
-        // No ephemeral, no other context: the ContextInfo stays absent.
-        assert!(img.context_info.is_unset());
-    }
-
-    // REGRESSION for issue #18: an AudioMessage without the sidecar draws its
-    // bubble on the phone and refuses to play, answering `delivered` with no
-    // nack and nothing in any log. The library asserts the same property for
-    // its own builder (whatsapp-rust src/media.rs).
-    #[test]
-    fn audio_message_carries_the_streaming_sidecar() {
-        let message = build_media_message(
-            MediaKind::Audio,
-            &pb::SendMediaHeader {
-                mime_type: "audio/ogg; codecs=opus".to_string(),
-                ptt: true,
-                seconds: 3,
-                ..header("audio")
-            },
-            fake_upload(),
-        );
-        let audio = message.audio_message.expect("audio_message must be set");
-        assert_eq!(audio.streaming_sidecar.as_deref(), Some(&[9u8; 3][..]));
-        assert_eq!(audio.ptt, Some(true));
-    }
-
-    #[test]
-    fn video_message_carries_the_streaming_sidecar() {
-        let message = build_media_message(MediaKind::Video, &header("video"), fake_upload());
-        let video = message.video_message.expect("video_message must be set");
-        assert_eq!(video.streaming_sidecar.as_deref(), Some(&[9u8; 3][..]));
-    }
-
-    // A video note rides the same builder, so it must not lose the sidecar on
-    // the way into the other Message slot.
-    #[test]
-    fn a_video_note_keeps_the_streaming_sidecar() {
-        let message = build_media_message(
-            MediaKind::Video,
-            &pb::SendMediaHeader {
-                ptv: true,
-                ..header("video")
-            },
-            fake_upload(),
-        );
-        let ptv = message.ptv_message.expect("ptv_message must be set");
-        assert_eq!(ptv.streaming_sidecar.as_deref(), Some(&[9u8; 3][..]));
-        assert!(message.video_message.is_unset());
-    }
-
-    // Absence must survive too: wacore returns no sidecar for the kinds fetched
-    // whole, and the field is then absent rather than Some(empty).
-    #[test]
-    fn no_sidecar_from_the_upload_means_an_absent_field() {
-        let message =
-            build_media_message(MediaKind::Audio, &header("audio"), upload_without_sidecar());
-        let audio = message.audio_message.expect("audio_message must be set");
-        assert_eq!(audio.streaming_sidecar, None);
-    }
-
-    // Every media sub-message carries a media_key_timestamp; the shared macro
-    // sets it, so one test over two kinds pins the whole table.
-    #[test]
-    fn media_key_timestamp_reaches_every_kind() {
-        let image = build_media_message(MediaKind::Image, &header("image"), fake_upload())
-            .image_message
-            .expect("image_message must be set");
-        assert_eq!(image.media_key_timestamp, Some(1_756_800_000));
-        let document = build_media_message(MediaKind::Document, &header("document"), fake_upload())
-            .document_message
-            .expect("document_message must be set");
-        assert_eq!(document.media_key_timestamp, Some(1_756_800_000));
-    }
-
-    #[test]
-    fn document_message_carries_filename_and_caption() {
-        let message = build_media_message(
-            MediaKind::Document,
-            &pb::SendMediaHeader {
-                mime_type: "application/pdf".to_string(),
-                caption: "the report".to_string(),
-                filename: "report.pdf".to_string(),
-                ..header("document")
-            },
-            fake_upload(),
-        );
-        let doc = message
-            .document_message
-            .expect("document_message must be set");
-        assert_eq!(doc.mimetype.as_deref(), Some("application/pdf"));
-        assert_eq!(doc.file_name.as_deref(), Some("report.pdf"));
-        assert_eq!(doc.caption.as_deref(), Some("the report"));
-        assert_eq!(doc.file_length, Some(1234));
-        // The other sub-messages must stay unset: exactly one media branch.
-        assert!(message.image_message.is_unset());
-        assert!(message.video_message.is_unset());
-    }
-
-    #[test]
-    fn audio_with_ptt_seconds_waveform_is_a_voice_note() {
-        let message = build_media_message(
-            MediaKind::Audio,
-            &pb::SendMediaHeader {
-                mime_type: "audio/ogg; codecs=opus".to_string(),
-                ptt: true,
-                seconds: 17,
-                waveform: vec![0u8, 50, 100],
-                ..header("audio")
-            },
-            fake_upload(),
-        );
-        let audio = message.audio_message.expect("audio_message must be set");
-        assert_eq!(audio.ptt, Some(true));
-        assert_eq!(audio.seconds, Some(17));
-        assert_eq!(audio.waveform.as_deref(), Some(&[0u8, 50, 100][..]));
-        assert_eq!(audio.mimetype.as_deref(), Some("audio/ogg; codecs=opus"));
-    }
-
-    // Pinned: "not a voice note" is the ABSENT field, never Some(false), and
-    // zero seconds / empty waveform (proto3 defaults) stay absent too.
-    #[test]
-    fn audio_without_ptt_stays_plain_audio() {
-        let message = build_media_message(
-            MediaKind::Audio,
-            &pb::SendMediaHeader {
-                mime_type: "audio/mp4".to_string(),
-                ..header("audio")
-            },
-            fake_upload(),
-        );
-        let audio = message.audio_message.expect("audio_message must be set");
-        assert_eq!(audio.ptt, None);
-        assert_eq!(audio.seconds, None);
-        assert_eq!(audio.waveform, None);
-        assert!(audio.context_info.is_unset());
-    }
-
-    #[test]
-    fn audio_ptt_with_empty_waveform_maps_waveform_to_none() {
-        let message = build_media_message(
-            MediaKind::Audio,
-            &pb::SendMediaHeader {
-                ptt: true,
-                seconds: 3,
-                waveform: vec![],
-                ..header("audio")
-            },
-            fake_upload(),
-        );
-        let audio = message.audio_message.expect("audio_message must be set");
-        assert_eq!(audio.ptt, Some(true));
-        assert_eq!(audio.waveform, None);
-    }
-
-    // PTV (video note): the built VideoMessage must land in ptv_message, not
-    // video_message — same submessage, different Message slot.
-    #[test]
-    fn ptv_video_routes_into_ptv_message() {
-        let message = build_media_message(
-            MediaKind::Video,
-            &pb::SendMediaHeader {
-                mime_type: "video/mp4".to_string(),
-                ptv: true,
-                ..header("video")
-            },
-            fake_upload(),
-        );
-        let ptv = message.ptv_message.expect("ptv_message must be set");
-        assert_eq!(ptv.url.as_deref(), Some(fake_upload().url.as_str()));
-        assert_eq!(ptv.mimetype.as_deref(), Some("video/mp4"));
-        // The regular video slot must stay empty: exactly one branch fires.
-        assert!(message.video_message.is_unset());
-    }
-
-    // Without the ptv flag a video stays a normal video_message.
-    #[test]
-    fn non_ptv_video_stays_video_message() {
-        let message = build_media_message(
-            MediaKind::Video,
-            &pb::SendMediaHeader {
-                mime_type: "video/mp4".to_string(),
-                ..header("video")
-            },
-            fake_upload(),
-        );
-        assert!(message.video_message.is_set());
-        assert!(message.ptv_message.is_unset());
-    }
-
-    #[test]
-    fn ephemeral_image_sets_context_expiration() {
-        let message = build_media_message(
-            MediaKind::Image,
-            &pb::SendMediaHeader {
-                ephemeral_seconds: 86_400,
-                ..header("image")
-            },
-            fake_upload(),
-        );
-        let img = message.image_message.expect("image_message must be set");
-        let context = img.context_info.expect("context_info must be set");
-        assert_eq!(context.expiration, Some(86_400));
-    }
-
-    // Regression (code-review 2026-06-11): SendMediaHeader.quote and .mentions
-    // were silently dropped — only ephemeral reached the ContextInfo. A media
-    // reply must carry the quote exactly like the text path does.
-    #[test]
-    fn media_quote_and_mentions_relay_into_context() {
-        let message = build_media_message(
-            MediaKind::Image,
-            &pb::SendMediaHeader {
-                mentions: vec![pb::Mention {
-                    jid: "5511888888888@s.whatsapp.net".to_string(),
-                }],
-                quote: Some(pb::QuoteContext {
-                    quoted: Some(pb::MessageKey {
-                        remote_jid: "120363001234567890@g.us".to_string(),
-                        id: "QUOTED-1".to_string(),
-                        from_me: false,
-                        participant: "5511777777777@s.whatsapp.net".to_string(),
-                    }),
-                    participant: String::new(),
-                }),
-                ephemeral_seconds: 90,
-                ..header("image")
-            },
-            fake_upload(),
-        );
-        let img = message.image_message.expect("image_message must be set");
-        let context = img.context_info.expect("context_info must be set");
-        assert_eq!(
-            context.mentioned_jid,
-            vec!["5511888888888@s.whatsapp.net".to_string()]
-        );
-        assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-1"));
-        assert_eq!(
-            context.participant.as_deref(),
-            Some("5511777777777@s.whatsapp.net")
-        );
-        // Quote/mentions compose with ephemeral in the one shared ContextInfo.
-        assert_eq!(context.expiration, Some(90));
-    }
-
-    // Every media branch must relay the expiration, not just image/audio.
-    #[test]
-    fn ephemeral_applies_to_every_media_branch() {
-        let kinds = ["video", "audio", "document", "sticker"];
-        for kind in kinds {
-            let message = build_media_message(
-                MediaKind::parse_sendable(kind).expect("test kinds are valid"),
-                &pb::SendMediaHeader {
-                    ephemeral_seconds: 604_800,
-                    ..header(kind)
-                },
-                fake_upload(),
-            );
-            let expiration = match kind {
-                "video" => message.video_message.unwrap().context_info,
-                "audio" => message.audio_message.unwrap().context_info,
-                "document" => message.document_message.unwrap().context_info,
-                _ => message.sticker_message.unwrap().context_info,
-            }
-            .expect("context_info must be set")
-            .expiration;
-            assert_eq!(expiration, Some(604_800), "branch: {kind}");
-        }
-    }
-}
+#[path = "media_transfer_tests.rs"]
+mod tests;
