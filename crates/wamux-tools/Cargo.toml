@@ -21,6 +21,7 @@ required-features = ["stress"]
 
 [dependencies]
 wamux.workspace = true
+wamux-types.workspace = true
 tonic.workspace = true
 prost.workspace = true
 tokio.workspace = true

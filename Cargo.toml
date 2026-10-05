@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/wamux", "crates/wamux-proto", "crates/wamux-tools"]
+members = ["crates/wamux", "crates/wamux-proto", "crates/wamux-tools", "crates/wamux-types"]
 # A bare `cargo build`/`cargo run` at the root means the daemon; the generated
 # code and the development binaries are built on demand (-p / --workspace).
 default-members = ["crates/wamux"]
@@ -23,6 +23,7 @@ tonic-prost-build = "0.14"
 prost-build = "0.14"
 protoc-bin-vendored = "3"
 wamux-proto = { path = "crates/wamux-proto" }
+wamux-types = { path = "crates/wamux-types" }
 wamux = { path = "crates/wamux" }
 
 tokio = { version = "1", features = ["full"] }

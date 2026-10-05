@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status, Streaming};
 use whatsapp_rust::SendResult;
 
+use super::media_stream::MediaChunks;
 use super::{account_of, client_of, own_jid, require_field, require_jid};
 use crate::domain::jid_parse::{parse_jid, parse_optional_jid};
 use crate::domain::messaging::{
@@ -94,22 +95,18 @@ impl MessagingService for MessagingSvc {
         &self,
         request: Request<Streaming<pb::SendMediaChunk>>,
     ) -> Result<Response<pb::SendResult>, Status> {
-        let mut stream = request.into_inner();
-        let first = stream
-            .message()
+        let mut chunks = MediaChunks::Send(request.into_inner());
+        let header = chunks
+            .read_header("empty media stream")
             .await?
-            .ok_or_else(|| Status::invalid_argument("empty media stream"))?;
-        let header = match first.part {
-            Some(pb::send_media_chunk::Part::Header(h)) => h,
-            _ => return Err(Status::invalid_argument("first chunk must be the header")),
-        };
+            .into_send()?;
 
         let (handle, client) = account_of(&self.registry, header.account.as_ref()).await?;
         let to = parse_jid(&require_jid(header.to.clone())?)?;
 
         // Media always streams inline; the core never fetches URLs (that fetch
         // policy + SSRF surface is the edge's job).
-        let data = collect_inline(&mut stream, self.media_max_bytes).await?;
+        let data = chunks.collect_bytes(self.media_max_bytes).await?;
 
         let result = media_transfer::send_media(&client, to, &header, data).await?;
         Ok(self.echoed(&handle, &client, result).await)
@@ -372,18 +369,14 @@ impl MessagingService for MessagingSvc {
         &self,
         request: Request<Streaming<pb::PostStatusMediaChunk>>,
     ) -> Result<Response<pb::SendResult>, Status> {
-        let mut stream = request.into_inner();
-        let first = stream
-            .message()
+        let mut chunks = MediaChunks::Status(request.into_inner());
+        let header = chunks
+            .read_header("empty status media stream")
             .await?
-            .ok_or_else(|| Status::invalid_argument("empty status media stream"))?;
-        let header = match first.part {
-            Some(pb::post_status_media_chunk::Part::Header(h)) => h,
-            _ => return Err(Status::invalid_argument("first chunk must be the header")),
-        };
+            .into_status()?;
         let (handle, client) = account_of(&self.registry, header.account.as_ref()).await?;
         // Same inline-only contract as SendMedia: the core fetches no URLs.
-        let data = collect_status_media(&mut stream, self.media_max_bytes).await?;
+        let data = chunks.collect_bytes(self.media_max_bytes).await?;
         let result = status::post_status_media(&client, &header, data).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
@@ -398,52 +391,4 @@ impl MessagingService for MessagingSvc {
         let result = status::revoke_status(&client, revoke).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
-}
-
-/// Gather inline media chunks (after the header) up to the byte limit.
-async fn collect_inline(
-    stream: &mut Streaming<pb::SendMediaChunk>,
-    max_bytes: u64,
-) -> Result<Vec<u8>, Status> {
-    let mut data = Vec::new();
-    while let Some(chunk) = stream.message().await? {
-        match chunk.part {
-            Some(pb::send_media_chunk::Part::Chunk(bytes)) => {
-                data.extend_from_slice(&bytes);
-                if data.len() as u64 > max_bytes {
-                    return Err(Status::resource_exhausted("media exceeds size limit"));
-                }
-            }
-            Some(pb::send_media_chunk::Part::Header(_)) => {
-                return Err(Status::invalid_argument("unexpected second header"));
-            }
-            None => {}
-        }
-    }
-    Ok(data)
-}
-
-/// Gather inline status-media chunks (after the header) up to the byte limit.
-/// A parallel of `collect_inline` for the distinct PostStatusMediaChunk oneof
-/// (prost generates no shared trait over the two chunk types).
-async fn collect_status_media(
-    stream: &mut Streaming<pb::PostStatusMediaChunk>,
-    max_bytes: u64,
-) -> Result<Vec<u8>, Status> {
-    let mut data = Vec::new();
-    while let Some(chunk) = stream.message().await? {
-        match chunk.part {
-            Some(pb::post_status_media_chunk::Part::Chunk(bytes)) => {
-                data.extend_from_slice(&bytes);
-                if data.len() as u64 > max_bytes {
-                    return Err(Status::resource_exhausted("media exceeds size limit"));
-                }
-            }
-            Some(pb::post_status_media_chunk::Part::Header(_)) => {
-                return Err(Status::invalid_argument("unexpected second header"));
-            }
-            None => {}
-        }
-    }
-    Ok(data)
 }

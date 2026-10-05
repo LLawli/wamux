@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
+use wamux_types::AccountRef;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use super::account_to_proto;
@@ -120,7 +121,9 @@ impl AccountService for AccountSvc {
         request: Request<pb::AccountRef>,
     ) -> Result<Response<pb::AccountStatus>, Status> {
         let reference = request.into_inner();
-        let handle = self.registry.resolve(Some(&reference))?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(Some(&reference))?)?;
         let jid = load_jid(&self.registry, &handle).await;
         Ok(Response::new(status_of(&handle, jid)))
     }
@@ -132,7 +135,9 @@ impl AccountService for AccountSvc {
         request: Request<pb::PairWithQrRequest>,
     ) -> Result<Response<Self::PairWithQrStream>, Status> {
         let req = request.into_inner();
-        let handle = self.registry.resolve(req.account.as_ref())?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(req.account.as_ref())?)?;
         Ok(Response::new(pairing_stream(
             self.registry.clone(),
             handle,
@@ -148,7 +153,9 @@ impl AccountService for AccountSvc {
         request: Request<pb::PairWithCodeRequest>,
     ) -> Result<Response<Self::PairWithCodeStream>, Status> {
         let req = request.into_inner();
-        let handle = self.registry.resolve(req.account.as_ref())?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(req.account.as_ref())?)?;
         let options = PairCodeOptions {
             phone_number: req.phone_number,
             custom_code: req.custom_code,
@@ -167,7 +174,9 @@ impl AccountService for AccountSvc {
         request: Request<pb::ConnectAccountRequest>,
     ) -> Result<Response<pb::AccountStatus>, Status> {
         let req = request.into_inner();
-        let handle = self.registry.resolve(req.account.as_ref())?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(req.account.as_ref())?)?;
         self.registry
             .connect(&handle, None, !req.backfill_history)
             .await?;
@@ -179,7 +188,9 @@ impl AccountService for AccountSvc {
         request: Request<pb::AccountRef>,
     ) -> Result<Response<pb::AccountStatus>, Status> {
         let reference = request.into_inner();
-        let handle = self.registry.resolve(Some(&reference))?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(Some(&reference))?)?;
         self.registry.disconnect(&handle).await;
         Ok(Response::new(status_of(&handle, None)))
     }
@@ -189,7 +200,9 @@ impl AccountService for AccountSvc {
         request: Request<pb::AccountRef>,
     ) -> Result<Response<pb::Empty>, Status> {
         let reference = request.into_inner();
-        let handle = self.registry.resolve(Some(&reference))?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(Some(&reference))?)?;
         // Real server-side unlink (RemoveCompanionDevice IQ); requires a live
         // connection, else FailedPrecondition. Local keys are kept (re-pairable);
         // DeleteAccount wipes state.
@@ -202,7 +215,9 @@ impl AccountService for AccountSvc {
         request: Request<pb::AccountRef>,
     ) -> Result<Response<pb::Empty>, Status> {
         let reference = request.into_inner();
-        let handle = self.registry.resolve(Some(&reference))?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(Some(&reference))?)?;
         self.registry.delete(&handle).await?;
         Ok(Response::new(pb::Empty {}))
     }

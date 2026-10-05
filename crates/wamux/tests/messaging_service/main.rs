@@ -19,6 +19,7 @@ mod common;
 
 mod captured;
 mod chat_actions;
+mod error_messages;
 mod every_rpc;
 mod harness;
 mod history;

@@ -10,6 +10,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tokio::sync::broadcast;
 use uuid::Uuid;
+use wamux_types::AccountRef;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use crate::domain::bot_factory::build_bot;
@@ -153,28 +154,22 @@ impl AccountRegistry {
         self.tuning.replay_max_event_bytes
     }
 
-    pub fn resolve(
-        &self,
-        account_ref: Option<&pb::AccountRef>,
-    ) -> Result<Arc<AccountHandle>, WamuxError> {
-        let reference = account_ref
-            .and_then(|r| r.r#ref.as_ref())
-            .ok_or_else(|| WamuxError::InvalidArgument("missing account ref".to_string()))?;
-        match reference {
-            pb::account_ref::Ref::Uuid(uuid) => {
-                let id = Uuid::parse_str(uuid)
-                    .map_err(|_| WamuxError::InvalidArgument(format!("bad uuid '{uuid}'")))?;
-                self.get(&id)
-                    .ok_or_else(|| WamuxError::AccountNotFound(uuid.clone()))
-            }
-            pb::account_ref::Ref::ExternalRef(external) => {
+    /// The handle `account` names. Shape errors ("missing account ref", "bad
+    /// uuid") are the caller's: `AccountRef::from_proto` raises them at the
+    /// boundary (#114), so this only answers `AccountNotFound`.
+    pub fn resolve(&self, account: &AccountRef) -> Result<Arc<AccountHandle>, WamuxError> {
+        match account {
+            AccountRef::Id(id) => self
+                .get(id.as_uuid())
+                .ok_or_else(|| WamuxError::AccountNotFound(id.to_string())),
+            AccountRef::External(external) => {
                 let id = self
                     .by_external
-                    .get(external)
+                    .get(external.as_str())
                     .map(|v| *v)
-                    .ok_or_else(|| WamuxError::AccountNotFound(external.clone()))?;
+                    .ok_or_else(|| WamuxError::AccountNotFound(external.to_string()))?;
                 self.get(&id)
-                    .ok_or_else(|| WamuxError::AccountNotFound(external.clone()))
+                    .ok_or_else(|| WamuxError::AccountNotFound(external.to_string()))
             }
         }
     }

@@ -9,6 +9,7 @@ use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::Event;
 use wacore::types::message::MessageInfo;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
+use wamux_types::MediaKind;
 use whatsapp_rust::Jid;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
@@ -596,7 +597,7 @@ fn is_secret_message_edit(msg: &wa::Message) -> bool {
 /// no common trait (the protobuf generator emits none), so a macro projects
 /// whichever one is present into a `MediaDescriptor` uniformly.
 macro_rules! media_descriptor {
-    ($m:expr, $kind:literal) => {
+    ($m:expr, $kind:expr) => {
         pb::MediaDescriptor {
             direct_path: $m.direct_path.clone().unwrap_or_default(),
             media_key: $m.media_key.clone().unwrap_or_default(),
@@ -604,7 +605,7 @@ macro_rules! media_descriptor {
             file_sha256: $m.file_sha256.clone().unwrap_or_default(),
             file_length: $m.file_length.unwrap_or(0),
             mime_type: $m.mimetype.clone().unwrap_or_default(),
-            media_type: $kind.to_string(),
+            media_type: $kind.token().to_string(),
         }
     };
 }
@@ -613,19 +614,28 @@ macro_rules! media_descriptor {
 fn extract_media(msg: &wa::Message) -> Option<(pb::MediaDescriptor, String)> {
     let caption_of = |caption: &Option<String>| -> String { caption.clone().unwrap_or_default() };
     if let Some(m) = msg.image_message.as_option() {
-        return Some((media_descriptor!(m, "image"), caption_of(&m.caption)));
+        return Some((
+            media_descriptor!(m, MediaKind::Image),
+            caption_of(&m.caption),
+        ));
     }
     if let Some(m) = msg.video_message.as_option() {
-        return Some((media_descriptor!(m, "video"), caption_of(&m.caption)));
+        return Some((
+            media_descriptor!(m, MediaKind::Video),
+            caption_of(&m.caption),
+        ));
     }
     if let Some(m) = msg.audio_message.as_option() {
-        return Some((media_descriptor!(m, "audio"), String::new()));
+        return Some((media_descriptor!(m, MediaKind::Audio), String::new()));
     }
     if let Some(m) = msg.document_message.as_option() {
-        return Some((media_descriptor!(m, "document"), caption_of(&m.caption)));
+        return Some((
+            media_descriptor!(m, MediaKind::Document),
+            caption_of(&m.caption),
+        ));
     }
     if let Some(m) = msg.sticker_message.as_option() {
-        return Some((media_descriptor!(m, "sticker"), String::new()));
+        return Some((media_descriptor!(m, MediaKind::Sticker), String::new()));
     }
     // Issue #58: a pack used to reach the edge with no descriptor at all.
     if let Some(m) = msg.sticker_pack_message.as_option() {

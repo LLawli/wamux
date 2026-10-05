@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
+use wamux_types::AccountRef;
 
 use super::client_of;
 use crate::domain::{contacts, lid_mapping};
@@ -130,7 +131,9 @@ impl ContactService for ContactSvc {
         request: Request<pb::AccountRef>,
     ) -> Result<Response<pb::ListLidMappingsResponse>, Status> {
         let reference = request.into_inner();
-        let handle = self.registry.resolve(Some(&reference))?;
+        let handle = self
+            .registry
+            .resolve(&AccountRef::from_proto(Some(&reference))?)?;
         let backend = self.registry.storage().device_backend(handle.device_id);
         let mappings = lid_mapping::list_lid_mappings(backend).await?;
         Ok(Response::new(pb::ListLidMappingsResponse { mappings }))

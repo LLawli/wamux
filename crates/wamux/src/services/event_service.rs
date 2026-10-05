@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
+use wamux_types::AccountRef;
 
 use crate::proto::v1 as pb;
 use crate::proto::v1::event_service_server::EventService;
@@ -250,7 +251,9 @@ impl EventService for EventSvc {
 
         match req.selector {
             Some(pb::subscribe_request::Selector::Account(account_ref)) => {
-                let handle = self.registry.resolve(Some(&account_ref))?;
+                let handle = self
+                    .registry
+                    .resolve(&AccountRef::from_proto(Some(&account_ref))?)?;
                 forward(handle, replay, outlet);
             }
             Some(pb::subscribe_request::Selector::AllAccounts(_)) => {

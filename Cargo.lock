@@ -4689,6 +4689,7 @@ dependencies = [
  "wacore-binary",
  "wacore-noise",
  "wamux-proto",
+ "wamux-types",
  "whatsapp-rust",
  "whatsapp-rust-tokio-transport",
  "whatsapp-rust-ureq-http-client",
@@ -4727,7 +4728,22 @@ dependencies = [
  "uuid",
  "wacore",
  "wamux",
+ "wamux-types",
  "whatsapp-rust",
+]
+
+[[package]]
+name = "wamux-types"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "thiserror 2.0.20",
+ "tonic",
+ "tracing",
+ "uuid",
+ "wacore",
+ "wacore-binary",
+ "wamux-proto",
 ]
 
 [[package]]

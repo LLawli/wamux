@@ -44,20 +44,23 @@ fn pack() -> StickerPackMessage {
 // key, so a thumbnail downloaded as a pack would fail its MAC.
 #[test]
 fn each_download_only_token_picks_its_own_hkdf_info() {
-    let pack = download_only_media_type("sticker_pack").expect("pack token");
+    let pack = MediaKind::StickerPack.media_type();
     assert_eq!(pack.app_info(), "WhatsApp Sticker Pack Keys");
     assert_eq!(pack.upload_path(), "/mms/sticker-pack");
-    let thumb = download_only_media_type("sticker_pack_thumbnail").expect("thumbnail token");
+    let thumb = MediaKind::StickerPackThumbnail.media_type();
     assert_eq!(thumb.app_info(), "WhatsApp Sticker Pack Thumbnail Keys");
     assert_eq!(thumb.upload_path(), "/mms/thumbnail-sticker-pack");
 }
 
-// Exact literals, like `MediaKind::parse`: the library's own "sticker-pack"
-// spelling is its MMS path segment, not this contract's token.
+// Exact literals, like `MediaKind::parse_downloadable`: the library's own
+// "sticker-pack" spelling is its MMS path segment, not this contract's token.
 #[test]
 fn other_spellings_are_not_download_only_tokens() {
-    for value in ["sticker-pack", "Sticker_Pack", "sticker", "image", ""] {
-        assert_eq!(download_only_media_type(value), None, "value: {value:?}");
+    for value in ["sticker-pack", "Sticker_Pack", ""] {
+        assert!(
+            MediaKind::parse_downloadable(value).is_err(),
+            "value: {value:?}"
+        );
     }
 }
 

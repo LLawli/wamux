@@ -7,6 +7,11 @@
 #    src/bin/*.rs was built with the daemon, and these rode along.
 # 2. wamux-proto depends on no wamux crate: it is generated code, the bottom
 #    of the graph.
+# 3. wamux-types (#114) sits right above it: the contract, tonic and the
+#    whatsapp-rust storage/binary layer (wacore, wacore-binary). It never
+#    depends on the daemon, on sqlx (an engine detail) or on whatsapp-rust (the
+#    client: building an error from a client error is the daemon's job). The
+#    daemon depends on it.
 #
 # Each tree is checked against an absolute floor, so an empty `cargo tree`
 # (wrong package name, broken manifest) can never pass as "nothing forbidden".
@@ -48,5 +53,19 @@ if hits=$(grep -E '^wamux(-[a-z]+)? v' <<<"$proto" | grep -vE '^wamux-proto v');
     failed=1
 fi
 
+grep -qE '^wamux-types v' <<<"$daemon" || { echo "ERROR: wamux does not depend on wamux-types" >&2; failed=1; }
+
+types=$(packages_of wamux-types normal)
+require_floor wamux-types "$(wc -l <<<"$types")" 50
+for required in '^wamux-proto v' '^tonic v' '^wacore v' '^wacore-binary v'; do
+    grep -qE "$required" <<<"$types" || { echo "ERROR: wamux-types lacks ${required#^}" >&2; failed=1; }
+done
+for pattern in '^wamux v' '^wamux-tools v' '^sqlx v' '^whatsapp-rust v'; do
+    if hits=$(grep -E "$pattern" <<<"$types"); then
+        echo "ERROR: wamux-types depends on a crate it must not: $hits" >&2
+        failed=1
+    fi
+done
+
 (( failed == 0 )) || exit 1
-echo "crate boundaries hold: daemon $(wc -l <<<"$daemon") packages, wamux-proto $(wc -l <<<"$proto")"
+echo "crate boundaries hold: daemon $(wc -l <<<"$daemon") packages, wamux-proto $(wc -l <<<"$proto"), wamux-types $(wc -l <<<"$types")"

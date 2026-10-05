@@ -1,18 +1,14 @@
 //! Parse/validate JID strings coming off the wire into typed `Jid`s.
 
-use std::str::FromStr;
-
 use whatsapp_rust::Jid;
 
 use crate::error::WamuxError;
 
-/// Parse a JID, mapping failures to a clean `InvalidArgument`.
+/// Parse a JID, mapping failures to a clean `InvalidArgument`. The parse and
+/// its messages live in `wamux_types::Jid` (#114); this keeps the library
+/// type the domain still passes around until #115/#116 move it to the newtype.
 pub fn parse_jid(value: &str) -> Result<Jid, WamuxError> {
-    if value.is_empty() {
-        return Err(WamuxError::InvalidArgument("empty jid".to_string()));
-    }
-    Jid::from_str(value)
-        .map_err(|e| WamuxError::InvalidArgument(format!("invalid jid '{value}': {e}")))
+    wamux_types::Jid::parse(value).map(wamux_types::Jid::into_lib)
 }
 
 /// Parse a batch of JID strings.
