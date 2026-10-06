@@ -12,6 +12,7 @@ pub mod media_kind;
 pub mod message_id;
 pub mod messaging;
 pub mod newsletter;
+pub mod newsletter_enums;
 pub mod presence_state;
 mod request_enum;
 
@@ -47,6 +48,8 @@ mod lid_tests;
 mod media_kind_tests;
 #[cfg(test)]
 mod message_id_tests;
+#[cfg(test)]
+mod newsletter_enums_tests;
 #[cfg(test)]
 mod newsletter_tests;
 #[cfg(test)]

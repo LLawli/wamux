@@ -7,11 +7,13 @@
 //! these rows by jid. Nothing new is implemented against WhatsApp here; the
 //! library already asks, the core just relays the answer.
 
+use wamux_types::newsletter_enums::{edit_attribute_of, poll_type_of};
 use wamux_types::{Jid, NewsletterHistoryQuery, relay_jid};
 use whatsapp_rust::Client;
-use whatsapp_rust::features::{
-    NewsletterError, NewsletterMessage, NewsletterMetadata, NewsletterRole, NewsletterState,
-    NewsletterVerification,
+use whatsapp_rust::features::{NewsletterError, NewsletterMessage, NewsletterMetadata};
+
+use channel_enums::{
+    newsletter_message_type_of, newsletter_role_of, newsletter_state_of, newsletter_verification_of,
 };
 
 use crate::domain::event_mapping::project_content;
@@ -32,10 +34,11 @@ use crate::proto::v1 as pb;
 // What the library still does differently from the old projection, accepted
 // on purpose (the user's call on 2026-09-28):
 //
-//   - a role it has no variant for is `None`, so it relays as "" (WA Web drops
-//     it the same way);
+//   - a role it has no variant for is `None`, so it relays as UNSPECIFIED (WA
+//     Web drops it the same way);
 //   - an absent state reads `Active` and an absent verification `Unverified`,
-//     so they relay as "active" / "unverified" instead of "".
+//     so they relay as ACTIVE / UNVERIFIED instead of UNSPECIFIED. Confirmed
+//     again when they became enums (#128, 2026-10-06).
 //
 // Measured the same day on production, read-only: 9 subscribed channels on
 // `pessoal` (none on `trabalho`), through both the list and one get each.
@@ -85,6 +88,8 @@ fn newsletter_err(err: NewsletterError) -> WamuxError {
 
 /// Project the library's metadata onto the wire shape.
 fn metadata_to_proto(meta: &NewsletterMetadata) -> pb::Newsletter {
+    let (verification, verification_raw) = newsletter_verification_of(&meta.verification);
+    let (state, state_raw) = newsletter_state_of(&meta.state);
     pb::Newsletter {
         jid: relay_jid(meta.jid.to_string()),
         name: meta.name.clone(),
@@ -98,43 +103,12 @@ fn metadata_to_proto(meta: &NewsletterMetadata) -> pb::Newsletter {
             .clone()
             .or_else(|| meta.preview_url.clone())
             .unwrap_or_default(),
-        verification: verification_token(&meta.verification),
-        state: state_token(&meta.state),
-        role: meta.role.as_ref().map(role_token).unwrap_or_default(),
+        verification: verification as i32,
+        verification_raw,
+        state: state as i32,
+        state_raw,
+        role: newsletter_role_of(meta.role.as_ref()) as i32,
         creation_time: meta.creation_time.map_or(0, saturating_i64),
-    }
-}
-
-// Lowercase tokens, the convention `ReceiptEvent.type` and `CallEvent.action`
-// follow. The enums are `#[non_exhaustive]`: a variant added upstream relays
-// as "" until it is named here, rather than as a guess.
-
-fn state_token(state: &NewsletterState) -> String {
-    match state {
-        NewsletterState::Active => "active".into(),
-        NewsletterState::Suspended => "suspended".into(),
-        NewsletterState::Geosuspended => "geosuspended".into(),
-        NewsletterState::Other(raw) => raw.to_lowercase(),
-        _ => String::new(),
-    }
-}
-
-fn verification_token(verification: &NewsletterVerification) -> String {
-    match verification {
-        NewsletterVerification::Verified => "verified".into(),
-        NewsletterVerification::Unverified => "unverified".into(),
-        NewsletterVerification::Other(raw) => raw.to_lowercase(),
-        _ => String::new(),
-    }
-}
-
-fn role_token(role: &NewsletterRole) -> String {
-    match role {
-        NewsletterRole::Owner => "owner".into(),
-        NewsletterRole::Admin => "admin".into(),
-        NewsletterRole::Subscriber => "subscriber".into(),
-        NewsletterRole::Guest => "guest".into(),
-        _ => String::new(),
     }
 }
 
@@ -161,14 +135,19 @@ pub async fn get_messages(
     })
 }
 
-/// Project one library row onto the wire shape. Every token is the server's
-/// own (`*_raw`, `edit`), so an absent `type` relays as absence rather than as
-/// the `text` the typed field defaults to (#1558).
+/// Project one library row onto the wire shape. `type` and `poll_type` are read
+/// from the server's own tokens (`*_raw`), so an absent `type` relays as
+/// UNSPECIFIED rather than as the TEXT the typed field defaults to (#1558),
+/// and a `polltype` on a non-poll row still relays (#128).
 fn row_to_proto(row: &NewsletterMessage, chat: &Jid) -> pb::NewsletterMessage {
+    let (message_type, type_raw) = newsletter_message_type_of(row.message_type_raw.as_deref());
+    let (poll_type, poll_type_raw) = poll_type_of(row.poll_type_raw.as_deref());
+    let (edit, edit_raw) = edit_attribute_of(&row.edit);
     pb::NewsletterMessage {
         message: Some(row_to_inbound(row, chat)),
         server_id: row.server_id,
-        r#type: row.message_type_raw.clone().unwrap_or_default(),
+        r#type: message_type as i32,
+        type_raw,
         reactions: row
             .reactions
             .iter()
@@ -186,8 +165,10 @@ fn row_to_proto(row: &NewsletterMessage, chat: &Jid) -> pb::NewsletterMessage {
             })
             .collect(),
         forwards_count: row.forwards_count.unwrap_or(0),
-        poll_type: row.poll_type_raw.clone().unwrap_or_default(),
-        edit: row.edit.as_str().to_string(),
+        poll_type: poll_type as i32,
+        poll_type_raw,
+        edit: edit as i32,
+        edit_raw,
         // #51: one node, two units. `original_msg_t` is seconds and
         // `msg_edit_t` is already milliseconds, so only the first converts.
         original_timestamp: row.original_timestamp.map_or(0, millis_from_seconds),
@@ -244,8 +225,11 @@ fn saturating_i64(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
+mod channel_enums;
 mod poll_votes;
 pub use poll_votes::{get_my_addons, send_poll_vote, subscribe_live_updates};
 
+#[cfg(test)]
+mod channel_enums_tests;
 #[cfg(test)]
 mod metadata_tests;

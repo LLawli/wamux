@@ -186,10 +186,23 @@ async fn core_reads_the_captured_page() {
         vec![773, 777, 780, 781, 782, 783, 784],
         "the row without server_id is skipped"
     );
-    let types: Vec<&str> = rows.iter().map(|r| r.r#type.as_str()).collect();
+    // #128: the three wire types are named; `hologram` keeps its token.
+    use pb::NewsletterMessageType as T;
+    let types: Vec<(T, &str)> = rows
+        .iter()
+        .map(|r| (r.r#type(), r.type_raw.as_str()))
+        .collect();
     assert_eq!(
         types,
-        vec!["media", "poll", "text", "text", "text", "hologram", "text"]
+        vec![
+            (T::Media, ""),
+            (T::Poll, ""),
+            (T::Text, ""),
+            (T::Text, ""),
+            (T::Text, ""),
+            (T::Unknown, "hologram"),
+            (T::Text, ""),
+        ]
     );
 
     // The point of #26: a row lands in the shape the event bus delivers.
@@ -224,7 +237,8 @@ async fn core_reads_the_captured_page() {
         vec![("\u{1F621}", 437)],
         "a code-less count drops"
     );
-    assert_eq!(rows[1].poll_type, "creation");
+    assert_eq!(rows[1].poll_type(), pb::NewsletterPollType::Creation);
+    assert_eq!(rows[1].poll_type_raw, "");
     assert_eq!(rows[1].votes.len(), 1);
     assert_eq!(
         (rows[1].votes[0].option_hash.clone(), rows[1].votes[0].count),
@@ -232,14 +246,21 @@ async fn core_reads_the_captured_page() {
     );
 
     // #44: the revoked rows say so; an undecodable body is only empty.
-    assert_eq!((rows[2].edit.as_str(), rows[3].edit.as_str()), ("8", "8"));
-    assert_eq!(rows[4].edit, "");
+    assert_eq!(
+        (rows[2].edit(), rows[3].edit()),
+        (
+            pb::EditAttribute::AdminRevoke,
+            pb::EditAttribute::AdminRevoke
+        )
+    );
+    assert_eq!(rows[4].edit(), pb::EditAttribute::Unspecified);
+    assert!(rows[2..=4].iter().all(|row| row.edit_raw.is_empty()));
     for revoked_or_broken in &rows[2..=4] {
         assert!(inbound(revoked_or_broken).raw_message.is_empty());
     }
 
     // #51: the edit times, by value, in ms; an unedited row carries neither.
-    assert_eq!(rows[6].edit, "3");
+    assert_eq!(rows[6].edit(), pb::EditAttribute::AdminEdit);
     assert_eq!(
         (rows[6].original_timestamp, rows[6].last_edit_timestamp),
         (1_790_001_172_000, 1_790_004_321_987)
@@ -251,8 +272,8 @@ async fn core_reads_the_captured_page() {
     logged.cleanup().await;
 }
 
-// #1548 → #1558: an absent `type` relays as absence, not as the `text` the
-// library's typed field defaults to.
+// #1548 → #1558: an absent `type` relays as absence (UNSPECIFIED since #128),
+// not as the TEXT the library's typed field defaults to.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_relays_an_absent_type_as_absent() {
     let mock = MockWaServer::start().await.expect("start mock");
@@ -268,12 +289,16 @@ async fn core_relays_an_absent_type_as_absent() {
             .build(),
     ];
     let out = core_reads(&client, &mock, rows).await;
-    assert_eq!(out[0].r#type, "");
+    assert_eq!(out[0].r#type(), pb::NewsletterMessageType::Unspecified);
+    assert_eq!(out[0].type_raw, "");
     logged.cleanup().await;
 }
 
 // #1548 → #1558: every `<meta polltype>` token relays, whether or not the
-// library has a stage for it and whatever the row type. The edge decides.
+// library has a stage for it and whatever the row type. Since #128 a named
+// stage is its enum value and any other token is UNKNOWN with the token; a
+// `creation` on a `text` row still relays, though the library's typed field
+// only reads it on a poll row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn core_relays_every_polltype_token() {
     let mock = MockWaServer::start().await.expect("start mock");
@@ -292,8 +317,14 @@ async fn core_relays_every_polltype_token() {
             .build(),
     ];
     let out = core_reads(&client, &mock, rows).await;
-    assert_eq!(out[0].poll_type, "future_stage");
-    assert_eq!(out[1].poll_type, "creation");
+    assert_eq!(
+        (out[0].poll_type(), out[0].poll_type_raw.as_str()),
+        (pb::NewsletterPollType::Unknown, "future_stage")
+    );
+    assert_eq!(
+        (out[1].poll_type(), out[1].poll_type_raw.as_str()),
+        (pb::NewsletterPollType::Creation, "")
+    );
     logged.cleanup().await;
 }
 

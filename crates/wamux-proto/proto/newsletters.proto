@@ -24,20 +24,56 @@ message Newsletter {
   string description = 3;
   uint64 subscriber_count = 4;
   string picture_url = 5;
-  // Lowercase wire token, same convention as ReceiptEvent.type and
-  // CallEvent.action ("verified" / "unverified"). A value the library does
-  // not model relays lowercased as the server spelled it. When the server
-  // omits it this reads "unverified", the library's default (#56).
-  string verification = 6;
-  // "active" / "suspended" / "geosuspended", or another server token
-  // lowercased. When the server omits it this reads "active" (#56).
-  string state = 7;
-  // "owner" / "admin" / "subscriber" / "guest": this account's role in the
-  // channel. Empty when the server says nothing, or names a role the library
-  // has no variant for (#56).
-  string role = 8;
+  // #128: were `string verification = 6`, `string state = 7` and
+  // `string role = 8`, lowercase tokens.
+  reserved 6, 7, 8;
+  // When the server omits it this reads UNVERIFIED, the library's default
+  // (#56): UNSPECIFIED is never emitted. A value the library does not model
+  // is UNKNOWN, with the server's spelling verbatim in `verification_raw`.
+  NewsletterVerification verification = 11;
+  string verification_raw = 12;
+  // When the server omits it this reads ACTIVE (#56): UNSPECIFIED is never
+  // emitted. Another server token (a deleted channel reads `DELETED`) is
+  // UNKNOWN, verbatim in `state_raw`.
+  NewsletterState state = 13;
+  string state_raw = 14;
+  // This account's role in the channel. UNSPECIFIED when the server says
+  // nothing or names a role the library drops (#56); no raw field, because
+  // the library hands no token over.
+  NewsletterRole role = 15;
   // Unix seconds, 0 when the server omits it.
   int64 creation_time = 9;
+}
+
+// The channel's verification badge (#128). Closed in practice; the library
+// keeps an unmodelled value as the server spelled it, which relays in
+// `verification_raw`.
+enum NewsletterVerification {
+  NEWSLETTER_VERIFICATION_UNSPECIFIED = 0;  // never emitted: absent reads UNVERIFIED
+  NEWSLETTER_VERIFICATION_UNKNOWN = 1;
+  NEWSLETTER_VERIFICATION_VERIFIED = 2;
+  NEWSLETTER_VERIFICATION_UNVERIFIED = 3;
+}
+
+// The channel's state (#128). A deleted channel is UNKNOWN with `DELETED` in
+// `state_raw`.
+enum NewsletterState {
+  NEWSLETTER_STATE_UNSPECIFIED = 0;  // never emitted: absent reads ACTIVE
+  NEWSLETTER_STATE_UNKNOWN = 1;
+  NEWSLETTER_STATE_ACTIVE = 2;
+  NEWSLETTER_STATE_SUSPENDED = 3;
+  NEWSLETTER_STATE_GEOSUSPENDED = 4;
+}
+
+// This account's role in the channel (#128). No raw: the library drops a role
+// it does not model, and UNKNOWN is only a variant it adds later.
+enum NewsletterRole {
+  NEWSLETTER_ROLE_UNSPECIFIED = 0;
+  NEWSLETTER_ROLE_UNKNOWN = 1;
+  NEWSLETTER_ROLE_OWNER = 2;
+  NEWSLETTER_ROLE_ADMIN = 3;
+  NEWSLETTER_ROLE_SUBSCRIBER = 4;
+  NEWSLETTER_ROLE_GUEST = 5;
 }
 
 message NewsletterList {
@@ -67,30 +103,41 @@ message NewsletterMessage {
   // reaction is addressed by `server_id`, not by the message id. Distinct from
   // `message.key.id`, which is what edit/revoke key on.
   uint64 server_id = 2;
-  // Lowercase wire token the server labelled the row with. Measured live:
-  // `text`, `media`, `poll`. Same convention as ReceiptEvent.type — a token
-  // this core has never seen relays verbatim instead of being folded into a
-  // known one, which is the only reason `poll` survived at all (the library's
-  // own enum does not have it and its history parser never sees this node).
-  string type = 3;
+  // What the server labelled the row with. Measured live: text, media, poll.
+  // A token this core has never seen relays verbatim in `type_raw` instead of
+  // being folded into a known one, which is how `poll` survived before the
+  // library named it.
+  // #128: was `string type = 3`. UNSPECIFIED when the row has no `type`
+  // attribute (not TEXT, which is what the library reads absence as, #1558).
+  // Any other token is UNKNOWN, verbatim in `type_raw`.
+  reserved 3;
+  NewsletterMessageType type = 11;
+  string type_raw = 12;
   repeated NewsletterReactionCount reactions = 4;
-  // The poll tally, on a `type = "poll"` row. Empty everywhere else, and empty
-  // on a poll nobody has voted in.
+  // The poll tally, on a POLL row. Empty everywhere else, and empty on a poll
+  // nobody has voted in.
   repeated NewsletterPollVote votes = 5;
   // How many times the channel's subscribers forwarded this row. 0 when the
   // server omits the node.
   uint64 forwards_count = 6;
-  // `<meta polltype=...>`: "creation" on the poll itself. Relayed because it is
-  // what tells a `type = "poll"` row apart from whatever else the server may
-  // label `poll`. Empty when there is no `<meta>`.
-  string poll_type = 7;
-  // The row's `edit` attribute, verbatim (#44). Empty when absent, which is
-  // the common case. It is what tells a revoked row, whose body the server
-  // empties, apart from a row whose body did not decode: both carry an empty
-  // `message.raw_message`, and only this says which. Per the library's
-  // `EditAttribute`: "3" admin edit, "8" admin revoke. Mapping a token to a
-  // meaning is the edge's job; an unknown one relays as sent.
-  string edit = 8;
+  // #128: was `string poll_type = 7`. `<meta polltype=...>`: CREATION on the
+  // poll itself. Relayed because it is what tells a POLL row apart from
+  // whatever else the server may label `poll`. Read from the token on any
+  // row, as it always was; UNSPECIFIED when there is no `<meta polltype>`,
+  // UNKNOWN with the token in `poll_type_raw` for one the library does not
+  // name.
+  reserved 7;
+  NewsletterPollType poll_type = 13;
+  string poll_type_raw = 14;
+  // #128: was `string edit = 8`, the attribute verbatim (#44). UNSPECIFIED
+  // when absent, which is the common case. It is what tells a revoked row,
+  // whose body the server empties, apart from a row whose body did not
+  // decode: both carry an empty `message.raw_message`, and only this says
+  // which. A token the library does not name is UNKNOWN, verbatim in
+  // `edit_raw`.
+  reserved 8;
+  EditAttribute edit = 15;
+  string edit_raw = 16;
   // When a touched row was first posted and last edited (#51), read off
   // `<meta original_msg_t>` and `<meta msg_edit_t>`. The server counts the
   // first in seconds and the second in milliseconds, in the same node; both
@@ -98,11 +145,46 @@ message NewsletterMessage {
   // the attribute is absent.
   //
   // Measured live 2026-09-25 (two channels, 200 rows): an edited row
-  // (`edit = "3"`) carries both, a revoked one (`"8"`) only the original, an
-  // untouched one neither. On an edited row `message.timestamp` is the EDIT
+  // (ADMIN_EDIT, "3") carries both, a revoked one (ADMIN_REVOKE, "8") only the
+  // original, an untouched one neither. On an edited row `message.timestamp` is the EDIT
   // time, so `original_timestamp` is the only place the posting time survives.
   int64 original_timestamp = 9;
   int64 last_edit_timestamp = 10;
+}
+
+// The `type` the server labelled a history row with (#128). Measured live:
+// text, media, poll. The library names five more that its own docs say the
+// wire never produces; a row carrying one of those, or any other token, is
+// UNKNOWN with the token in `type_raw`.
+enum NewsletterMessageType {
+  NEWSLETTER_MESSAGE_TYPE_UNSPECIFIED = 0;
+  NEWSLETTER_MESSAGE_TYPE_UNKNOWN = 1;
+  NEWSLETTER_MESSAGE_TYPE_TEXT = 2;
+  NEWSLETTER_MESSAGE_TYPE_MEDIA = 3;
+  NEWSLETTER_MESSAGE_TYPE_POLL = 4;
+}
+
+// `<meta polltype>` (#128), the library's closed `PollType`.
+enum NewsletterPollType {
+  NEWSLETTER_POLL_TYPE_UNSPECIFIED = 0;
+  NEWSLETTER_POLL_TYPE_UNKNOWN = 1;
+  NEWSLETTER_POLL_TYPE_CREATION = 2;
+  NEWSLETTER_POLL_TYPE_QUIZ_CREATION = 3;
+  NEWSLETTER_POLL_TYPE_VOTE = 4;
+  NEWSLETTER_POLL_TYPE_RESULT_SNAPSHOT = 5;
+  NEWSLETTER_POLL_TYPE_EDIT = 6;
+}
+
+// A message's `edit` attribute (#128), the library's `EditAttribute`. The
+// numbers are not the server's: the server's token is in each comment.
+enum EditAttribute {
+  EDIT_ATTRIBUTE_UNSPECIFIED = 0;     // absent
+  EDIT_ATTRIBUTE_UNKNOWN = 1;
+  EDIT_ATTRIBUTE_MESSAGE_EDIT = 2;    // "1"
+  EDIT_ATTRIBUTE_PIN_IN_CHAT = 3;     // "2"
+  EDIT_ATTRIBUTE_ADMIN_EDIT = 4;      // "3"
+  EDIT_ATTRIBUTE_SENDER_REVOKE = 5;   // "7"
+  EDIT_ATTRIBUTE_ADMIN_REVOKE = 6;    // "8"
 }
 
 // Read a page of a channel's history, newest first.

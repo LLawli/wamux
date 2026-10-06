@@ -13,8 +13,8 @@ use crate::captured::{
 use crate::common::mock_wire::{attr, operation, sent_iq};
 use crate::harness::{NEWSLETTER, fixture};
 
-/// The capture channel as the core relays it. Tokens are the server's own,
-/// lowercased; `creation_time` stays in seconds, as the proto documents.
+/// The capture channel as the core relays it: the server's values as enums
+/// (#128); `creation_time` stays in seconds, as the proto documents.
 fn captured_channel(subscriber_count: u64, picture_url: &str) -> pb::Newsletter {
     pb::Newsletter {
         jid: Some(pb::Jid {
@@ -24,10 +24,11 @@ fn captured_channel(subscriber_count: u64, picture_url: &str) -> pb::Newsletter 
         description: DESCRIPTION.into(),
         subscriber_count,
         picture_url: picture_url.into(),
-        verification: "verified".into(),
-        state: "active".into(),
-        role: "subscriber".into(),
+        verification: pb::NewsletterVerification::Verified as i32,
+        state: pb::NewsletterState::Active as i32,
+        role: pb::NewsletterRole::Subscriber as i32,
         creation_time: CREATION,
+        ..Default::default()
     }
 }
 
@@ -124,7 +125,7 @@ fn relayed_row(row: &Row) -> pb::NewsletterMessage {
             ..Default::default()
         }),
         server_id,
-        r#type: "media".into(),
+        r#type: pb::NewsletterMessageType::Media as i32,
         reactions: reactions
             .iter()
             .map(|(code, count)| pb::NewsletterReactionCount {
@@ -134,10 +135,9 @@ fn relayed_row(row: &Row) -> pb::NewsletterMessage {
             .collect(),
         votes: Vec::new(),
         forwards_count: forwards,
-        poll_type: String::new(),
-        edit: String::new(),
         original_timestamp: 0,
         last_edit_timestamp: 0,
+        ..Default::default()
     }
 }
 
