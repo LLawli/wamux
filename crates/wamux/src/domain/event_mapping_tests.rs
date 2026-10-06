@@ -186,7 +186,7 @@ fn a_sent_image_echoes_its_descriptor_and_caption() {
         &msg,
     );
     let media = out.media.expect("a sent image must carry its descriptor");
-    assert_eq!(media.media_type, "image");
+    assert_eq!(media.media_type(), pb::MediaType::Image);
     assert_eq!(media.direct_path, "/v/t62.sent");
     assert_eq!(out.caption, "a cat");
 }

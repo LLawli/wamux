@@ -4,7 +4,7 @@
 //! Receive-only. Sending a pack is not relayed, so the two media kinds here are
 //! download-only: `MediaKind::parse_sendable` refuses them and
 //! `build_media_message` has no outgoing sub-message for them. Their wire
-//! tokens and library types live in `wamux_types::MediaKind` (#114).
+//! values and library types live in `wamux_types::MediaKind` (#114).
 
 use wamux_types::MediaKind;
 use whatsapp_rust::waproto::whatsapp::message::StickerPackMessage;
@@ -25,7 +25,7 @@ pub(crate) fn pack_descriptor(pack: &StickerPackMessage) -> pb::MediaDescriptor 
         file_sha256: pack.file_sha256.clone().unwrap_or_default(),
         file_length: pack.file_length.unwrap_or(0),
         mime_type: String::new(),
-        media_type: MediaKind::StickerPack.token().to_string(),
+        media_type: MediaKind::StickerPack.to_wire() as i32,
     }
 }
 
@@ -45,7 +45,7 @@ fn thumbnail_descriptor(pack: &StickerPackMessage) -> Option<pb::MediaDescriptor
         file_sha256: pack.thumbnail_sha256.clone().unwrap_or_default(),
         file_length: 0,
         mime_type: String::new(),
-        media_type: MediaKind::StickerPackThumbnail.token().to_string(),
+        media_type: MediaKind::StickerPackThumbnail.to_wire() as i32,
     })
 }
 

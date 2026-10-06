@@ -12,6 +12,8 @@ pub mod media_kind;
 pub mod message_id;
 pub mod messaging;
 pub mod newsletter;
+pub mod presence_state;
+mod request_enum;
 
 pub use account::{AccountId, AccountRef, ExternalRef};
 pub use error::WamuxError;
@@ -27,6 +29,7 @@ pub use messaging::{
 pub use newsletter::{
     MAX_NEWSLETTER_VOTE_OPTIONS, NewsletterAddOnsQuery, NewsletterHistoryQuery, NewsletterPollVote,
 };
+pub use presence_state::PresenceState;
 
 #[cfg(test)]
 mod account_tests;
@@ -46,3 +49,5 @@ mod media_kind_tests;
 mod message_id_tests;
 #[cfg(test)]
 mod newsletter_tests;
+#[cfg(test)]
+mod presence_state_tests;

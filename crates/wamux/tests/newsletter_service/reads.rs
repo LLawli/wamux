@@ -79,16 +79,21 @@ async fn get_metadata_of_a_missing_channel_is_not_found() {
 fn relayed_media(server_id: u64, mediatype: &str) -> (pb::MediaDescriptor, String) {
     let caption = captured::media_caption(server_id);
     let (media_type, mime_type, file_length, caption) = match mediatype {
-        "image" => ("image", "image/jpeg", 120_000, caption),
-        "gif" => ("video", "video/mp4", 240_000, caption),
-        _ => ("audio", "audio/ogg; codecs=opus", 36_000, String::new()),
+        "image" => (pb::MediaType::Image, "image/jpeg", 120_000, caption),
+        "gif" => (pb::MediaType::Video, "video/mp4", 240_000, caption),
+        _ => (
+            pb::MediaType::Audio,
+            "audio/ogg; codecs=opus",
+            36_000,
+            String::new(),
+        ),
     };
     let descriptor = pb::MediaDescriptor {
         direct_path: captured::media_path(server_id),
         file_sha256: vec![server_id as u8; 32],
         file_length,
         mime_type: mime_type.into(),
-        media_type: media_type.into(),
+        media_type: media_type as i32,
         ..Default::default()
     };
     (descriptor, caption)

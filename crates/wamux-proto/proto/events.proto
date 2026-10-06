@@ -126,7 +126,7 @@ message InboundMessage {
   Jid sender_alt = 23;
   Jid recipient_alt = 24;
   // Set for a sticker PACK message (issue #58). `media` then carries the pack's
-  // archive under media_type "sticker_pack"; this says what is inside it and
+  // archive under MEDIA_TYPE_STICKER_PACK; this says what is inside it and
   // carries the thumbnail's own descriptor.
   StickerPackInfo sticker_pack = 18;
   bytes raw_message = 20;           // serialized wa.Message for advanced consumers
@@ -151,7 +151,7 @@ message StickerPackInfo {
   reserved 8;
   StickerPackOrigin origin = 12;
   // The pack's thumbnail, a second file encrypted under the pack's media key,
-  // under media_type "sticker_pack_thumbnail": DownloadMedia takes it as is.
+  // under MEDIA_TYPE_STICKER_PACK_THUMBNAIL: DownloadMedia takes it as is.
   // Unset when the message names no thumbnail path. Its `file_length` is 0
   // because the message does not declare one; the download is still verified
   // by both hashes and the MAC.

@@ -65,7 +65,7 @@ async fn wait_for_media(
                     "[recv] from={} text={:?} media={:?}",
                     jid_text_of(&m.sender),
                     m.text,
-                    m.media.as_ref().map(|d| &d.media_type)
+                    m.media.as_ref().map(|d| d.media_type().as_str_name())
                 );
                 if m.media.is_some() {
                     return m.media;
@@ -84,7 +84,10 @@ async fn download(
     acct: pb::AccountRef,
     descriptor: pb::MediaDescriptor,
 ) {
-    let (mime, mtype) = (descriptor.mime_type.clone(), descriptor.media_type.clone());
+    let (mime, mtype) = (
+        descriptor.mime_type.clone(),
+        descriptor.media_type().as_str_name(),
+    );
     let request = pb::DownloadMediaRequest {
         account: Some(acct),
         descriptor: Some(descriptor),

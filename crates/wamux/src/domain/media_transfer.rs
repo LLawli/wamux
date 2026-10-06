@@ -123,10 +123,7 @@ pub(crate) fn build_media_message(
             ..Default::default()
         },
         MediaKind::StickerPack | MediaKind::StickerPackThumbnail => {
-            return Err(WamuxError::InvalidArgument(format!(
-                "unknown media_type '{}'",
-                kind.token()
-            )));
+            return Err(kind.refused_as_sendable());
         }
     };
     Ok(message)

@@ -269,3 +269,63 @@ the server's open set.
 - Read the logout and ban details from `logged_out` / `ban` instead of parsing
   `detail`.
 - Treat `UNSPECIFIED` as "no value" where it treated `""` that way.
+
+### 2b. Media type and presence state (#127)
+
+The first enums an edge *writes*: two of the four fields are request-only, and
+`MediaDescriptor` goes both ways (an event carries it, `DownloadMedia` takes it
+back as it came).
+
+| Message | Before | After |
+|---|---|---|
+| `MediaDescriptor` (`common.proto`) | `string media_type = 7` | `MediaType media_type = 8` |
+| `SendMediaHeader` | `string media_type = 9` | `MediaType media_type = 16` |
+| `PostStatusMediaHeader` | `string media_type = 2` | `MediaType media_type = 9` |
+| `SendPresenceRequest` | `string state = 3` | `PresenceState state = 4` |
+
+Old values to new ones:
+
+- **`media_type`:** `image`, `video`, `audio`, `document`, `sticker` →
+  `MEDIA_TYPE_IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT`, `STICKER`; the two
+  download-only kinds of a received sticker pack (#58), `sticker_pack` and
+  `sticker_pack_thumbnail` → `MEDIA_TYPE_STICKER_PACK` and
+  `MEDIA_TYPE_STICKER_PACK_THUMBNAIL`. The set is closed: the core builds every
+  descriptor from these seven, so an event never carries `MEDIA_TYPE_UNKNOWN`,
+  and there is no raw field.
+- **`state`:** `available`, `unavailable`, `composing`, `recording`, `paused` →
+  `PRESENCE_STATE_AVAILABLE`, `UNAVAILABLE`, `COMPOSING`, `RECORDING`, `PAUSED`.
+
+Which values each RPC takes is unchanged: `SendMedia` takes the five sendable
+kinds, `PostStatusMedia` takes `IMAGE` and `VIDEO`, `DownloadMedia` takes all
+seven, `SendPresence` takes the five states.
+
+**The refusal, one shape for every request enum:** `UNSPECIFIED`, `UNKNOWN`, a
+number the enum does not name, and a value the RPC does not take are all
+`InvalidArgument` with
+
+```
+<field> must be one of <A|B|...>, got <value>
+```
+
+where `<value>` is the proto name, or the bare number when the enum has no name
+for it. For example:
+
+```
+media_type must be one of MEDIA_TYPE_IMAGE|MEDIA_TYPE_VIDEO|MEDIA_TYPE_AUDIO|MEDIA_TYPE_DOCUMENT|MEDIA_TYPE_STICKER, got MEDIA_TYPE_STICKER_PACK
+status media_type must be one of MEDIA_TYPE_IMAGE|MEDIA_TYPE_VIDEO, got MEDIA_TYPE_AUDIO
+state must be one of PRESENCE_STATE_AVAILABLE|PRESENCE_STATE_UNAVAILABLE|PRESENCE_STATE_COMPOSING|PRESENCE_STATE_RECORDING|PRESENCE_STATE_PAUSED, got 42
+```
+
+These replace `unknown media_type '<v>'`, `status media_type must be
+image|video, got '<v>'` and `unknown presence state '<v>'`. The code
+(`InvalidArgument`) and the point in the RPC where the check happens are the
+same as before: `SendMedia` and `PostStatusMedia` still read the type after the
+byte stream, and `SendPresence` still resolves the account and the chat first.
+
+**What the edge has to do:**
+
+- Set the enum where it set a string. Leaving the field unset now reads as
+  `UNSPECIFIED` and is refused, where an empty string was refused as an unknown
+  token.
+- Pass the descriptor from the event to `DownloadMedia` untouched, as before.
+- Match the new refusal text if it parsed the old one; better, match the code.

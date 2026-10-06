@@ -72,7 +72,10 @@ message SendMediaHeader {
   string caption = 6;
   repeated Mention mentions = 7;
   QuoteContext quote = 8;
-  string media_type = 9; // image|video|audio|document|sticker
+  // #127: was `string media_type = 9`. IMAGE, VIDEO, AUDIO, DOCUMENT or
+  // STICKER; anything else is InvalidArgument.
+  reserved 9;
+  MediaType media_type = 16;
   string filename = 10;
   // Voice note (PTT): ptt=true plus seconds turn an audio into a voice note.
   // WhatsApp only renders the PTT bubble for OGG/Opus payloads; the edge
@@ -84,7 +87,7 @@ message SendMediaHeader {
   // 0 = not ephemeral; otherwise relayed as ContextInfo.expiration (the edge
   // supplies the chat's setting, exactly as on SendTextRequest).
   uint32 ephemeral_seconds = 14;
-  // Video note (PTV, the round "instant video"): when media_type=="video" and
+  // Video note (PTV, the round "instant video"): when media_type is VIDEO and
   // ptv=true, the built VideoMessage ships as Message.ptv_message instead of
   // video_message. The edge supplies a square clip; the core does not transcode.
   bool ptv = 15;
@@ -138,7 +141,22 @@ message FetchMessageHistoryResponse {
 message SendPresenceRequest {
   AccountRef account = 1;
   Jid chat = 2;
-  string state = 3; // available|unavailable|composing|recording|paused
+  // #127: was `string state = 3`.
+  reserved 3;
+  PresenceState state = 4;
+}
+
+// What SendPresence raises: AVAILABLE and UNAVAILABLE are the account's own
+// presence, not scoped to `chat`; the other three are a chat state in `chat`.
+// UNSPECIFIED and UNKNOWN are InvalidArgument: a request has no raw field.
+enum PresenceState {
+  PRESENCE_STATE_UNSPECIFIED = 0;
+  PRESENCE_STATE_UNKNOWN = 1;      // never valid; refused
+  PRESENCE_STATE_AVAILABLE = 2;
+  PRESENCE_STATE_UNAVAILABLE = 3;
+  PRESENCE_STATE_COMPOSING = 4;
+  PRESENCE_STATE_RECORDING = 5;
+  PRESENCE_STATE_PAUSED = 6;
 }
 
 // Used by MarkRead (the receipt), MarkChatRead and MarkUnread (the app-state
@@ -320,7 +338,10 @@ message PostStatusTextRequest {
 
 message PostStatusMediaHeader {
   AccountRef account = 1;
-  string media_type = 2; // image|video only (status supports no other kinds)
+  // #127: was `string media_type = 2`. IMAGE or VIDEO only (status supports
+  // no other kinds); anything else is InvalidArgument.
+  reserved 2;
+  MediaType media_type = 9;
   string mime_type = 3;
   bytes thumbnail = 4;   // JPEG preview; the edge generates it (no transcode)
   string caption = 5;

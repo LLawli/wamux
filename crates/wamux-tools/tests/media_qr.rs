@@ -9,7 +9,7 @@ use wamux_tools::qr::{ascii_qr, write_qr_png};
 fn header() -> pb::SendMediaHeader {
     pb::SendMediaHeader {
         mime_type: "image/png".into(),
-        media_type: "image".into(),
+        media_type: pb::MediaType::Image as i32,
         ..Default::default()
     }
 }

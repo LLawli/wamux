@@ -55,7 +55,7 @@ impl TryFrom<pb::PostStatusMediaHeader> for StatusMedia {
     type Error = WamuxError;
 
     fn try_from(header: pb::PostStatusMediaHeader) -> Result<Self, WamuxError> {
-        let kind = MediaKind::parse_status(&header.media_type)?;
+        let kind = MediaKind::parse_status(header.media_type)?;
         Ok(Self {
             kind,
             recipients: parse_recipients(&header.recipients)?,

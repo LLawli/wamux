@@ -617,7 +617,7 @@ macro_rules! media_descriptor {
             file_sha256: $m.file_sha256.clone().unwrap_or_default(),
             file_length: $m.file_length.unwrap_or(0),
             mime_type: $m.mimetype.clone().unwrap_or_default(),
-            media_type: $kind.token().to_string(),
+            media_type: $kind.to_wire() as i32,
         }
     };
 }

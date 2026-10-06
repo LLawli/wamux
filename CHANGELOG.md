@@ -496,6 +496,24 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: the media type and the presence state are proto enums** (issue
+  #127, part 2 of #73). `MediaDescriptor.media_type`, `SendMediaHeader.media_type`
+  and `PostStatusMediaHeader.media_type` are `MediaType`, and
+  `SendPresenceRequest.state` is `PresenceState`, each under a new number with
+  the old one `reserved`. Old string to new value for each:
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 2b.
+  - `MediaType` names the seven kinds the core relays, the two download-only
+    sticker pack kinds included. The core builds every descriptor from those
+    seven, so `MEDIA_TYPE_UNKNOWN` is never emitted and there is no raw field.
+    `DownloadMedia` takes the descriptor back as it came.
+  - A request refuses every wrong value the same way: `UNSPECIFIED`, `UNKNOWN`,
+    a number outside the enum, or a value the operation does not take is
+    `InvalidArgument` with `<field> must be one of <A|B|...>, got <value>`,
+    where the value is its proto name or the bare number. It used to be
+    `unknown media_type '<v>'` and `unknown presence state '<v>'`.
+  - Request enums carry no raw field: the edge writes them, and there is no
+    value without a name that the core would act on.
+
 - **BREAKING: event fields that were free strings or Rust `Debug` output are
   proto enums** (issue #126, part 1 of #73). `ReceiptEvent.type`,
   `PresenceUpdate.chat_state`, `AppStateUpdate.kind`, `CallEvent.action`,

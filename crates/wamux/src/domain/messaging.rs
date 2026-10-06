@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use wacore::send::RecipientFanout;
-use wamux_types::{Jid, LinkPreview, MessageTarget, OutgoingContext, OutgoingText, relay_jid};
+use wamux_types::{
+    Jid, LinkPreview, MessageTarget, OutgoingContext, OutgoingText, PresenceState, relay_jid,
+};
 use whatsapp_rust::buffa::{Enumeration, MessageField};
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::PreviewType;
@@ -198,32 +200,35 @@ pub async fn fetch_message_history(
         .map_err(client_err)
 }
 
-pub async fn send_presence(client: &Client, chat: Jid, state: &str) -> Result<(), WamuxError> {
+/// Raise the account's presence, or a chat state in `chat` (#127: the state
+/// arrives parsed, and the match has no wildcard arm).
+pub async fn send_presence(
+    client: &Client,
+    chat: Jid,
+    state: PresenceState,
+) -> Result<(), WamuxError> {
     match state {
-        "available" => client.presence().set_available().await.map_err(client_err),
-        "unavailable" => client
+        PresenceState::Available => client.presence().set_available().await.map_err(client_err),
+        PresenceState::Unavailable => client
             .presence()
             .set_unavailable()
             .await
             .map_err(client_err),
-        "composing" => client
+        PresenceState::Composing => client
             .chatstate()
             .send_composing(chat.as_lib())
             .await
             .map_err(client_err),
-        "recording" => client
+        PresenceState::Recording => client
             .chatstate()
             .send_recording(chat.as_lib())
             .await
             .map_err(client_err),
-        "paused" => client
+        PresenceState::Paused => client
             .chatstate()
             .send_paused(chat.as_lib())
             .await
             .map_err(client_err),
-        other => Err(WamuxError::InvalidArgument(format!(
-            "unknown presence state '{other}'"
-        ))),
     }
 }
 
