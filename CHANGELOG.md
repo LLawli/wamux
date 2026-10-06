@@ -496,6 +496,21 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: every jid in `groups.proto`, `contacts.proto` and
+  `newsletters.proto` is the `Jid` message** (issue #121, part 2 of #72).
+  Twenty-five fields, with the rules of part 1: a new number with the old one
+  `reserved`, only the `_jid` suffix dropped (`group_jid` is now `group`), an
+  unset or empty required jid answers `"missing jid"`, and a jid the core
+  answers with is relayed verbatim or left unset. Before and after for each
+  field: `docs/BREAKING-CHANGES-2026-10-05.md`, section 1b.
+  - Every entry of a repeated jid field (`participants`, the `jids` of
+    CheckOnWhatsApp and ResolveLidPn) is still required; an empty one now
+    answers `"missing jid"` (it answered `"empty jid"`).
+  - `LidPnResult.query` and `CheckResult.query` are `Jid`s carrying the value
+    they carried before; ResolveLidPn still echoes each query as it was sent.
+  - Which jids an RPC accepts does not change (#96 and #99 decide that).
+  - `scripts/check-proto-jids.py` now lists only the event fields of #122.
+
 - **BREAKING: every jid in `common.proto` and `messaging.proto` is the `Jid`
   message** (issue #120, part 1 of #72). Eleven fields that carried a jid as a
   `string` are `Jid` now: `MessageKey.chat` (was `remote_jid`) and
