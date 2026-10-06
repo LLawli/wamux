@@ -574,8 +574,9 @@ fn maps_receipt_with_ids_type_and_millis() {
             assert_eq!(r.chat, wire(CHAT_JID));
             assert_eq!(r.sender, wire(SENDER_JID));
             assert_eq!(r.message_ids, ["AAA111", "BBB222"]);
-            // Lowercase wire token per the proto contract, never Debug casing.
-            assert_eq!(r.r#type, "read");
+            // #126: an enum, never Debug casing or a free token; no raw when named.
+            assert_eq!(r.r#type(), pb::ReceiptType::Read);
+            assert_eq!(r.type_raw, "");
             assert_eq!(r.timestamp, 1_717_932_111_000);
         }
         other => panic!("expected receipt, got {other:?}"),
@@ -596,7 +597,8 @@ fn maps_undecryptable_message_with_reason() {
         Some(PbEvent::Undecryptable(u)) => {
             assert_eq!(u.chat, wire(CHAT_JID));
             assert_eq!(u.sender, wire(SENDER_JID));
-            assert_eq!(u.reason, "ViewOnce");
+            // #126: was the `Debug` string "ViewOnce".
+            assert_eq!(u.reason(), pb::UnavailableReason::ViewOnce);
         }
         other => panic!("expected undecryptable, got {other:?}"),
     }
@@ -615,7 +617,8 @@ fn maps_presence_offline_with_last_seen_seconds() {
     // "unavailable" on the wire means offline for the edge: the flag inverts.
     assert_eq!(p.online, Some(false));
     assert_eq!(p.last_seen, 1_717_932_000);
-    assert!(p.chat_state.is_empty());
+    // #126: no chat state on real presence is UNSPECIFIED, not a token.
+    assert_eq!(p.chat_state(), pb::ChatState::Unspecified);
     // Real presence is not scoped to a conversation (issue #24): unset (#122).
     assert_eq!(p.chat, None);
 }
@@ -645,9 +648,8 @@ fn maps_chat_presence_to_composing_state() {
     // A chat state measures no presence: the field used to hardcode true, which
     // lit an "online" dot off a literal (issue #24).
     assert_eq!(p.online, None);
-    // Lowercase wire token per the proto contract (composing|recording|paused),
-    // round-trippable into SendPresenceRequest.state.
-    assert_eq!(p.chat_state, "composing");
+    // #126: the ChatState enum (was the token "composing").
+    assert_eq!(p.chat_state(), pb::ChatState::Composing);
 }
 
 // Regression (issue #24): the conversation a chat state happened in used to be
@@ -681,7 +683,7 @@ fn chat_presence_in_a_direct_chat_names_the_contact_as_the_conversation() {
             .build(),
     ));
     assert_eq!(p.chat, wire(SENDER_JID));
-    assert_eq!(p.chat_state, "paused");
+    assert_eq!(p.chat_state(), pb::ChatState::Paused);
 }
 
 // The lib has no Recording variant: it models recording as Composing with
@@ -695,7 +697,7 @@ fn maps_chat_presence_audio_to_recording_state() {
             .media(ChatPresenceMedia::Audio)
             .build(),
     ));
-    assert_eq!(p.chat_state, "recording");
+    assert_eq!(p.chat_state(), pb::ChatState::Recording);
 }
 
 // No `maps_push_name_update`: main retired `Event::PushNameUpdate` (#30,
@@ -747,7 +749,8 @@ fn maps_history_sync_with_raw_passthrough() {
 fn maps_connected_and_disconnected_states() {
     let connected = mapped_connection(&Event::Connected(Connected::builder().build()));
     assert_eq!(connected.state, pb::ConnectionState::Connected as i32);
-    assert!(connected.detail.is_empty());
+    // #126: neither typed info outside its own state.
+    assert_eq!((connected.logged_out, connected.ban), (None, None));
 
     // 0.7 turned Disconnected from a unit marker into a payload carrying why
     // the socket closed. The mapping ignores it (the proto has one Disconnected
@@ -758,13 +761,15 @@ fn maps_connected_and_disconnected_states() {
             .build(),
     ));
     assert_eq!(disconnected.state, pb::ConnectionState::Disconnected as i32);
-    assert!(disconnected.detail.is_empty());
+    assert_eq!((disconnected.logged_out, disconnected.ban), (None, None));
 }
 
+// #126: the reason used to reach the edge as `Debug` inside `detail`; it is a
+// typed LoggedOutInfo now.
 #[test]
-fn maps_logged_out_with_reason_in_detail() {
-    // 0.7 dropped `MainDeviceGone` from `ConnectFailureReason`; the assertion is
-    // about the reason reaching `detail` at all, so any real variant serves.
+fn maps_logged_out_with_a_typed_reason() {
+    // 0.7 dropped `MainDeviceGone` from `ConnectFailureReason`; any real
+    // variant serves.
     // Boxed on main (#30, upstream #1417).
     let c = mapped_connection(&Event::LoggedOut(Box::new(
         LoggedOut::builder()
@@ -773,7 +778,10 @@ fn maps_logged_out_with_reason_in_detail() {
             .build(),
     )));
     assert_eq!(c.state, pb::ConnectionState::LoggedOut as i32);
-    assert!(c.detail.contains("LoggedOut"), "detail was {:?}", c.detail);
+    let info = c.logged_out.expect("LOGGED_OUT carries its info");
+    assert_eq!(info.reason(), pb::LogoutReason::LoggedOut);
+    assert_eq!(info.reason_code, 0, "a named reason carries no code");
+    assert_eq!(c.ban, None);
 }
 
 #[test]
@@ -788,11 +796,12 @@ fn maps_temporary_ban_to_banned_state() {
             .build(),
     )));
     assert_eq!(c.state, pb::ConnectionState::Banned as i32);
-    assert!(
-        c.detail.contains("BlockedByUsers"),
-        "detail was {:?}",
-        c.detail
-    );
+    // #126: was the whole TemporaryBan as `Debug` inside `detail`.
+    let ban = c.ban.expect("BANNED carries its info");
+    assert_eq!(ban.reason(), pb::BanReason::BlockedByUsers);
+    assert_eq!(ban.reason_code, 0);
+    assert_eq!(ban.expire_seconds, 3_600);
+    assert_eq!(c.logged_out, None);
 }
 
 #[test]
@@ -1014,7 +1023,7 @@ fn maps_archive_update_to_typed_app_state() {
             .build(),
     ));
     assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind, "archive");
+    assert_eq!(s.kind(), pb::AppStateKind::Archive);
     // raw is the verbatim serde_json of the lib struct: the edge decodes it.
     // Jid serializes structurally (user/server/...), so we assert the user part
     // rather than a flat jid string.
@@ -1035,7 +1044,7 @@ fn maps_pin_update_to_typed_app_state() {
             .build(),
     ));
     assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind, "pin");
+    assert_eq!(s.kind(), pb::AppStateKind::Pin);
 }
 
 #[test]
@@ -1049,7 +1058,7 @@ fn maps_mute_update_to_typed_app_state() {
             .build(),
     ));
     assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind, "mute");
+    assert_eq!(s.kind(), pb::AppStateKind::Mute);
 }
 
 // StarUpdate names its chat `chat_jid` (it points at a message); the mapping
@@ -1067,7 +1076,7 @@ fn maps_star_update_reads_chat_jid() {
             .build(),
     ));
     assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind, "star");
+    assert_eq!(s.kind(), pb::AppStateKind::Star);
 }
 
 #[test]
@@ -1081,7 +1090,7 @@ fn maps_mark_chat_as_read_update_to_typed_app_state() {
             .build(),
     ));
     assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind, "mark_read");
+    assert_eq!(s.kind(), pb::AppStateKind::MarkRead);
 }
 
 #[test]
@@ -1096,7 +1105,7 @@ fn maps_delete_chat_update_to_typed_app_state() {
             .build(),
     ));
     assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind, "delete_chat");
+    assert_eq!(s.kind(), pb::AppStateKind::DeleteChat);
 }
 
 #[test]
@@ -1125,7 +1134,8 @@ fn maps_incoming_call_offer_to_typed_call_event() {
             assert_eq!(c.from, wire(SENDER_JID));
             // call_id is the CallAction id, NOT the stanza id.
             assert_eq!(c.call_id, "CALL-ID-1");
-            assert_eq!(c.action, "offer");
+            assert_eq!(c.action(), pb::CallActionKind::Offer);
+            assert_eq!(c.action_raw, "");
             assert!(!c.raw.is_empty());
             let json: serde_json::Value = serde_json::from_slice(&c.raw).unwrap();
             assert_eq!(json["stanza_id"], "STANZA-CALL-1");
@@ -1155,8 +1165,8 @@ fn maps_incoming_call_terminate_action_token() {
     match map_one(&event) {
         Some(PbEvent::Call(c)) => {
             assert_eq!(c.call_id, "CALL-ID-2");
-            // Lowercase wire token, never Debug casing.
-            assert_eq!(c.action, "terminate");
+            // #126: the enum, never Debug casing or a free token.
+            assert_eq!(c.action(), pb::CallActionKind::Terminate);
         }
         other => panic!("expected call event, got {other:?}"),
     }

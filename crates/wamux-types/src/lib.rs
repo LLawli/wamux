@@ -5,6 +5,7 @@
 
 pub mod account;
 pub mod error;
+pub mod event_enums;
 pub mod jid;
 pub mod lid;
 pub mod media_kind;
@@ -31,6 +32,8 @@ pub use newsletter::{
 mod account_tests;
 #[cfg(test)]
 mod error_tests;
+#[cfg(test)]
+mod event_enums_tests;
 #[cfg(test)]
 mod jid_tests;
 #[cfg(test)]

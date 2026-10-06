@@ -146,10 +146,10 @@ message StickerPackInfo {
   // `media.file_length`: the two differ (501503 vs 501859 on the pack #58 was
   // measured on), and upstream does not document what this one counts.
   uint64 pack_size = 7;
-  // Lowercase wire token: first_party|third_party|user_created. Empty when the
-  // message carries no origin; `first_party` is the enum's 0 and is not what
-  // absence means.
-  string origin = 8;
+  // #126: was `string origin = 8`. UNSPECIFIED when the message carries no
+  // origin: FIRST_PARTY is waproto's 0, and is not what absence means.
+  reserved 8;
+  StickerPackOrigin origin = 12;
   // The pack's thumbnail, a second file encrypted under the pack's media key,
   // under media_type "sticker_pack_thumbnail": DownloadMedia takes it as is.
   // Unset when the message names no thumbnail path. Its `file_length` is 0
@@ -163,6 +163,17 @@ message StickerPackInfo {
 // One sticker inside a received pack, as the pack message lists it. `file_name`
 // is its entry in the ZIP, so an edge can match metadata to bytes after
 // unzipping.
+// The waproto enum is closed: the decoder drops a number it does not know, so
+// such a pack reads UNSPECIFIED and the number survives only in `raw_message`.
+// That is why there is no `origin_raw`.
+enum StickerPackOrigin {
+  STICKER_PACK_ORIGIN_UNSPECIFIED = 0;
+  STICKER_PACK_ORIGIN_UNKNOWN = 1;  // not emitted today: see above
+  STICKER_PACK_ORIGIN_FIRST_PARTY = 2;
+  STICKER_PACK_ORIGIN_THIRD_PARTY = 3;
+  STICKER_PACK_ORIGIN_USER_CREATED = 4;
+}
+
 message StickerPackEntry {
   string file_name = 1;
   bool is_animated = 2;
@@ -177,23 +188,113 @@ message ReceiptEvent {
   Jid chat = 6;
   Jid sender = 7;
   repeated string message_ids = 3;
-  // Lowercase tokens: delivered|read|played plus the rarer read-self|
-  // played-self|sender|retry|enc_rekey_retry|server-error|inactive|peer_msg|
-  // hist_sync; an unknown type relays the raw stanza attribute verbatim.
-  string type = 4;
+  // #126: was `string type = 4`, a lowercase token.
+  reserved 4;
+  ReceiptType type = 8;
+  // The stanza's own `type` attribute, verbatim, only when `type` is UNKNOWN:
+  // the core is a relay and never drops what the server said.
+  string type_raw = 9;
   int64 timestamp = 5;
+}
+
+// Every receipt type the library names. One it does not name arrives as
+// UNKNOWN with the attribute in `type_raw`.
+enum ReceiptType {
+  RECEIPT_TYPE_UNSPECIFIED = 0;
+  RECEIPT_TYPE_UNKNOWN = 1;
+  RECEIPT_TYPE_DELIVERED = 2;        // was "delivered" (the stanza says "delivery")
+  RECEIPT_TYPE_SENT = 3;             // was "sent"
+  RECEIPT_TYPE_SENDER = 4;           // was "sender"
+  RECEIPT_TYPE_RETRY = 5;            // was "retry"
+  RECEIPT_TYPE_ENC_REKEY_RETRY = 6;  // was "enc_rekey_retry"
+  RECEIPT_TYPE_READ = 7;             // was "read"
+  RECEIPT_TYPE_READ_SELF = 8;        // was "read-self"
+  RECEIPT_TYPE_PLAYED = 9;           // was "played"
+  RECEIPT_TYPE_PLAYED_SELF = 10;     // was "played-self"
+  RECEIPT_TYPE_SERVER_ERROR = 11;    // was "server-error"
+  RECEIPT_TYPE_INACTIVE = 12;        // was "inactive"
+  RECEIPT_TYPE_PEER_MSG = 13;        // was "peer_msg"
+  RECEIPT_TYPE_HISTORY_SYNC = 14;    // was "hist_sync"
 }
 
 message UndecryptableEvent {
   reserved 1, 2;  // #122: were `string chat` and `string sender`
   Jid chat = 4;
   Jid sender = 5;
-  string reason = 3;
+  // #126: was `string reason = 3`, the Rust `Debug` of the library's value.
+  reserved 3;
+  UnavailableReason reason = 6;
+}
+
+// Why the message could not be decrypted, as the library classifies the
+// stanza. The library's set is closed and has its own "unknown" (a stanza with
+// no recognised flag), which is UNKNOWN here; there is no raw to relay.
+enum UnavailableReason {
+  UNAVAILABLE_REASON_UNSPECIFIED = 0;
+  UNAVAILABLE_REASON_UNKNOWN = 1;    // was "Unknown"
+  UNAVAILABLE_REASON_VIEW_ONCE = 2;  // was "ViewOnce"
+  UNAVAILABLE_REASON_HOSTED = 3;     // was "Hosted"
+  UNAVAILABLE_REASON_BOT = 4;        // was "Bot"
 }
 
 message ConnectionStateChanged {
   ConnectionState state = 1;
-  string detail = 2;
+  // #126: was `string detail = 2`, the Rust `Debug` of the logout reason or of
+  // the whole ban. Replaced by the two typed messages below, each set only in
+  // its own state and unset in every other.
+  reserved 2;
+  reserved "detail";
+  LoggedOutInfo logged_out = 3;   // set only when state is LOGGED_OUT
+  TemporaryBanInfo ban = 4;       // set only when state is BANNED
+}
+
+message LoggedOutInfo {
+  LogoutReason reason = 1;
+  // The server's numeric code, only when `reason` is UNKNOWN (a code the
+  // library does not name). 0 otherwise.
+  int32 reason_code = 2;
+}
+
+message TemporaryBanInfo {
+  BanReason reason = 1;
+  // The server's numeric code, only when `reason` is UNKNOWN. 0 otherwise.
+  int32 reason_code = 2;
+  // How long the ban lasts, in seconds, as the server's `expire` says: a
+  // duration, not a deadline.
+  int64 expire_seconds = 3;
+  string message = 4;  // the server's `message` attribute; empty when absent
+  string url = 5;      // the support/appeal link; empty when absent
+}
+
+// The server's `<failure>` reason codes the library names (code in comment).
+enum LogoutReason {
+  LOGOUT_REASON_UNSPECIFIED = 0;
+  LOGOUT_REASON_UNKNOWN = 1;
+  LOGOUT_REASON_GENERIC = 2;                // 400
+  LOGOUT_REASON_LOGGED_OUT = 3;             // 401
+  LOGOUT_REASON_TEMP_BANNED = 4;            // 402
+  LOGOUT_REASON_ACCOUNT_LOCKED = 5;         // 403
+  LOGOUT_REASON_CLIENT_OUTDATED = 6;        // 405
+  LOGOUT_REASON_UNKNOWN_LOGOUT = 7;         // 406, a code the server sends, not UNKNOWN
+  LOGOUT_REASON_BAD_USER_AGENT = 8;         // 409
+  LOGOUT_REASON_CAT_EXPIRED = 9;            // 413
+  LOGOUT_REASON_CAT_INVALID = 10;           // 414
+  LOGOUT_REASON_NOT_FOUND = 11;             // 415
+  LOGOUT_REASON_CLIENT_UNKNOWN = 12;        // 418
+  LOGOUT_REASON_INTERNAL_SERVER_ERROR = 13; // 500
+  LOGOUT_REASON_EXPERIMENTAL = 14;          // 501
+  LOGOUT_REASON_SERVICE_UNAVAILABLE = 15;   // 503
+}
+
+// The temporary-ban codes the library names (code in comment).
+enum BanReason {
+  BAN_REASON_UNSPECIFIED = 0;
+  BAN_REASON_UNKNOWN = 1;
+  BAN_REASON_SENT_TO_TOO_MANY_PEOPLE = 2;     // 101
+  BAN_REASON_BLOCKED_BY_USERS = 3;            // 102
+  BAN_REASON_CREATED_TOO_MANY_GROUPS = 4;     // 103
+  BAN_REASON_SENT_TOO_MANY_SAME_MESSAGE = 5;  // 104
+  BAN_REASON_BROADCAST_LIST = 6;              // 106
 }
 
 // Two library events share this message: real presence (Event::Presence) and a
@@ -207,7 +308,10 @@ message PresenceUpdate {
   // contact is online, so it carries no value here — it used to hardcode true.
   optional bool online = 2;
   int64 last_seen = 3;
-  string chat_state = 4;            // composing|recording|paused|""
+  // #126: was `string chat_state = 4`. UNSPECIFIED on real presence, which is
+  // not a chat state.
+  reserved 4;
+  ChatState chat_state = 8;
   // The conversation a chat state happened in: the group jid when somebody is
   // typing in a group, the contact's own jid in a direct chat. Unset on real
   // presence, which is not scoped to a conversation. Without it a group
@@ -217,6 +321,16 @@ message PresenceUpdate {
   // `jid`. The core does not rewrite it onto the phone namespace; resolve it
   // with ContactService.ResolveLidPn if the edge files chats by number.
   Jid chat = 7;
+}
+
+// The library models "recording" as composing with audio media; the contract
+// keeps the three states the edge draws. A closed set: no raw.
+enum ChatState {
+  CHAT_STATE_UNSPECIFIED = 0;
+  CHAT_STATE_UNKNOWN = 1;    // not emitted today: the set is closed
+  CHAT_STATE_COMPOSING = 2;  // was "composing"
+  CHAT_STATE_RECORDING = 3;  // was "recording"
+  CHAT_STATE_PAUSED = 4;     // was "paused"
 }
 
 message GroupUpdate {
@@ -260,8 +374,22 @@ message HistorySyncEvent {
 message AppStateUpdate {
   reserved 1;  // #122: was `string chat`
   Jid chat = 4;
-  string kind = 2;   // archive|pin|mute|star|mark_read|delete_chat
+  reserved 2;  // #126: was `string kind`
+  AppStateKind kind = 5;
   bytes raw = 3;
+}
+
+// One value per library app-state struct this message relays. The core picks
+// it, so the set is closed: no raw.
+enum AppStateKind {
+  APP_STATE_KIND_UNSPECIFIED = 0;
+  APP_STATE_KIND_UNKNOWN = 1;      // not emitted today: the set is closed
+  APP_STATE_KIND_ARCHIVE = 2;      // was "archive"
+  APP_STATE_KIND_PIN = 3;          // was "pin"
+  APP_STATE_KIND_MUTE = 4;         // was "mute"
+  APP_STATE_KIND_STAR = 5;         // was "star"
+  APP_STATE_KIND_MARK_READ = 6;    // was "mark_read"
+  APP_STATE_KIND_DELETE_CHAT = 7;  // was "delete_chat"
 }
 
 // The account's favorite chats changed on a linked device (the `favorites`
@@ -317,8 +445,33 @@ message CallEvent {
   reserved 1;  // #122: was `string from`
   Jid from = 5;
   string call_id = 2;
-  string action = 3;  // offer|offer_notice|pre_accept|accept|reject|terminate
+  reserved 3;  // #126: was `string action`
+  CallActionKind action = 6;
+  // The library's wire tag for the action, only when `action` is UNKNOWN (a
+  // call action added upstream that the core does not name yet).
+  string action_raw = 7;
   bytes raw = 4;
+}
+
+// Every call action the library names. Six were tokens before #126; the other
+// eight reached the edge as the library's wire tag.
+enum CallActionKind {
+  CALL_ACTION_KIND_UNSPECIFIED = 0;
+  CALL_ACTION_KIND_UNKNOWN = 1;
+  CALL_ACTION_KIND_OFFER = 2;                // was "offer"
+  CALL_ACTION_KIND_OFFER_NOTICE = 3;         // was "offer_notice"
+  CALL_ACTION_KIND_PRE_ACCEPT = 4;           // was "pre_accept"
+  CALL_ACTION_KIND_ACCEPT = 5;               // was "accept"
+  CALL_ACTION_KIND_REJECT = 6;               // was "reject"
+  CALL_ACTION_KIND_TERMINATE = 7;            // was "terminate"
+  CALL_ACTION_KIND_TRANSPORT = 8;            // was "transport"
+  CALL_ACTION_KIND_RELAY_LATENCY = 9;        // was "relaylatency"
+  CALL_ACTION_KIND_VIDEO_STATE = 10;         // was "video"
+  CALL_ACTION_KIND_GROUP_UPDATE = 11;        // was "group_update"
+  CALL_ACTION_KIND_ENC_REKEY = 12;           // was "enc_rekey"
+  CALL_ACTION_KIND_WAITING_ROOM_UPDATE = 13; // was "waiting_room_update"
+  CALL_ACTION_KIND_RAISE_HAND = 14;          // was "user_action"
+  CALL_ACTION_KIND_SCREEN_SHARE = 15;        // was "screen_share"
 }
 
 // Catch-all so the edge never silently loses an event type or a broadcast gap.
