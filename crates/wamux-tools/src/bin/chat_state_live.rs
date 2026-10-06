@@ -97,7 +97,9 @@ async fn main() -> anyhow::Result<ExitCode> {
     let subscribed = contacts
         .subscribe_presence(pb::SubscribePresenceRequest {
             account: Some(watcher.clone()),
-            jid: typist_jid.clone(),
+            jid: Some(pb::Jid {
+                value: typist_jid.clone(),
+            }),
         })
         .await;
     report.accepted_rpc("Contact.SubscribePresence", subscribed);
@@ -169,12 +171,18 @@ async fn ensure_group(
         .create_group(pb::CreateGroupRequest {
             account: Some(account.clone()),
             subject: GROUP_SUBJECT.to_string(),
-            participants: vec![participant.to_string()],
+            participants: vec![pb::Jid {
+                value: participant.to_string(),
+            }],
         })
         .await;
     match created {
         Ok(resp) => {
-            let jid: String = resp.into_inner().group_jid;
+            let jid: String = resp
+                .into_inner()
+                .group
+                .map(|group| group.value)
+                .unwrap_or_default();
             let ok = jid.ends_with("@g.us");
             report.verify("Group.CreateGroup", ok, format!("group_jid={jid}"));
             ok.then_some(jid)

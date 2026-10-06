@@ -146,7 +146,9 @@ fn page(rows: Vec<Node>) -> Node {
 fn history_request(count: u32) -> NewsletterHistoryQuery {
     NewsletterHistoryQuery::try_from(pb::GetNewsletterMessagesRequest {
         account: None,
-        jid: CHANNEL.to_string(),
+        jid: Some(pb::Jid {
+            value: CHANNEL.to_string(),
+        }),
         count,
         before: 0,
     })

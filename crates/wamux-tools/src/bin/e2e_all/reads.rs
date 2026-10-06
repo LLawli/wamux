@@ -16,7 +16,9 @@ pub async fn run_contact_and_group_reads(channel: &Channel, report: &mut Report,
     check_on_whatsapp(&mut contacts, report, ctx).await;
     let jid_req = pb::JidRequest {
         account: Some(ctx.acct.clone()),
-        jid: ctx.dest.clone(),
+        jid: Some(pb::Jid {
+            value: ctx.dest.clone(),
+        }),
     };
     // GetPushName answers the ACCOUNT's own name, not the target's (issue #1).
     let name = contacts.get_push_name(ctx.acct.clone()).await;
@@ -30,7 +32,9 @@ pub async fn run_contact_and_group_reads(channel: &Channel, report: &mut Report,
     let presence = contacts
         .subscribe_presence(pb::SubscribePresenceRequest {
             account: Some(ctx.acct.clone()),
-            jid: ctx.dest.clone(),
+            jid: Some(pb::Jid {
+                value: ctx.dest.clone(),
+            }),
         })
         .await;
     report.accepted_rpc("Contact.SubscribePresence", presence);
@@ -48,7 +52,9 @@ async fn check_on_whatsapp(
     let checked = contacts
         .check_on_whats_app(pb::CheckOnWhatsAppRequest {
             account: Some(ctx.acct.clone()),
-            jids: vec![ctx.dest.clone()],
+            jids: vec![pb::Jid {
+                value: ctx.dest.clone(),
+            }],
         })
         .await;
     match checked {
@@ -59,7 +65,11 @@ async fn check_on_whatsapp(
                 "Contact.CheckOnWhatsApp",
                 found.is_some_and(|x| x.is_on_whatsapp),
                 found.map_or("no result".to_string(), |x| {
-                    format!("on_wa={} jid={}", x.is_on_whatsapp, x.jid)
+                    format!(
+                        "on_wa={} jid={}",
+                        x.is_on_whatsapp,
+                        x.jid.as_ref().map_or("", |jid| jid.value.as_str())
+                    )
                 }),
             );
         }
@@ -80,7 +90,7 @@ async fn check_groups(groups: &mut GroupServiceClient<Channel>, report: &mut Rep
     };
     let gref = pb::GroupRef {
         account: Some(ctx.acct.clone()),
-        group_jid: first.jid.clone(),
+        group: first.jid.clone(),
     };
     match groups.get_group_metadata(gref).await {
         Ok(r) => {
@@ -88,7 +98,11 @@ async fn check_groups(groups: &mut GroupServiceClient<Channel>, report: &mut Rep
             report.verify(
                 "Group.GetGroupMetadata",
                 !meta.is_empty(),
-                format!("{} meta bytes for {}", meta.len(), first.jid),
+                format!(
+                    "{} meta bytes for {}",
+                    meta.len(),
+                    first.jid.as_ref().map_or("", |jid| jid.value.as_str())
+                ),
             );
         }
         Err(e) => report.fail("Group.GetGroupMetadata", e.to_string()),

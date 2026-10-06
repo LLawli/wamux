@@ -28,7 +28,9 @@ fn just_this() -> Vec<u8> {
 fn history(jid: &str, count: u32, before: u64) -> pb::GetNewsletterMessagesRequest {
     pb::GetNewsletterMessagesRequest {
         account: None,
-        jid: jid.to_string(),
+        jid: Some(pb::Jid {
+            value: jid.to_string(),
+        }),
         count,
         before,
     }
@@ -41,7 +43,9 @@ fn vote(
 ) -> pb::SendNewsletterPollVoteRequest {
     pb::SendNewsletterPollVoteRequest {
         account: None,
-        jid: jid.to_string(),
+        jid: Some(pb::Jid {
+            value: jid.to_string(),
+        }),
         server_id,
         option_hashes,
     }
@@ -50,7 +54,9 @@ fn vote(
 fn addons(jid: &str, limit: u32) -> pb::GetMyNewsletterAddOnsRequest {
     pb::GetMyNewsletterAddOnsRequest {
         account: None,
-        jid: jid.to_string(),
+        jid: Some(pb::Jid {
+            value: jid.to_string(),
+        }),
         limit,
     }
 }
@@ -85,7 +91,7 @@ fn a_zero_before_is_the_newest_page() {
 fn a_history_query_refuses_an_empty_or_malformed_jid() {
     assert_eq!(
         invalid_argument(NewsletterHistoryQuery::try_from(history("", 5, 0))),
-        "empty jid"
+        "missing jid"
     );
     let message = invalid_argument(NewsletterHistoryQuery::try_from(history("not a jid", 5, 0)));
     assert!(message.starts_with("invalid jid 'not a jid'"), "{message}");
@@ -105,7 +111,7 @@ fn a_history_query_refuses_a_zero_count() {
 fn a_history_query_checks_the_jid_before_the_count() {
     assert_eq!(
         invalid_argument(NewsletterHistoryQuery::try_from(history("", 0, 0))),
-        "empty jid"
+        "missing jid"
     );
 }
 
@@ -229,6 +235,6 @@ fn addons_query_refusals_keep_their_messages() {
     );
     assert_eq!(
         invalid_argument(NewsletterAddOnsQuery::try_from(addons("", 0))),
-        "empty jid"
+        "missing jid"
     );
 }

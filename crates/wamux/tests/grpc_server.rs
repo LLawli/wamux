@@ -175,9 +175,14 @@ async fn lid_mappings_are_readable_over_socket() {
         .mappings;
     let seeded = mappings
         .iter()
-        .find(|m| m.lid == "169815004184633@lid")
+        .find(|m| m.lid.as_ref().map(|j| j.value.as_str()) == Some("169815004184633@lid"))
         .expect("seeded pair must come back");
-    assert_eq!(seeded.pn, "5511999000111@s.whatsapp.net");
+    assert_eq!(
+        seeded.pn,
+        Some(pb::Jid {
+            value: "5511999000111@s.whatsapp.net".to_string()
+        })
+    );
     assert_eq!(seeded.learning_source, "usync");
     assert_eq!(seeded.created_at, 1_717_932_000);
 
@@ -185,7 +190,9 @@ async fn lid_mappings_are_readable_over_socket() {
     let resolve = contacts
         .resolve_lid_pn(pb::ResolveLidPnRequest {
             account: Some(account_ref(&created.uuid)),
-            jids: vec!["169815004184633@lid".to_string()],
+            jids: vec![pb::Jid {
+                value: "169815004184633@lid".to_string(),
+            }],
         })
         .await;
     assert_eq!(

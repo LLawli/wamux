@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use wamux_types::Jid;
+use wamux_types::{Jid, relay_jid};
 use whatsapp_rust::Client;
 
 use crate::error::{WamuxError, client_err};
@@ -25,9 +25,9 @@ pub async fn check_on_whatsapp(
     Ok(results
         .into_iter()
         .map(|r| pb::CheckResult {
-            query: r.jid.to_string(),
+            query: relay_jid(r.jid.to_string()),
             is_on_whatsapp: r.is_registered,
-            jid: r.jid.to_string(),
+            jid: relay_jid(r.jid.to_string()),
         })
         .collect())
 }

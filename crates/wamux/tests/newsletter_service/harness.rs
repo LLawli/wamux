@@ -43,14 +43,18 @@ impl Fixture {
     pub fn jid_request(&self, jid: &str) -> pb::JidRequest {
         pb::JidRequest {
             account: Some(self.account.clone()),
-            jid: jid.to_string(),
+            jid: Some(pb::Jid {
+                value: jid.to_string(),
+            }),
         }
     }
 
     pub fn history(&self, jid: &str, count: u32, before: u64) -> pb::GetNewsletterMessagesRequest {
         pb::GetNewsletterMessagesRequest {
             account: Some(self.account.clone()),
-            jid: jid.to_string(),
+            jid: Some(pb::Jid {
+                value: jid.to_string(),
+            }),
             count,
             before,
         }
@@ -59,7 +63,9 @@ impl Fixture {
     pub fn add_ons(&self, jid: &str, limit: u32) -> pb::GetMyNewsletterAddOnsRequest {
         pb::GetMyNewsletterAddOnsRequest {
             account: Some(self.account.clone()),
-            jid: jid.to_string(),
+            jid: Some(pb::Jid {
+                value: jid.to_string(),
+            }),
             limit,
         }
     }
@@ -72,7 +78,9 @@ impl Fixture {
     ) -> pb::SendNewsletterPollVoteRequest {
         pb::SendNewsletterPollVoteRequest {
             account: Some(self.account.clone()),
-            jid: jid.to_string(),
+            jid: Some(pb::Jid {
+                value: jid.to_string(),
+            }),
             server_id,
             option_hashes,
         }
@@ -93,7 +101,9 @@ pub async fn call_every_rpc(
     let a = || Some(account.clone());
     let jid = || pb::JidRequest {
         account: a(),
-        jid: CHANNEL.into(),
+        jid: Some(pb::Jid {
+            value: CHANNEL.to_string(),
+        }),
     };
     vec![
         (
@@ -112,7 +122,9 @@ pub async fn call_every_rpc(
             channels
                 .get_newsletter_messages(pb::GetNewsletterMessagesRequest {
                     account: a(),
-                    jid: CHANNEL.into(),
+                    jid: Some(pb::Jid {
+                        value: CHANNEL.to_string(),
+                    }),
                     count: 5,
                     before: 0,
                 })
@@ -124,7 +136,9 @@ pub async fn call_every_rpc(
             channels
                 .send_newsletter_poll_vote(pb::SendNewsletterPollVoteRequest {
                     account: a(),
-                    jid: CHANNEL.into(),
+                    jid: Some(pb::Jid {
+                        value: CHANNEL.to_string(),
+                    }),
                     server_id: VOTED_POLL,
                     option_hashes: vec![option_hash("azul")],
                 })
@@ -136,7 +150,9 @@ pub async fn call_every_rpc(
             channels
                 .get_my_newsletter_add_ons(pb::GetMyNewsletterAddOnsRequest {
                     account: a(),
-                    jid: CHANNEL.into(),
+                    jid: Some(pb::Jid {
+                        value: CHANNEL.to_string(),
+                    }),
                     limit: 20,
                 })
                 .await

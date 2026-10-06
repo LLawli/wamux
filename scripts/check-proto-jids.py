@@ -14,7 +14,7 @@ its role (`chat`, `sender`, `participant(s)`, `recipient(s)`, `voter(s)`,
 `from`, `lid`, `pn`, ...). Only `crates/wamux-proto/proto/*.proto` is read:
 `proto/store/` is the on-disk blob format, not the contract.
 
-PENDING names the fields #121 and #122 still have to migrate, each with its
+PENDING names the fields #122 still has to migrate (#121 emptied its own), each with its
 issue. A pending field that is no longer a `string` jid fails too, so the list
 only shrinks. The scan must read at least MIN_SCANNED files, so a scan that
 reads nothing cannot pass.
@@ -32,13 +32,6 @@ ROLES = {
     "lid", "pn", "group", "newsletter", "mention", "mentions",
 }
 PENDING: dict[str, str] = {
-    "contacts.proto:CheckOnWhatsAppRequest.jids": "#121",
-    "contacts.proto:CheckResult.jid": "#121",
-    "contacts.proto:JidRequest.jid": "#121",
-    "contacts.proto:SubscribePresenceRequest.jid": "#121",
-    "contacts.proto:LidPnMapping.lid": "#121",
-    "contacts.proto:LidPnMapping.pn": "#121",
-    "contacts.proto:ResolveLidPnRequest.jids": "#121",
     "events.proto:InboundMessage.chat": "#122",
     "events.proto:InboundMessage.sender": "#122",
     "events.proto:InboundMessage.sender_alt": "#122",
@@ -57,21 +50,6 @@ PENDING: dict[str, str] = {
     "events.proto:NewsletterLiveUpdate.newsletter_jid": "#122",
     "events.proto:CallEvent.from": "#122",
     "events.proto:ServerAckEvent.from": "#122",
-    "groups.proto:CreateGroupRequest.participants": "#121",
-    "groups.proto:GroupJidResponse.group_jid": "#121",
-    "groups.proto:ParticipantsRequest.group_jid": "#121",
-    "groups.proto:ParticipantsRequest.participants": "#121",
-    "groups.proto:GroupTextRequest.group_jid": "#121",
-    "groups.proto:GroupRef.group_jid": "#121",
-    "groups.proto:GroupSummary.jid": "#121",
-    "groups.proto:GroupToggleRequest.group_jid": "#121",
-    "groups.proto:GroupEphemeralRequest.group_jid": "#121",
-    "groups.proto:SetGroupPhotoRequest.group_jid": "#121",
-    "groups.proto:ParticipantChange.jid": "#121",
-    "newsletters.proto:Newsletter.jid": "#121",
-    "newsletters.proto:GetNewsletterMessagesRequest.jid": "#121",
-    "newsletters.proto:SendNewsletterPollVoteRequest.jid": "#121",
-    "newsletters.proto:GetMyNewsletterAddOnsRequest.jid": "#121",
 }
 FIELD = re.compile(r"^\s*(?:repeated\s+|optional\s+)?string\s+(\w+)\s*=\s*\d+")
 BLOCK = re.compile(r"^\s*(?:message|enum|oneof|service)\s+(\w+)\s*\{")

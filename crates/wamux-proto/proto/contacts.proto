@@ -8,13 +8,15 @@ message CheckOnWhatsAppRequest {
   AccountRef account = 1;
   // Full JIDs to check, e.g. "<number>@s.whatsapp.net". The core does not guess
   // or normalize: the edge picks the namespace and sends well-formed JIDs.
-  repeated string jids = 2;
+  reserved 2;  // #121: was `repeated string jids`
+  repeated Jid jids = 3;
 }
 
 message CheckResult {
-  string query = 1;
+  reserved 1, 3;  // #121: were `string query` and `string jid`
+  Jid query = 4;
   bool is_on_whatsapp = 2;
-  string jid = 3;
+  Jid jid = 5;
 }
 
 message CheckOnWhatsAppResponse {
@@ -23,7 +25,8 @@ message CheckOnWhatsAppResponse {
 
 message JidRequest {
   AccountRef account = 1;
-  string jid = 2;
+  reserved 2;  // #121: was `string jid`
+  Jid jid = 3;
 }
 
 message ProfilePictureResponse {
@@ -55,16 +58,18 @@ message BusinessProfileResponse {
 
 message SubscribePresenceRequest {
   AccountRef account = 1;
-  string jid = 2;
+  reserved 2;  // #121: was `string jid`
+  Jid jid = 3;
 }
 
 // One LID <-> phone-number pair, exactly as the library learned it. Both sides
 // render as full JIDs ("<user>@lid" / "<user>@s.whatsapp.net"): the store keeps
 // only the user parts, and each side's namespace is fixed by definition. A side
-// the store has no user part for comes back empty, never a bare "@lid".
+// the store has no user part for comes back unset, never a bare "@lid".
 message LidPnMapping {
-  string lid = 1;
-  string pn = 2;
+  reserved 1, 2;  // #121: were `string lid` and `string pn`
+  Jid lid = 5;
+  Jid pn = 6;
   int64 created_at = 3;        // unix seconds, when the mapping was first learned
   // The library's own tag for how it learned the pair, verbatim:
   // usync|pairing|peer_pn_message|peer_lid_message|recipient_latest_lid|
@@ -79,12 +84,15 @@ message ResolveLidPnRequest {
   // phone jid, a "<user>@s.whatsapp.net" with its LID. Any other namespace
   // answers found=false. The core does not guess: it only reports what the
   // client already knows.
-  repeated string jids = 2;
+  reserved 2;  // #121: was `repeated string jids`
+  repeated Jid jids = 3;
 }
 
-// One answer per requested jid, in request order.
+// One answer per requested jid, in request order. `query` is the requested
+// jid exactly as it was sent: a `@c.us` query comes back `@c.us`.
 message LidPnResult {
-  string query = 1;
+  reserved 1;  // #121: was `string query`
+  Jid query = 4;
   bool found = 2;
   LidPnMapping mapping = 3;  // unset when found=false
 }

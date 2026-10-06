@@ -89,7 +89,7 @@ async fn core_relays_the_servers_tokens_lowercased() {
         assert_eq!(out.state, state.to_lowercase(), "state {state}");
         assert_eq!(out.verification, verification.to_lowercase());
         assert_eq!(out.role, role.to_lowercase());
-        assert_eq!(out.jid, CHANNEL);
+        assert_eq!(out.jid.as_ref().map(|j| j.value.as_str()), Some(CHANNEL));
         assert_eq!(out.name, "WhatsApp");
     }
     logged.cleanup().await;
@@ -146,7 +146,11 @@ async fn core_skips_a_list_entry_without_an_id() {
     let out = newsletters::list_subscribed(&client)
         .await
         .expect("core list_subscribed");
-    let jids: Vec<&str> = out.newsletters.iter().map(|n| n.jid.as_str()).collect();
+    let jids: Vec<&str> = out
+        .newsletters
+        .iter()
+        .filter_map(|n| n.jid.as_ref().map(|j| j.value.as_str()))
+        .collect();
     assert_eq!(jids, vec![CHANNEL]);
     logged.cleanup().await;
 }

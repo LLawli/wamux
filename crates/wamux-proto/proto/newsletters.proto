@@ -16,7 +16,8 @@ import "newsletter_tallies.proto";
 // jid, and history sync brings no name either, so this is the only place the
 // name exists.
 message Newsletter {
-  string jid = 1;
+  reserved 1;  // #121: was `string jid`
+  Jid jid = 10;
   string name = 2;
   // Absent fields relay as the proto3 default, never a placeholder, except
   // `state` and `verification` below.
@@ -107,7 +108,8 @@ message NewsletterMessage {
 // Read a page of a channel's history, newest first.
 message GetNewsletterMessagesRequest {
   AccountRef account = 1;
-  string jid = 2;
+  reserved 2;  // #121: was `string jid`
+  Jid jid = 5;
   // How many rows to ask for. Required: 0 would ask the server for nothing,
   // and picking a default here would be the core choosing a page size for the
   // edge. InvalidArgument when unset.
@@ -130,7 +132,8 @@ message NewsletterMessageList {
 // list removes the vote. Read the result back with GetMyNewsletterAddOns.
 message SendNewsletterPollVoteRequest {
   AccountRef account = 1;
-  string jid = 2;         // the channel, `...@newsletter`
+  reserved 2;             // #121: was `string jid`
+  Jid jid = 5;            // the channel, `...@newsletter`
   // The POLL's server_id (`NewsletterMessage.server_id`), not a new id.
   uint64 server_id = 3;
   // 32 bytes each: sha256 of the option name exactly as the poll payload
@@ -150,7 +153,8 @@ message SendNewsletterPollVoteResponse {
 // This account's own add-ons on a channel's recent messages (issue #26).
 message GetMyNewsletterAddOnsRequest {
   AccountRef account = 1;
-  string jid = 2;
+  reserved 2;  // #121: was `string jid`
+  Jid jid = 4;
   // How many messages to ask about. Required, like GetNewsletterMessages.count:
   // InvalidArgument when 0.
   uint32 limit = 3;

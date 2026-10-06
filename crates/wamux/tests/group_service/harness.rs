@@ -4,6 +4,7 @@
 use tonic::transport::Channel;
 use wacore_binary::Node;
 use wamux::proto::v1 as pb;
+use wamux::proto::v1::contact_service_client::ContactServiceClient;
 use wamux::proto::v1::group_service_client::GroupServiceClient;
 use wamux::stress::MockWaServer;
 
@@ -19,6 +20,8 @@ pub struct Fixture {
     pub mock: MockWaServer,
     pub logged: LoggedIn,
     pub groups: GroupServiceClient<Channel>,
+    /// The same daemon's ContactService, for the jid fields #121 moved there.
+    pub contacts: ContactServiceClient<Channel>,
     pub account: pb::AccountRef,
 }
 
@@ -31,7 +34,8 @@ pub async fn fixture(test: &str) -> Fixture {
     Fixture {
         mock,
         logged,
-        groups: GroupServiceClient::new(channel),
+        groups: GroupServiceClient::new(channel.clone()),
+        contacts: ContactServiceClient::new(channel),
         account,
     }
 }
@@ -44,17 +48,34 @@ impl Fixture {
     pub fn group_ref(&self) -> pb::GroupRef {
         pb::GroupRef {
             account: Some(self.account.clone()),
-            group_jid: GROUP.to_string(),
+            group: jid(GROUP),
         }
     }
 
     pub fn participants(&self, participants: &[&str]) -> pb::ParticipantsRequest {
         pb::ParticipantsRequest {
             account: Some(self.account.clone()),
-            group_jid: GROUP.to_string(),
-            participants: participants.iter().map(|p| p.to_string()).collect(),
+            group: jid(GROUP),
+            participants: jids(participants),
         }
     }
+}
+
+/// A jid field as the edge fills it (#121).
+pub fn jid(value: impl ToString) -> Option<pb::Jid> {
+    Some(pb::Jid {
+        value: value.to_string(),
+    })
+}
+
+/// Each value as a `pb::Jid`, for the repeated jid fields (#121).
+pub fn jids<T: ToString>(values: &[T]) -> Vec<pb::Jid> {
+    values
+        .iter()
+        .map(|value| pb::Jid {
+            value: value.to_string(),
+        })
+        .collect()
 }
 
 /// The `jid` of every `<participant>` under the operation, in order.
@@ -73,25 +94,25 @@ pub async fn call_every_rpc(
     account: &pb::AccountRef,
 ) -> Vec<(&'static str, tonic::Status)> {
     let a = || Some(account.clone());
-    let group = || GROUP.to_string();
-    let people = || vec![REQUESTER_PN.to_string()];
+    let group = || jid(GROUP);
+    let people = || jids(&[REQUESTER_PN]);
     let gref = || pb::GroupRef {
         account: a(),
-        group_jid: group(),
+        group: group(),
     };
     let parts = || pb::ParticipantsRequest {
         account: a(),
-        group_jid: group(),
+        group: group(),
         participants: people(),
     };
     let text = |t: &str| pb::GroupTextRequest {
         account: a(),
-        group_jid: group(),
+        group: group(),
         text: t.to_string(),
     };
     let toggle = || pb::GroupToggleRequest {
         account: a(),
-        group_jid: group(),
+        group: group(),
         enabled: true,
     };
     let mut out = Vec::new();
@@ -176,7 +197,7 @@ pub async fn call_every_rpc(
         groups
             .set_group_ephemeral(pb::GroupEphemeralRequest {
                 account: a(),
-                group_jid: group(),
+                group: group(),
                 expiration_seconds: 86_400,
             })
             .await
@@ -197,7 +218,7 @@ pub async fn call_every_rpc(
         groups
             .set_group_photo(pb::SetGroupPhotoRequest {
                 account: a(),
-                group_jid: group(),
+                group: group(),
                 image: vec![0xff, 0xd8, 0xff],
             })
             .await

@@ -4,6 +4,13 @@
 
 use super::*;
 
+/// A jid as the core relays it out (#121): the value verbatim.
+fn wire(value: &str) -> Option<pb::Jid> {
+    Some(pb::Jid {
+        value: value.to_string(),
+    })
+}
+
 const CHANNEL: &str = "120363144038483540@newsletter";
 
 /// The live WhatsApp channel, as the library parses the answer captured from
@@ -30,7 +37,7 @@ fn metadata() -> NewsletterMetadata {
 #[test]
 fn a_channel_relays_its_name_and_jid() {
     let out = metadata_to_proto(&metadata());
-    assert_eq!(out.jid, CHANNEL);
+    assert_eq!(out.jid, wire(CHANNEL));
     assert_eq!(out.name, "WhatsApp");
     assert_eq!(out.description, "WhatsApp's official channel.");
     assert_eq!(out.subscriber_count, 4242);

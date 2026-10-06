@@ -41,7 +41,9 @@ fn mondays() -> Vec<u8> {
 fn vote_request(option_hashes: Vec<Vec<u8>>) -> pb::SendNewsletterPollVoteRequest {
     pb::SendNewsletterPollVoteRequest {
         account: None,
-        jid: CHANNEL.to_string(),
+        jid: Some(pb::Jid {
+            value: CHANNEL.to_string(),
+        }),
         server_id: POLL_SERVER_ID,
         option_hashes,
     }
@@ -152,7 +154,9 @@ async fn a_malformed_vote_is_refused_before_anything_is_sent() {
     let client = logged.client.clone();
     let short = vote_request(vec![vec![0u8; 31]]);
     let mut not_a_channel = vote_request(vec![good_morning()]);
-    not_a_channel.jid = "120363041234567890@g.us".to_string();
+    not_a_channel.jid = Some(pb::Jid {
+        value: "120363041234567890@g.us".to_string(),
+    });
     let mut no_poll = vote_request(vec![good_morning()]);
     no_poll.server_id = 0;
     // Since #116 the refusal is the boundary conversion's, before the domain
@@ -228,7 +232,9 @@ async fn my_addons_relay_the_servers_record() {
     mock.answer_newsletter_iq_with(my_addons_answer());
     let request = pb::GetMyNewsletterAddOnsRequest {
         account: None,
-        jid: CHANNEL.to_string(),
+        jid: Some(pb::Jid {
+            value: CHANNEL.to_string(),
+        }),
         limit: 20,
     };
     let request = NewsletterAddOnsQuery::try_from(request).expect("a valid query");
@@ -264,7 +270,9 @@ async fn my_addons_refuse_a_zero_limit() {
     let logged = common::logged_in_client(&mock, &prefix).await;
     let request = pb::GetMyNewsletterAddOnsRequest {
         account: None,
-        jid: CHANNEL.to_string(),
+        jid: Some(pb::Jid {
+            value: CHANNEL.to_string(),
+        }),
         limit: 0,
     };
     // Since #116 the refusal is the boundary conversion's, before the domain.

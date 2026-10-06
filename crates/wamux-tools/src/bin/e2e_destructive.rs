@@ -181,14 +181,18 @@ impl GroupRun {
     fn gref(&self) -> pb::GroupRef {
         pb::GroupRef {
             account: Some(self.acct.clone()),
-            group_jid: self.jid.clone(),
+            group: Some(pb::Jid {
+                value: self.jid.clone(),
+            }),
         }
     }
 
     fn text(&self, text: &str) -> pb::GroupTextRequest {
         pb::GroupTextRequest {
             account: Some(self.acct.clone()),
-            group_jid: self.jid.clone(),
+            group: Some(pb::Jid {
+                value: self.jid.clone(),
+            }),
             text: text.to_string(),
         }
     }
@@ -196,8 +200,12 @@ impl GroupRun {
     fn members(&self) -> pb::ParticipantsRequest {
         pb::ParticipantsRequest {
             account: Some(self.acct.clone()),
-            group_jid: self.jid.clone(),
-            participants: vec![self.member.clone()],
+            group: Some(pb::Jid {
+                value: self.jid.clone(),
+            }),
+            participants: vec![pb::Jid {
+                value: self.member.clone(),
+            }],
         }
     }
 }
@@ -212,11 +220,17 @@ async fn run_group(
         .create_group(pb::CreateGroupRequest {
             account: Some(acct.clone()),
             subject: format!("wamux e2e {}", nanos()),
-            participants: vec![dest.to_string()],
+            participants: vec![pb::Jid {
+                value: dest.to_string(),
+            }],
         })
         .await;
     let jid = match created {
-        Ok(r) => r.into_inner().group_jid,
+        Ok(r) => r
+            .into_inner()
+            .group
+            .map(|group| group.value)
+            .unwrap_or_default(),
         Err(e) => return report.fail("Group.CreateGroup", e.to_string()),
     };
     report.verify(

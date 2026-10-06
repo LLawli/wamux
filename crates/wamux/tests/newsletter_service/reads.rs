@@ -17,7 +17,9 @@ use crate::harness::{NEWSLETTER, fixture};
 /// lowercased; `creation_time` stays in seconds, as the proto documents.
 fn captured_channel(subscriber_count: u64, picture_url: &str) -> pb::Newsletter {
     pb::Newsletter {
-        jid: CHANNEL.into(),
+        jid: Some(pb::Jid {
+            value: CHANNEL.to_string(),
+        }),
         name: NAME.into(),
         description: DESCRIPTION.into(),
         subscriber_count,

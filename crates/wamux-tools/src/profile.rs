@@ -24,7 +24,9 @@ pub async fn photo_url(
 ) -> Result<String, tonic::Status> {
     let request = pb::JidRequest {
         account: Some(acct.clone()),
-        jid: jid.to_string(),
+        jid: Some(pb::Jid {
+            value: jid.to_string(),
+        }),
     };
     let response = contacts.get_profile_picture(request).await?;
     Ok(response.into_inner().url)

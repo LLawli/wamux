@@ -16,6 +16,7 @@ mod common;
 #[allow(dead_code)]
 mod captured;
 mod harness;
+mod jid_fields;
 mod participants;
 mod reads;
 mod statuses;

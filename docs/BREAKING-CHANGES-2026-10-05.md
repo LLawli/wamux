@@ -77,3 +77,56 @@ mention still goes out as `@s.whatsapp.net`). `EditMessage` still answers with
   `participant` as "none" (a DM, or a key the core built for its own send).
 - Expect `"missing jid"` where an empty creator, voter, mention, recipient or
   key chat used to answer `"empty jid"`.
+
+### 1b. `groups.proto`, `contacts.proto` and `newsletters.proto` (#121)
+
+| Message | Before | After |
+|---|---|---|
+| `CreateGroupRequest` | `repeated string participants = 3` | `repeated Jid participants = 4` |
+| `GroupJidResponse` | `string group_jid = 1` | `Jid group = 3` |
+| `ParticipantsRequest` | `string group_jid = 2` | `Jid group = 4` |
+| `ParticipantsRequest` | `repeated string participants = 3` | `repeated Jid participants = 5` |
+| `GroupTextRequest` | `string group_jid = 2` | `Jid group = 4` |
+| `GroupRef` | `string group_jid = 2` | `Jid group = 3` |
+| `GroupToggleRequest` | `string group_jid = 2` | `Jid group = 4` |
+| `GroupEphemeralRequest` | `string group_jid = 2` | `Jid group = 4` |
+| `SetGroupPhotoRequest` | `string group_jid = 2` | `Jid group = 4` |
+| `GroupSummary` | `string jid = 1` | `Jid jid = 5` |
+| `ParticipantChange` | `string jid = 1` | `Jid jid = 7` |
+| `ParticipantChange` | `string phone_number = 4` | `Jid phone_number = 8` |
+| `CheckOnWhatsAppRequest` | `repeated string jids = 2` | `repeated Jid jids = 3` |
+| `CheckResult` | `string query = 1` | `Jid query = 4` |
+| `CheckResult` | `string jid = 3` | `Jid jid = 5` |
+| `JidRequest` | `string jid = 2` | `Jid jid = 3` |
+| `SubscribePresenceRequest` | `string jid = 2` | `Jid jid = 3` |
+| `LidPnMapping` | `string lid = 1` | `Jid lid = 5` |
+| `LidPnMapping` | `string pn = 2` | `Jid pn = 6` |
+| `ResolveLidPnRequest` | `repeated string jids = 2` | `repeated Jid jids = 3` |
+| `LidPnResult` | `string query = 1` | `Jid query = 4` |
+| `Newsletter` | `string jid = 1` | `Jid jid = 10` |
+| `GetNewsletterMessagesRequest` | `string jid = 2` | `Jid jid = 5` |
+| `SendNewsletterPollVoteRequest` | `string jid = 2` | `Jid jid = 5` |
+| `GetMyNewsletterAddOnsRequest` | `string jid = 2` | `Jid jid = 4` |
+
+`JidRequest` is shared: it is the request of GetProfilePicture, GetAbout,
+GetBusinessProfile, GetNewsletterMetadata and SubscribeNewsletterLiveUpdates.
+
+**What does not change:** which jids an RPC accepts. A group RPC,
+GetNewsletterMetadata and GetNewsletterMessages still take a jid on any
+server (refusing one is #96 and #99, later in this document). The three
+channel RPCs that refused another server still do, with the same message:
+`'<value>' is not a channel: expected a jid ending in @newsletter`. The JSON
+payloads (`GroupSummary.metadata`, `GroupMetadataResponse`, membership
+requests) keep their shape; their jid spelling is #96.
+
+**What the edge has to do:**
+
+- Wrap each value in `Jid { value }` and use `group` where it sent `group_jid`.
+- Each entry of `participants`, `jids` (CheckOnWhatsApp, ResolveLidPn) is
+  required: an empty one fails the whole request with `"missing jid"`, where
+  it answered `"empty jid"`.
+- `LidPnResult.query` still echoes the requested jid exactly as it was sent (a
+  `@c.us` query comes back `@c.us`), now inside a `Jid`.
+- Treat an unset `LidPnMapping.lid` / `.pn` as "no user part known" (it was an
+  empty string), and an unset `ParticipantChange.phone_number` as "the server
+  sent none".
