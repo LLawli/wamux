@@ -8,6 +8,13 @@ use whatsapp_rust::{GroupMetadata, Jid};
 
 use super::*;
 
+/// A jid as the core relays it out (#121): the value verbatim.
+fn wire(value: &str) -> Option<pb::Jid> {
+    Some(pb::Jid {
+        value: value.to_string(),
+    })
+}
+
 #[test]
 fn metadata_json_round_trips_key_fields() {
     let member = Jid::from_str("5511999999999@s.whatsapp.net").unwrap();
@@ -176,7 +183,7 @@ fn group_summaries_project_full_metadata_sorted_by_subject() {
     assert_eq!(subjects, ["Alfa", "Zeta"]);
 
     let zeta = &summaries[1];
-    assert_eq!(zeta.jid, "120363000000000002@g.us");
+    assert_eq!(zeta.jid, wire("120363000000000002@g.us"));
     assert_eq!(zeta.participants, 3);
     let value: serde_json::Value = serde_json::from_slice(&zeta.metadata).unwrap();
     assert_eq!(value["participants"].as_array().unwrap().len(), 3);
@@ -187,4 +194,35 @@ fn group_summaries_project_full_metadata_sorted_by_subject() {
 fn a_group_without_a_subject_lists_with_an_empty_one() {
     let summaries = group_summaries(vec![group("120363000000000003@g.us", None, 0)]);
     assert_eq!(summaries[0].subject, "");
+}
+
+/// The struct is `#[non_exhaustive]`, so it is parsed from the `<participant>`
+/// node the server answers with, as the library does.
+fn change(phone_number: Option<&str>) -> ParticipantChangeResponse {
+    use wacore::protocol::ProtocolNode;
+    let mut node = whatsapp_rust::NodeBuilder::new("participant")
+        .attr("jid", "100000000000002@lid")
+        .attr("type", "200");
+    if let Some(pn) = phone_number {
+        node = node.attr("phone_number", pn);
+    }
+    ParticipantChangeResponse::try_from_node(&node.build()).expect("a well-formed participant")
+}
+
+// #121: the participant and the phone jid next to it are `Jid`s, relayed as
+// the server named them.
+#[test]
+fn a_participant_change_relays_its_jids() {
+    let out = participant_change(change(Some("5511900000002@s.whatsapp.net")));
+    assert_eq!(out.jid, wire("100000000000002@lid"));
+    assert_eq!(out.phone_number, wire("5511900000002@s.whatsapp.net"));
+    assert_eq!(out.status, "200");
+}
+
+// A participant the server sent no phone for has an unset `phone_number`,
+// never `Jid { value: "" }`.
+#[test]
+fn a_participant_change_without_a_phone_leaves_it_unset() {
+    let out = participant_change(change(None));
+    assert_eq!(out.phone_number, None);
 }

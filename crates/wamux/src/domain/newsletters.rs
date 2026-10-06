@@ -86,7 +86,7 @@ fn newsletter_err(err: NewsletterError) -> WamuxError {
 /// Project the library's metadata onto the wire shape.
 fn metadata_to_proto(meta: &NewsletterMetadata) -> pb::Newsletter {
     pb::Newsletter {
-        jid: meta.jid.to_string(),
+        jid: relay_jid(meta.jid.to_string()),
         name: meta.name.clone(),
         description: meta.description.clone().unwrap_or_default(),
         subscriber_count: meta.subscriber_count,

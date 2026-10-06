@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use wamux_types::{AccountRef, Jid, LidPnQuery};
 
-use super::{client_of, parse_jids};
+use super::client_of;
 use crate::domain::{contacts, lid_mapping};
 use crate::proto::v1 as pb;
 use crate::proto::v1::contact_service_server::ContactService;
@@ -30,7 +30,8 @@ impl ContactService for ContactSvc {
     ) -> Result<Response<pb::CheckOnWhatsAppResponse>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        let results = contacts::check_on_whatsapp(client, parse_jids(&req.jids)?).await?;
+        let results =
+            contacts::check_on_whatsapp(client, Jid::from_required_wire_list(req.jids)?).await?;
         Ok(Response::new(pb::CheckOnWhatsAppResponse { results }))
     }
 
@@ -41,7 +42,7 @@ impl ContactService for ContactSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            contacts::get_profile_picture(&client, &Jid::parse(&req.jid)?).await?,
+            contacts::get_profile_picture(&client, &Jid::from_required_wire(req.jid)?).await?,
         ))
     }
 
@@ -91,7 +92,7 @@ impl ContactService for ContactSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            contacts::get_about(client, Jid::parse(&req.jid)?).await?,
+            contacts::get_about(client, Jid::from_required_wire(req.jid)?).await?,
         ))
     }
 
@@ -102,7 +103,7 @@ impl ContactService for ContactSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            contacts::get_business_profile(&client, &Jid::parse(&req.jid)?).await?,
+            contacts::get_business_profile(&client, &Jid::from_required_wire(req.jid)?).await?,
         ))
     }
 
@@ -112,7 +113,7 @@ impl ContactService for ContactSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        contacts::subscribe_presence(&client, &Jid::parse(&req.jid)?).await?;
+        contacts::subscribe_presence(&client, &Jid::from_required_wire(req.jid)?).await?;
         Ok(Response::new(pb::Empty {}))
     }
 

@@ -9,7 +9,7 @@ use wamux::proto::v1 as pb;
 use crate::captured::{GROUP, GROUP_ID, REQUESTER_PN};
 use crate::common;
 use crate::common::mock_wire::{account_ref, iqs_in, sent_iq};
-use crate::harness::{Fixture, G2, PICTURE, call_every_rpc, fixture};
+use crate::harness::{Fixture, G2, PICTURE, call_every_rpc, fixture, jid, jids};
 
 fn assert_every(statuses: &[(&str, tonic::Status)], code: Code) {
     assert_eq!(statuses.len(), 21, "all 21 RPCs");
@@ -95,7 +95,7 @@ async fn every_group_rpc_rejects_an_empty_or_malformed_group_jid() {
     }
     let probe = pb::GroupTextRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         text: "probe".into(),
     };
     f.groups
@@ -116,21 +116,21 @@ async fn group_scoped_statuses(f: &mut Fixture, bad: &str) -> Vec<(&'static str,
     let a = || Some(f.account.clone());
     let gref = || pb::GroupRef {
         account: a(),
-        group_jid: bad.into(),
+        group: jid(bad),
     };
     let parts = || pb::ParticipantsRequest {
         account: a(),
-        group_jid: bad.into(),
-        participants: vec![REQUESTER_PN.into()],
+        group: jid(bad),
+        participants: jids(&[REQUESTER_PN]),
     };
     let text = || pb::GroupTextRequest {
         account: a(),
-        group_jid: bad.into(),
+        group: jid(bad),
         text: "t".into(),
     };
     let toggle = || pb::GroupToggleRequest {
         account: a(),
-        group_jid: bad.into(),
+        group: jid(bad),
         enabled: true,
     };
     let g = &mut f.groups;
@@ -187,7 +187,7 @@ async fn group_scoped_statuses(f: &mut Fixture, bad: &str) -> Vec<(&'static str,
             "SetGroupEphemeral",
             g.set_group_ephemeral(pb::GroupEphemeralRequest {
                 account: a(),
-                group_jid: bad.into(),
+                group: jid(bad),
                 expiration_seconds: 60,
             })
             .await
@@ -198,7 +198,7 @@ async fn group_scoped_statuses(f: &mut Fixture, bad: &str) -> Vec<(&'static str,
             "SetGroupPhoto",
             g.set_group_photo(pb::SetGroupPhotoRequest {
                 account: a(),
-                group_jid: bad.into(),
+                group: jid(bad),
                 image: vec![1],
             })
             .await
@@ -234,10 +234,10 @@ async fn group_scoped_statuses(f: &mut Fixture, bad: &str) -> Vec<(&'static str,
 async fn participant_rpcs_reject_a_malformed_participant() {
     let mut f = fixture("participant_rpcs_reject_a_malformed_participant").await;
     let a = Some(f.account.clone());
-    let people = vec![REQUESTER_PN.to_string(), "not a jid".to_string()];
+    let people = jids(&[REQUESTER_PN, "not a jid"]);
     let parts = || pb::ParticipantsRequest {
         account: a.clone(),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         participants: people.clone(),
     };
     let create = pb::CreateGroupRequest {
@@ -294,7 +294,7 @@ async fn set_group_subject_rejects_more_than_100_chars() {
     let mut f = fixture("set_group_subject_rejects_more_than_100_chars").await;
     let request = |text: String| pb::GroupTextRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         text,
     };
     let too_long = f
@@ -316,7 +316,7 @@ async fn set_group_description_rejects_more_than_2048_chars() {
     let mut f = fixture("set_group_description_rejects_more_than_2048_chars").await;
     let request = pb::GroupTextRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         text: "d".repeat(2049),
     };
     let status = f.groups.set_group_description(request).await.unwrap_err();
@@ -372,7 +372,7 @@ async fn a_description_conflict_answers_unavailable_today() {
         .answer_iq_error(G2, "set", "description", 409, "conflict");
     let request = pb::GroupTextRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         text: "x".into(),
     };
     let status = f.groups.set_group_description(request).await.unwrap_err();

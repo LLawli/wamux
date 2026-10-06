@@ -8,7 +8,7 @@ use wamux::proto::v1 as pb;
 
 use crate::captured::{GROUP, GROUP_ID, INVITE_CODE, OWNER_LID, OWNER_PN, REQUESTER_PN};
 use crate::common::mock_wire::{attr, operation, sent_iq};
-use crate::harness::{G2, PICTURE, fixture, participant_jids};
+use crate::harness::{G2, PICTURE, fixture, jid, jids, participant_jids};
 
 fn op(iq: &Node) -> &Node {
     operation(iq).expect("the iq carries an operation")
@@ -35,7 +35,7 @@ async fn create_group_relays_the_new_jid_and_metadata() {
     let request = pb::CreateGroupRequest {
         account: Some(f.account.clone()),
         subject: "new group".into(),
-        participants: vec![REQUESTER_PN.into()],
+        participants: jids(&[REQUESTER_PN]),
     };
     let answer = f
         .groups
@@ -43,7 +43,7 @@ async fn create_group_relays_the_new_jid_and_metadata() {
         .await
         .expect("create")
         .into_inner();
-    assert_eq!(answer.group_jid, GROUP);
+    assert_eq!(answer.group, jid(GROUP));
     let metadata: serde_json::Value = serde_json::from_slice(&answer.metadata).expect("json");
     assert_eq!(metadata["id"], GROUP);
     assert_eq!(metadata["subject"], "new group");
@@ -59,7 +59,7 @@ async fn set_group_subject_puts_the_subject_on_the_wire() {
     let mut f = fixture("set_group_subject_puts_the_subject_on_the_wire").await;
     let request = pb::GroupTextRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         text: "renamed".into(),
     };
     f.groups.set_group_subject(request).await.expect("subject");
@@ -84,7 +84,7 @@ async fn set_group_description_reads_the_id_then_sets() {
     f.mock.answer_iq(G2, "get", "query", current);
     let request = pb::GroupTextRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         text: "new text".into(),
     };
     f.groups
@@ -151,7 +151,7 @@ async fn join_with_invite_relays_the_group_jid() {
             .await
             .expect("join")
             .into_inner();
-        assert_eq!(relayed.group_jid, GROUP);
+        assert_eq!(relayed.group, jid(GROUP));
         assert!(relayed.metadata.is_empty());
     }
     let iq = sent_iq(&f.mock, G2, "set", "invite").await;
@@ -174,7 +174,7 @@ async fn toggle_round(f: &mut crate::harness::Fixture, rpc: &str, on: &str, off:
     for (enabled, tag) in [(true, on), (false, off)] {
         let request = pb::GroupToggleRequest {
             account: Some(f.account.clone()),
-            group_jid: GROUP.into(),
+            group: jid(GROUP),
             enabled,
         };
         let result = match rpc {
@@ -207,7 +207,7 @@ async fn set_group_ephemeral_sends_the_timer_and_zero_disables() {
     for seconds in [86_400u32, 0] {
         let request = pb::GroupEphemeralRequest {
             account: Some(f.account.clone()),
-            group_jid: GROUP.into(),
+            group: jid(GROUP),
             expiration_seconds: seconds,
         };
         f.groups
@@ -236,7 +236,7 @@ async fn set_group_photo_sets_and_empty_removes() {
     let image = vec![0xff, 0xd8, 0xff, 0xe0];
     let set = pb::SetGroupPhotoRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         image: image.clone(),
     };
     f.groups.set_group_photo(set).await.expect("set photo");
@@ -246,7 +246,7 @@ async fn set_group_photo_sets_and_empty_removes() {
     assert_eq!(op(&iq).content, Some(NodeContent::Bytes(image)));
     let remove = pb::SetGroupPhotoRequest {
         account: Some(f.account.clone()),
-        group_jid: GROUP.into(),
+        group: jid(GROUP),
         image: Vec::new(),
     };
     f.groups

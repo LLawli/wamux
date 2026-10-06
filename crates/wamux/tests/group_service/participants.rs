@@ -10,7 +10,7 @@ use wamux::proto::v1::group_service_client::GroupServiceClient;
 
 use crate::captured::GROUP;
 use crate::common::mock_wire::{attr, operation, sent_iq};
-use crate::harness::{G2, fixture, participant_jids};
+use crate::harness::{G2, fixture, jid, participant_jids};
 
 const ACCEPTED: &str = "5511900000003@s.whatsapp.net";
 const REFUSED: &str = "5511900000004@s.whatsapp.net";
@@ -38,14 +38,14 @@ fn verdicts(ok_type: &str) -> Vec<Node> {
 fn expected(ok_type: &str) -> Vec<pb::ParticipantChange> {
     vec![
         pb::ParticipantChange {
-            jid: ACCEPTED.into(),
+            jid: jid(ACCEPTED),
             status: ok_type.into(),
             ..Default::default()
         },
         pb::ParticipantChange {
-            jid: REFUSED.into(),
+            jid: jid(REFUSED),
             error: "403".into(),
-            phone_number: REFUSED.into(),
+            phone_number: jid(REFUSED),
             add_request: Some(pb::AddRequestInfo {
                 code: "ABC123DEF".into(),
                 expiration: 1_735_689_600,

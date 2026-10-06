@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use wacore::store::traits::{Backend, LidPnMappingEntry};
-use wamux_types::LidPnQuery;
+use wamux_types::{LidPnQuery, relay_jid};
 use whatsapp_rust::lid_pn_cache::LidPnEntry;
 use whatsapp_rust::{Client, Server};
 
@@ -49,7 +49,7 @@ pub async fn list_lid_mappings(
 fn lid_pn_result(query: &LidPnQuery, entry: Option<LidPnEntry>) -> pb::LidPnResult {
     pb::LidPnResult {
         // The text as sent (#116), not the parsed jid: a `@c.us` query comes back `@c.us`.
-        query: query.query.clone(),
+        query: relay_jid(query.query.clone()),
         found: entry.is_some(),
         mapping: entry.map(|e| {
             lid_pn_mapping(
@@ -82,12 +82,12 @@ fn lid_pn_mapping(lid: &str, phone: &str, created_at: i64, source: &str) -> pb::
 
 /// Render one side as a full JID. The store keeps bare user parts and each
 /// side's namespace is fixed, so this is rendering, not identity guessing. An
-/// empty user part stays empty rather than becoming a bare "@lid".
-fn side_jid(user: &str, server: Server) -> String {
+/// empty user part stays unset (#121) rather than becoming a bare "@lid".
+fn side_jid(user: &str, server: Server) -> Option<pb::Jid> {
     if user.is_empty() {
-        return String::new();
+        return None;
     }
-    format!("{user}@{}", server.as_str())
+    relay_jid(format!("{user}@{}", server.as_str()))
 }
 
 #[cfg(test)]

@@ -91,6 +91,14 @@ impl Jid {
         Self::try_from(jid.unwrap_or_default())
     }
 
+    /// A repeated jid field of a request (#121), in order: each one is
+    /// required, and the first unset, empty or malformed one fails the lot.
+    pub fn from_required_wire_list(jids: Vec<pb::Jid>) -> Result<Vec<Self>, WamuxError> {
+        jids.into_iter()
+            .map(|jid| Self::from_required_wire(Some(jid)))
+            .collect()
+    }
+
     /// An optional jid field of a request (#120), such as a DM's
     /// `participant`: unset, or set with an empty value, is absence. A
     /// malformed one is still `InvalidArgument`.
@@ -138,6 +146,18 @@ impl GroupJid {
 }
 
 impl NewsletterJid {
+    /// A required channel field of a request (#121): unset, or set with an
+    /// empty value, is `InvalidArgument("missing jid")`; a jid on another
+    /// server is refused as `parse` refuses it.
+    pub fn from_required_wire(jid: Option<pb::Jid>) -> Result<Self, WamuxError> {
+        let value: String = jid.unwrap_or_default().value;
+        if value.is_empty() {
+            return Err(WamuxError::InvalidArgument("missing jid".to_string()));
+        }
+        // Parsed from the text as sent, so the refusal names what the caller wrote.
+        Self::parse(&value)
+    }
+
     /// `InvalidArgument("'<v>' is not a channel: expected a jid ending in
     /// @newsletter")` for a valid JID on another server, as
     /// `require_newsletter_jid` answers today.

@@ -51,7 +51,7 @@ impl TryFrom<pb::GetNewsletterMessagesRequest> for NewsletterHistoryQuery {
     type Error = WamuxError;
 
     fn try_from(request: pb::GetNewsletterMessagesRequest) -> Result<Self, WamuxError> {
-        let jid: Jid = Jid::parse(&request.jid)?;
+        let jid: Jid = Jid::from_required_wire(request.jid)?;
         require_at_least_one("count", request.count)?;
         // 0 is proto3's "absent": start at the newest rather than before row zero.
         let before: Option<u64> = (request.before != 0).then_some(request.before);
@@ -71,7 +71,7 @@ impl TryFrom<pb::SendNewsletterPollVoteRequest> for NewsletterPollVote {
     type Error = WamuxError;
 
     fn try_from(request: pb::SendNewsletterPollVoteRequest) -> Result<Self, WamuxError> {
-        let jid: NewsletterJid = NewsletterJid::parse(&request.jid)?;
+        let jid: NewsletterJid = NewsletterJid::from_required_wire(request.jid)?;
         if request.server_id == 0 {
             return Err(WamuxError::InvalidArgument(
                 "server_id must name the poll, got 0".to_string(),
@@ -91,7 +91,7 @@ impl TryFrom<pb::GetMyNewsletterAddOnsRequest> for NewsletterAddOnsQuery {
     type Error = WamuxError;
 
     fn try_from(request: pb::GetMyNewsletterAddOnsRequest) -> Result<Self, WamuxError> {
-        let jid: NewsletterJid = NewsletterJid::parse(&request.jid)?;
+        let jid: NewsletterJid = NewsletterJid::from_required_wire(request.jid)?;
         require_at_least_one("limit", request.limit)?;
         Ok(Self {
             jid,

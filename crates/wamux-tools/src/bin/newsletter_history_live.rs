@@ -97,7 +97,12 @@ async fn channels_to_read(
     );
     let all: Vec<(String, String)> = subscribed
         .into_iter()
-        .map(|found| (found.jid, found.name))
+        .map(|found| {
+            (
+                found.jid.map(|jid| jid.value).unwrap_or_default(),
+                found.name,
+            )
+        })
         .collect();
     let Some(wanted) = process_env("WAMUX_CHANNEL") else {
         return all;
@@ -343,7 +348,9 @@ async fn fetch(
     Ok(newsletters
         .get_newsletter_messages(pb::GetNewsletterMessagesRequest {
             account: Some(acct.clone()),
-            jid: jid.to_string(),
+            jid: Some(pb::Jid {
+                value: jid.to_string(),
+            }),
             count,
             before,
         })

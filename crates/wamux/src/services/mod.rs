@@ -75,12 +75,3 @@ pub(crate) fn require_typed_jid(jid: Option<pb::Jid>) -> Result<wamux_types::Jid
 pub(crate) fn missing_field(name: &str) -> WamuxError {
     WamuxError::InvalidArgument(format!("missing {name}"))
 }
-
-/// A batch of jid strings into `Jid`s, in order; the first bad one fails the
-/// lot (#116).
-pub(crate) fn parse_jids(values: &[String]) -> Result<Vec<wamux_types::Jid>, WamuxError> {
-    values
-        .iter()
-        .map(|value| wamux_types::Jid::parse(value))
-        .collect()
-}

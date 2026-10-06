@@ -16,6 +16,7 @@ mod common;
 
 mod captured;
 mod harness;
+mod jid_fields;
 mod not_found;
 mod reads;
 mod statuses;

@@ -47,7 +47,7 @@ impl NewsletterService for NewsletterSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            newsletters::get_metadata(&client, &Jid::parse(&req.jid)?).await?,
+            newsletters::get_metadata(&client, &Jid::from_required_wire(req.jid)?).await?,
         ))
     }
 
@@ -94,7 +94,11 @@ impl NewsletterService for NewsletterSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            newsletters::subscribe_live_updates(&client, NewsletterJid::parse(&req.jid)?).await?,
+            newsletters::subscribe_live_updates(
+                &client,
+                NewsletterJid::from_required_wire(req.jid)?,
+            )
+            .await?,
         ))
     }
 }

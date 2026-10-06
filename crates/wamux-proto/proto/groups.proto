@@ -4,32 +4,44 @@ package wamux.v1;
 
 import "common.proto";
 
+// #121: every jid field below took a new number when it became a `Jid`, and
+// the old number is reserved (see `Jid` in common.proto).
+
 message CreateGroupRequest {
   AccountRef account = 1;
   string subject = 2;
-  repeated string participants = 3;
+  reserved 3;  // #121: was `repeated string participants`
+  repeated Jid participants = 4;
 }
 
 message GroupJidResponse {
-  string group_jid = 1;
+  reserved 1;
+  reserved "group_jid";
+  Jid group = 3;
   bytes metadata = 2;
 }
 
 message ParticipantsRequest {
   AccountRef account = 1;
-  string group_jid = 2;
-  repeated string participants = 3;
+  reserved 2, 3;
+  reserved "group_jid";
+  Jid group = 4;
+  repeated Jid participants = 5;
 }
 
 message GroupTextRequest {
   AccountRef account = 1;
-  string group_jid = 2;
+  reserved 2;
+  reserved "group_jid";
+  Jid group = 4;
   string text = 3;
 }
 
 message GroupRef {
   AccountRef account = 1;
-  string group_jid = 2;
+  reserved 2;
+  reserved "group_jid";
+  Jid group = 3;
 }
 
 message GroupMetadataResponse {
@@ -46,7 +58,8 @@ message JoinWithInviteRequest {
 }
 
 message GroupSummary {
-  string jid = 1;
+  reserved 1;  // #121: was `string jid`
+  Jid jid = 5;
   string subject = 2;
   uint32 participants = 3;
   bytes metadata = 4; // projected JSON (id, subject, description, participants)
@@ -59,7 +72,9 @@ message ListGroupsResponse {
 // Toggle a boolean group permission (announce / locked). Mirrors GroupTextRequest.
 message GroupToggleRequest {
   AccountRef account = 1;
-  string group_jid = 2;
+  reserved 2;
+  reserved "group_jid";
+  Jid group = 4;
   bool enabled = 3;
 }
 
@@ -67,7 +82,9 @@ message GroupToggleRequest {
 // ephemeral flag carried on SendText/SendMedia; 0 disables.
 message GroupEphemeralRequest {
   AccountRef account = 1;
-  string group_jid = 2;
+  reserved 2;
+  reserved "group_jid";
+  Jid group = 4;
   uint32 expiration_seconds = 3;
 }
 
@@ -80,7 +97,9 @@ message PreviewInviteRequest {
 // Set or remove a group's photo. An empty `image` means "remove the photo".
 message SetGroupPhotoRequest {
   AccountRef account = 1;
-  string group_jid = 2;
+  reserved 2;
+  reserved "group_jid";
+  Jid group = 4;
   bytes image = 3;
 }
 
@@ -101,10 +120,13 @@ message AddRequestInfo {
 // server answers per participant, so a request can partially succeed: `error`
 // empty means that participant went through.
 message ParticipantChange {
-  string jid = 1;
+  reserved 1, 4;  // #121: were `string jid` and `string phone_number`
+  Jid jid = 7;
   string status = 2;
   string error = 3;
-  string phone_number = 4;
+  // The phone jid the roster carries next to a `@lid` participant; unset when
+  // the server sent none.
+  Jid phone_number = 8;
   string username = 5;
   AddRequestInfo add_request = 6;
 }

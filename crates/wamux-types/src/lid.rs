@@ -1,5 +1,7 @@
 //! A LID<->phone lookup query (#1, #116).
 
+use wamux_proto::v1 as pb;
+
 use crate::error::WamuxError;
 use crate::jid::Jid;
 
@@ -14,13 +16,17 @@ pub struct LidPnQuery {
     pub jid: Jid,
 }
 
-/// `InvalidArgument("empty jid")` / `("invalid jid '<v>': ..")`, as
-/// `parse_jids` answered.
-impl TryFrom<String> for LidPnQuery {
+/// `InvalidArgument("missing jid")` for an empty value (#121),
+/// `("invalid jid '<v>': ..")` for a malformed one. `query` keeps the value
+/// as it came.
+impl TryFrom<pb::Jid> for LidPnQuery {
     type Error = WamuxError;
 
-    fn try_from(query: String) -> Result<Self, WamuxError> {
-        let jid: Jid = Jid::parse(&query)?;
-        Ok(Self { query, jid })
+    fn try_from(query: pb::Jid) -> Result<Self, WamuxError> {
+        let jid: Jid = Jid::try_from(query.clone())?;
+        Ok(Self {
+            query: query.value,
+            jid,
+        })
     }
 }
