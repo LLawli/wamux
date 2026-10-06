@@ -37,12 +37,11 @@ use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux_tools::delivery::{EventTap, send_reached_phone};
 use wamux_tools::live_env::{
-    account_ref_from, delivery_window_from, live_dest_from, process_env, refuse_own_number,
-    same_user, socket_path_from,
+    account_ref_from, delivery_window_from, jid_text_of, live_dest_from, process_env,
+    refuse_own_number, same_user, socket_path_from,
 };
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
-use wamux_types::relay_jid;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
@@ -165,10 +164,14 @@ async fn watch_offers<'a>(
             report_offer(inbound, &choices);
             report.pass(
                 "Event.InboundMessage offer",
-                format!("{} choices in {}", choices.len(), inbound.chat),
+                format!(
+                    "{} choices in {}",
+                    choices.len(),
+                    jid_text_of(&inbound.chat)
+                ),
             );
             if let Some(chosen) = reply
-                && same_user(&inbound.chat, chosen.1)
+                && same_user(jid_text_of(&inbound.chat), chosen.1)
             {
                 return Some((inbound.clone(), choices, chosen));
             }
@@ -291,7 +294,10 @@ fn report_offer(inbound: &pb::InboundMessage, choices: &[Choice]) {
         .as_ref()
         .map(|key| key.id.as_str())
         .unwrap_or("");
-    println!("\n\u{1F4E9} offer in {} (id {id})", inbound.chat);
+    println!(
+        "\n\u{1F4E9} offer in {} (id {id})",
+        jid_text_of(&inbound.chat)
+    );
     for (index, choice) in choices.iter().enumerate() {
         println!("   #{index}  {}", choice.label);
     }
@@ -326,7 +332,7 @@ async fn answer(
         }),
         quote: Some(pb::QuoteContext {
             quoted: Some(key),
-            participant: relay_jid(inbound.sender.clone()),
+            participant: inbound.sender.clone(),
         }),
         // The official client embeds the whole offer, not just its id, and the
         // edge already holds those bytes. Relayed here so the live shape

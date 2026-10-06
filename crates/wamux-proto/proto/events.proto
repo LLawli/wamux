@@ -91,9 +91,14 @@ message SubscribeRequest {
 // carries the jid the send was addressed to, while the recipient's own event
 // may name the same conversation by its `@lid` form. Neither is rewritten.
 message InboundMessage {
+  // #122: the four jid fields changed type, so each took a new number; an old
+  // client's string under the old number is an unknown field, never a misread Jid.
+  reserved 2, 3, 16, 17;
   MessageKey key = 1;
-  string chat = 2;
-  string sender = 3;
+  Jid chat = 21;
+  // Unset on an echo when the account has no jid of its own yet, and on a
+  // channel-history row, which names no sender.
+  Jid sender = 22;
   int64 timestamp = 4;
   string push_name = 5;
   string text = 6;
@@ -114,12 +119,12 @@ message InboundMessage {
   // The other-namespace form of the two ends, verbatim from the stanza: when
   // `sender` is a `@lid`, `sender_alt` is the phone jid the stanza carried (and
   // the reverse for a phone sender); `recipient_alt` is the same for the other
-  // end of a DM. Empty when the stanza carried none -- the core relays these,
+  // end of a DM. Unset when the stanza carried none -- the core relays these,
   // it never looks them up (that is ContactService.ResolveLidPn) and never
   // guesses. This is what makes a `@lid` chat identifiable with no round trip
   // (issue #1).
-  string sender_alt = 16;
-  string recipient_alt = 17;
+  Jid sender_alt = 23;
+  Jid recipient_alt = 24;
   // Set for a sticker PACK message (issue #58). `media` then carries the pack's
   // archive under media_type "sticker_pack"; this says what is inside it and
   // carries the thumbnail's own descriptor.
@@ -168,8 +173,9 @@ message StickerPackEntry {
 }
 
 message ReceiptEvent {
-  string chat = 1;
-  string sender = 2;
+  reserved 1, 2;  // #122: were `string chat` and `string sender`
+  Jid chat = 6;
+  Jid sender = 7;
   repeated string message_ids = 3;
   // Lowercase tokens: delivered|read|played plus the rarer read-self|
   // played-self|sender|retry|enc_rekey_retry|server-error|inactive|peer_msg|
@@ -179,8 +185,9 @@ message ReceiptEvent {
 }
 
 message UndecryptableEvent {
-  string chat = 1;
-  string sender = 2;
+  reserved 1, 2;  // #122: were `string chat` and `string sender`
+  Jid chat = 4;
+  Jid sender = 5;
   string reason = 3;
 }
 
@@ -194,36 +201,41 @@ message ConnectionStateChanged {
 // only one of them can answer is left absent on the other rather than filled
 // with a literal (issue #24).
 message PresenceUpdate {
-  string jid = 1;
+  reserved 1, 5;  // #122: were `string jid` and `string chat`
+  Jid jid = 6;
   // Present only on real presence. A chat state does not measure whether the
   // contact is online, so it carries no value here — it used to hardcode true.
   optional bool online = 2;
   int64 last_seen = 3;
   string chat_state = 4;            // composing|recording|paused|""
   // The conversation a chat state happened in: the group jid when somebody is
-  // typing in a group, the contact's own jid in a direct chat. Empty on real
+  // typing in a group, the contact's own jid in a direct chat. Unset on real
   // presence, which is not scoped to a conversation. Without it a group
   // "composing" and a DM "composing" are identical bytes (issue #24).
   // Relayed verbatim, so in a direct chat it is whichever namespace the stanza
   // used — measured live on 2026-09-11, that is the sender's `@lid`, equal to
   // `jid`. The core does not rewrite it onto the phone namespace; resolve it
   // with ContactService.ResolveLidPn if the edge files chats by number.
-  string chat = 5;
+  Jid chat = 7;
 }
 
 message GroupUpdate {
-  string group_jid = 1;
+  reserved 1;
+  reserved "group_jid";  // #122: was `string group_jid`
+  Jid group = 4;
   string kind = 2;
   bytes raw = 3;
 }
 
 message PushNameUpdate {
-  string jid = 1;
+  reserved 1;  // #122: was `string jid`
+  Jid jid = 3;
   string push_name = 2;
 }
 
 message ContactUpdate {
-  string jid = 1;
+  reserved 1;  // #122: was `string jid`
+  Jid jid = 4;
   string kind = 2;
   bytes raw = 3;
 }
@@ -246,7 +258,8 @@ message HistorySyncEvent {
 // `kind` distinguishes them and `raw` carries the full serde_json of the lib
 // struct so the edge decodes action details (e.g. the new mute timestamp).
 message AppStateUpdate {
-  string chat = 1;
+  reserved 1;  // #122: was `string chat`
+  Jid chat = 4;
   string kind = 2;   // archive|pin|mute|star|mark_read|delete_chat
   bytes raw = 3;
 }
@@ -262,8 +275,10 @@ message AppStateUpdate {
 message FavoritesChanged {
   // Chat JIDs in the phone's order, exactly as the phone sent them: no
   // normalization, so a legacy or LID spelling is the consumer's to handle.
-  // An entry the wire sent without an id is skipped; `raw` still carries it.
-  repeated string chats = 1;
+  // An entry the wire sent without an id, or with an empty one, is skipped;
+  // `raw` still carries it.
+  reserved 1;  // #122: was `repeated string chats`
+  repeated Jid chats = 5;
   int64 timestamp = 2;      // mutation time (ms)
   bool from_full_sync = 3;  // true when replayed by a full app-state sync
   bytes raw = 4;            // the serialized `wa.SyncActionValue.FavoritesAction`
@@ -279,7 +294,9 @@ message FavoritesChanged {
 // not zeroed. Counts are across every follower, the same numbers the history
 // page carries.
 message NewsletterLiveUpdate {
-  string newsletter_jid = 1;
+  reserved 1;
+  reserved "newsletter_jid";  // #122: was `string newsletter_jid`
+  Jid newsletter = 3;
   repeated NewsletterLiveUpdateMessage messages = 2;
 }
 
@@ -297,7 +314,8 @@ message NewsletterLiveUpdateMessage {
 // primitive; the edge composes any ring/answer policy. `call_id` is the
 // CallAction's id (distinct from the stanza id, which lives in `raw`).
 message CallEvent {
-  string from = 1;
+  reserved 1;  // #122: was `string from`
+  Jid from = 5;
   string call_id = 2;
   string action = 3;  // offer|offer_notice|pre_accept|accept|reject|terminate
   bytes raw = 4;
@@ -336,8 +354,9 @@ message ServerAckEvent {
   // Stanza class: "message", "receipt", "notification", "call", ... Empty when
   // the server omits it.
   string class = 2;
-  // Chat/entity the ack refers to; empty when absent or unparseable.
-  string from = 3;
+  // Chat/entity the ack refers to; unset when absent or unparseable.
+  reserved 3;  // #122: was `string from`
+  Jid from = 6;
   // Server timestamp (ms). For a message ack this is the authoritative send
   // time. 0 when the server omitted it.
   int64 timestamp = 4;
@@ -403,6 +422,9 @@ message OfflineSyncInterrupted {
 }
 
 message EventEnvelope {
+  // Stays a string (#122, decided 2026-10-05): it is not a jid, and no other
+  // uuid in the contract is a message (`AccountRef.uuid`, `Account.uuid`), so a
+  // wrapper here would be the one uuid shaped differently from the rest.
   string account_uuid = 1;
   int64 monotonic_seq = 2;
   int64 ts_unix_ms = 3;

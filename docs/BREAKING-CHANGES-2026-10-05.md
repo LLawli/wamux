@@ -130,3 +130,60 @@ requests) keep their shape; their jid spelling is #96.
 - Treat an unset `LidPnMapping.lid` / `.pn` as "no user part known" (it was an
   empty string), and an unset `ParticipantChange.phone_number` as "the server
   sent none".
+
+### 1c. `events.proto` (#122, closes #72)
+
+| Message | Before | After |
+|---|---|---|
+| `InboundMessage` | `string chat = 2` | `Jid chat = 21` |
+| `InboundMessage` | `string sender = 3` | `Jid sender = 22` |
+| `InboundMessage` | `string sender_alt = 16` | `Jid sender_alt = 23` |
+| `InboundMessage` | `string recipient_alt = 17` | `Jid recipient_alt = 24` |
+| `ReceiptEvent` | `string chat = 1` | `Jid chat = 6` |
+| `ReceiptEvent` | `string sender = 2` | `Jid sender = 7` |
+| `UndecryptableEvent` | `string chat = 1` | `Jid chat = 4` |
+| `UndecryptableEvent` | `string sender = 2` | `Jid sender = 5` |
+| `PresenceUpdate` | `string jid = 1` | `Jid jid = 6` |
+| `PresenceUpdate` | `string chat = 5` | `Jid chat = 7` |
+| `GroupUpdate` | `string group_jid = 1` | `Jid group = 4` |
+| `PushNameUpdate` | `string jid = 1` | `Jid jid = 3` |
+| `ContactUpdate` | `string jid = 1` | `Jid jid = 4` |
+| `AppStateUpdate` | `string chat = 1` | `Jid chat = 4` |
+| `FavoritesChanged` | `repeated string chats = 1` | `repeated Jid chats = 5` |
+| `NewsletterLiveUpdate` | `string newsletter_jid = 1` | `Jid newsletter = 3` |
+| `CallEvent` | `string from = 1` | `Jid from = 5` |
+| `ServerAckEvent` | `string from = 3` | `Jid from = 6` |
+
+`InboundMessage` is also the row of channel history (`NewsletterMessage.message`,
+GetNewsletterMessages), so its four fields change there too.
+
+**`EventEnvelope.account_uuid` stays a `string`.** It is not a jid, and no other
+uuid in the contract is a message (`AccountRef.uuid`, `Account.uuid`), so it
+keeps the shape every other uuid has.
+
+**What does not change:** which events are emitted and what they carry. Every
+value is the one the string field held, verbatim: a `@lid` sender is still a
+`@lid`, a chat state in a direct chat still names the sender's own jid, and a
+favorites list keeps the phone's order and spelling. The JSON in `raw`
+(`GroupUpdate`, `ContactUpdate`, `AppStateUpdate`, `CallEvent`) keeps its
+shape; typing it is #74.
+
+**What the edge has to do:**
+
+- Read `.value` of each of these fields, and use `group` and `newsletter` where
+  it read `group_jid` and `newsletter_jid`.
+- Check presence where it checked for an empty string. These are unset when the
+  core has no value: `sender_alt` and `recipient_alt` when the stanza carried
+  none, `PresenceUpdate.chat` on real presence (a chat state always has one),
+  `ServerAckEvent.from` when the server sent none or sent one that did not
+  parse, `InboundMessage.sender` on the echo of a send made before the account
+  had a jid of its own, and `sender` on a channel-history row.
+- Expect a favorite with an empty id to be skipped, as one with no id already
+  was. `raw` still carries every entry.
+- An edge that is not updated still decodes every event, and reads each of
+  these fields as empty: the old number is unknown to the new contract and the
+  new one is unknown to the old edge.
+
+With this section, every field of the contract that carries a jid is the `Jid`
+message. `scripts/check-proto-jids.py` keeps it that way: there is no list of
+exceptions, so a new `string` field named for a jid fails CI.

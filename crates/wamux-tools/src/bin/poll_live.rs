@@ -35,8 +35,8 @@ use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux_tools::delivery::{EventTap, judge_send};
 use wamux_tools::live_env::{
-    account_ref_from, delivery_window_from, live_dest_from, process_env, refuse_own_number,
-    socket_path_from,
+    account_ref_from, delivery_window_from, jid_text_of, live_dest_from, process_env,
+    refuse_own_number, socket_path_from,
 };
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
@@ -216,8 +216,8 @@ async fn collect_votes(
             };
             println!(
                 "[vote] sender={} alt={} -> voting as {}",
-                inbound.sender,
-                inbound.sender_alt,
+                jid_text_of(&inbound.sender),
+                jid_text_of(&inbound.sender_alt),
                 vote.voter.as_ref().map_or("", |voter| voter.value.as_str())
             );
             votes.push(vote);
@@ -303,8 +303,8 @@ fn vote_in(inbound: &pb::InboundMessage, poll_id: &str, creator: &str) -> Option
     Some(pb::PollVote {
         voter: relay_jid(same_namespace_as(
             creator,
-            &inbound.sender,
-            &inbound.sender_alt,
+            jid_text_of(&inbound.sender),
+            jid_text_of(&inbound.sender_alt),
         )),
         enc_payload: vote.enc_payload.clone().unwrap_or_default(),
         enc_iv: vote.enc_iv.clone().unwrap_or_default(),

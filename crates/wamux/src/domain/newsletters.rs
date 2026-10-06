@@ -216,7 +216,7 @@ fn row_to_inbound(row: &NewsletterMessage, chat: &Jid) -> pb::InboundMessage {
             from_me: row.is_sender,
             participant: None,
         }),
-        chat: chat_text.clone(),
+        chat: relay_jid(chat_text.clone()),
         timestamp: millis_from_seconds(row.timestamp),
         raw_message: row
             .message

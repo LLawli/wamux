@@ -67,15 +67,15 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             .map(|m| Pb::Message(map_message(&m.message, &m.info)))
             .collect(),
         Event::Receipt(r) => one(Pb::Receipt(pb::ReceiptEvent {
-            chat: r.source.chat.to_string(),
-            sender: r.source.sender.to_string(),
+            chat: lib_jid(&r.source.chat),
+            sender: lib_jid(&r.source.sender),
             message_ids: r.message_ids.iter().map(|m| m.to_string()).collect(),
             r#type: receipt_type_label(&r.r#type),
             timestamp: r.timestamp.timestamp_millis(),
         })),
         Event::UndecryptableMessage(u) => one(Pb::Undecryptable(pb::UndecryptableEvent {
-            chat: u.info.source.chat.to_string(),
-            sender: u.info.source.sender.to_string(),
+            chat: lib_jid(&u.info.source.chat),
+            sender: lib_jid(&u.info.source.sender),
             reason: format!("{:?}", u.unavailable_type),
         })),
 
@@ -84,25 +84,26 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // the other half empty instead of inventing one (issue #24) — `online`
         // used to be a hardcoded true on every chat state.
         Event::Presence(p) => one(Pb::Presence(pb::PresenceUpdate {
-            jid: p.from.to_string(),
+            jid: lib_jid(&p.from),
             online: Some(!p.unavailable),
             last_seen: p.last_seen.map(|t| t.timestamp()).unwrap_or(0),
             chat_state: String::new(),
-            chat: String::new(),
+            // Unset, not empty: a real presence has no chat (#122).
+            chat: None,
         })),
         // `source.chat` is what tells a group "composing" from a DM one; both
         // carry the same sender, so dropping it left the edge unable to draw the
         // indicator in the conversation it belongs to (issue #24).
         Event::ChatPresence(c) => one(Pb::Presence(pb::PresenceUpdate {
-            jid: c.source.sender.to_string(),
+            jid: lib_jid(&c.source.sender),
             online: None,
             last_seen: 0,
             chat_state: chat_state_label(c.state, c.media).to_string(),
-            chat: c.source.chat.to_string(),
+            chat: lib_jid(&c.source.chat),
         })),
 
         Event::GroupUpdate(g) => one(Pb::Group(pb::GroupUpdate {
-            group_jid: g.group_jid.to_string(),
+            group: lib_jid(&g.group_jid),
             kind: "group_update".to_string(),
             raw: serde_json::to_vec(g).unwrap_or_default(),
         })),
@@ -111,7 +112,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // carried one. `pb::PushNameUpdate` stays in the proto so the contract
         // does not break; nothing emits it, exactly as before the bump.
         Event::ContactUpdate(c) => one(Pb::Contact(pb::ContactUpdate {
-            jid: c.jid.to_string(),
+            jid: lib_jid(&c.jid),
             kind: "contact_update".to_string(),
             raw: serde_json::to_vec(c).unwrap_or_default(),
         })),
@@ -126,16 +127,12 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // chat + a kind token, with the action detail in `raw`. StarUpdate names
         // its chat `chat_jid` (it points at a message, not the chat itself), so
         // it can't share the `jid`-projecting helper.
-        Event::ArchiveUpdate(s) => one(Pb::AppState(app_state(s.jid.to_string(), "archive", s))),
-        Event::PinUpdate(s) => one(Pb::AppState(app_state(s.jid.to_string(), "pin", s))),
-        Event::MuteUpdate(s) => one(Pb::AppState(app_state(s.jid.to_string(), "mute", s))),
-        Event::StarUpdate(s) => one(Pb::AppState(app_state(s.chat_jid.to_string(), "star", s))),
-        Event::MarkChatAsReadUpdate(s) => {
-            one(Pb::AppState(app_state(s.jid.to_string(), "mark_read", s)))
-        }
-        Event::DeleteChatUpdate(s) => {
-            one(Pb::AppState(app_state(s.jid.to_string(), "delete_chat", s)))
-        }
+        Event::ArchiveUpdate(s) => one(Pb::AppState(app_state(&s.jid, "archive", s))),
+        Event::PinUpdate(s) => one(Pb::AppState(app_state(&s.jid, "pin", s))),
+        Event::MuteUpdate(s) => one(Pb::AppState(app_state(&s.jid, "mute", s))),
+        Event::StarUpdate(s) => one(Pb::AppState(app_state(&s.chat_jid, "star", s))),
+        Event::MarkChatAsReadUpdate(s) => one(Pb::AppState(app_state(&s.jid, "mark_read", s))),
+        Event::DeleteChatUpdate(s) => one(Pb::AppState(app_state(&s.jid, "delete_chat", s))),
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),
@@ -156,7 +153,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::ServerAck(a) => one(Pb::ServerAck(pb::ServerAckEvent {
             id: a.id.clone(),
             class: a.class.clone().unwrap_or_default(),
-            from: a.from.as_ref().map(|j| j.to_string()).unwrap_or_default(),
+            from: optional_lib_jid(a.from.as_ref()),
             timestamp: a.timestamp.map(|t| t.timestamp_millis()).unwrap_or(0),
             error: a.error.clone().unwrap_or_default(),
         })),
@@ -273,9 +270,11 @@ fn chat_state_label(state: ChatPresence, media: ChatPresenceMedia) -> &'static s
 /// concrete update type so all six variants share the `serde_json` projection;
 /// the caller passes the already-extracted chat jid (named `jid` on five of
 /// them, `chat_jid` on StarUpdate).
-fn app_state<T: Serialize>(chat: String, kind: &str, update: &T) -> pb::AppStateUpdate {
+fn app_state<T: Serialize>(chat: &Jid, kind: &str, update: &T) -> pb::AppStateUpdate {
     pb::AppStateUpdate {
-        chat,
+        // A lib Jid always renders non-empty, so this is set; the field is a
+        // message only because every jid on the wire is (#122).
+        chat: lib_jid(chat),
         kind: kind.to_string(),
         raw: serde_json::to_vec(update).unwrap_or_default(),
     }
@@ -286,11 +285,12 @@ fn app_state<T: Serialize>(chat: String, kind: &str, update: &T) -> pb::AppState
 /// empty string a consumer would take for a chat. `raw` keeps every entry.
 fn favorites_changed(update: &wacore::types::events::FavoritesUpdate) -> pb::FavoritesChanged {
     pb::FavoritesChanged {
+        // An absent or empty id is dropped, never an unset Jid in the list (#122).
         chats: update
             .action
             .favorites
             .iter()
-            .filter_map(|f| f.id.clone())
+            .filter_map(|f| f.id.clone().and_then(relay_jid))
             .collect(),
         timestamp: update.timestamp.timestamp_millis(),
         from_full_sync: update.from_full_sync,
@@ -303,7 +303,7 @@ fn newsletter_live_update(
     update: &wacore::types::events::NewsletterLiveUpdate,
 ) -> pb::NewsletterLiveUpdate {
     pb::NewsletterLiveUpdate {
-        newsletter_jid: update.newsletter_jid.to_string(),
+        newsletter: lib_jid(&update.newsletter_jid),
         messages: update.messages.iter().map(live_update_message).collect(),
     }
 }
@@ -337,7 +337,7 @@ fn live_update_message(
 /// from the stanza id, which the edge reads from `raw`).
 fn map_call(call: &IncomingCall) -> pb::CallEvent {
     pb::CallEvent {
-        from: call.from.to_string(),
+        from: lib_jid(&call.from),
         call_id: call.action.call_id().to_string(),
         action: call_action_label(&call.action),
         raw: serde_json::to_vec(call).unwrap_or_default(),
@@ -386,8 +386,8 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
 
     let mut out = pb::InboundMessage {
         key: Some(key),
-        chat: chat.clone(),
-        sender,
+        chat: relay_jid(chat.clone()),
+        sender: relay_jid(sender),
         timestamp: info.timestamp.timestamp_millis(),
         // main made this a `CompactString` (#30): a name usually short enough
         // to live inline rather than heap-allocated. The wire contract still
@@ -397,8 +397,10 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         // (sender_pn/participant_pn/participant_lid). Dropping them forced the
         // edge to poll for an identity the event itself carried (issue #1);
         // relaying them is verbatim, no lookup and no guess.
-        sender_alt: jid_or_empty(info.source.sender_alt.as_ref()),
-        recipient_alt: jid_or_empty(info.source.recipient_alt.as_ref()),
+        // Unset when the stanza carried no alt jid, instead of an empty string
+        // a consumer would have to know to ignore (#122).
+        sender_alt: optional_lib_jid(info.source.sender_alt.as_ref()),
+        recipient_alt: optional_lib_jid(info.source.recipient_alt.as_ref()),
         raw_message: msg.encode_to_vec(),
         ..Default::default()
     };
@@ -505,8 +507,9 @@ pub fn map_sent(
 ) -> pb::InboundMessage {
     let mut out = pb::InboundMessage {
         key: Some(key),
-        chat: chat.to_string(),
-        sender: sender.to_string(),
+        chat: relay_jid(chat),
+        // Unset while the account has no jid yet (#122).
+        sender: relay_jid(sender),
         timestamp: timestamp_ms,
         raw_message: msg.encode_to_vec(),
         ..Default::default()
@@ -515,9 +518,14 @@ pub fn map_sent(
     out
 }
 
-/// Render an optional jid for a proto3 string field (absent == empty).
-fn jid_or_empty(jid: Option<&Jid>) -> String {
-    jid.map(|j| j.to_string()).unwrap_or_default()
+/// A lib jid as the wire message, verbatim (#122).
+fn lib_jid(jid: &Jid) -> Option<pb::Jid> {
+    relay_jid(jid.to_string())
+}
+
+/// An optional lib jid: absent is an unset field, never an empty value (#122).
+fn optional_lib_jid(jid: Option<&Jid>) -> Option<pb::Jid> {
+    jid.and_then(lib_jid)
 }
 
 /// Project a wa `MessageKey` into the proto one (proto3 empty == lib `None`).
@@ -664,6 +672,9 @@ mod action_timestamp_tests;
 #[cfg(test)]
 #[path = "event_mapping_favorites_tests.rs"]
 mod favorites_tests;
+#[cfg(test)]
+#[path = "event_mapping_jid_tests.rs"]
+mod jid_tests;
 #[cfg(test)]
 #[path = "event_mapping_live_update_tests.rs"]
 mod live_update_tests;

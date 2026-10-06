@@ -23,7 +23,7 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
-use wamux_tools::live_env::{account_ref_from, process_env, socket_path_from};
+use wamux_tools::live_env::{account_ref_from, jid_text_of, process_env, socket_path_from};
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected_with};
 
@@ -171,7 +171,7 @@ async fn capture_anchor(
             && !key.id.is_empty()
         {
             return Some(Anchor {
-                chat: m.chat,
+                chat: jid_text_of(&m.chat).to_string(),
                 msg_id: key.id,
                 from_me: key.from_me,
                 ts_ms: m.timestamp,

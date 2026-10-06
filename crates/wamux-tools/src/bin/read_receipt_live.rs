@@ -37,8 +37,8 @@ use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux_tools::delivery::{EventTap, judge_send};
 use wamux_tools::live_env::{
-    account_ref_from, delivery_window_from, live_dest_from, process_env, refuse_own_number,
-    socket_path_from, user_of,
+    account_ref_from, delivery_window_from, jid_text_of, live_dest_from, process_env,
+    refuse_own_number, socket_path_from, user_of,
 };
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
@@ -112,19 +112,21 @@ async fn main() -> anyhow::Result<ExitCode> {
         return Ok(report.finish());
     };
     let message_id = inbound.key.clone().map(|key| key.id).unwrap_or_default();
-    println!("[reply] from {} id={message_id}", inbound.sender);
+    println!(
+        "[reply] from {} id={message_id}",
+        jid_text_of(&inbound.sender)
+    );
 
     // A receipt names whose messages are being acknowledged. In a DM the chat IS
     // the author, so the field stays absent; a group needs it (issue #20).
-    let sender = inbound.chat.ends_with("@g.us").then(|| pb::Jid {
-        value: inbound.sender.clone(),
-    });
+    let sender = jid_text_of(&inbound.chat)
+        .ends_with("@g.us")
+        .then(|| inbound.sender.clone())
+        .flatten();
     let read = messaging
         .mark_read(pb::MarkReadRequest {
             account: Some(acct.clone()),
-            chat: Some(pb::Jid {
-                value: inbound.chat.clone(),
-            }),
+            chat: inbound.chat.clone(),
             message_ids: vec![message_id],
             sender,
         })
@@ -136,9 +138,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let synced = messaging
         .mark_chat_read(pb::MarkReadRequest {
             account: Some(acct.clone()),
-            chat: Some(pb::Jid {
-                value: inbound.chat.clone(),
-            }),
+            chat: inbound.chat.clone(),
             ..Default::default()
         })
         .await;
@@ -165,8 +165,8 @@ fn reply_from<'a>(envelope: &'a pb::EventEnvelope, wanted: &str) -> Option<&'a p
     let from_me = inbound.key.as_ref().is_some_and(|key| key.from_me);
     // Match on the user part: the chat may arrive `@lid` while the prompt
     // went to a phone jid, and either form is the same conversation.
-    let same_chat = user_of(&inbound.chat) == wanted
-        || user_of(&inbound.sender_alt) == wanted
-        || user_of(&inbound.sender) == wanted;
+    let same_chat = user_of(jid_text_of(&inbound.chat)) == wanted
+        || user_of(jid_text_of(&inbound.sender_alt)) == wanted
+        || user_of(jid_text_of(&inbound.sender)) == wanted;
     (!from_me && same_chat && !inbound.text.is_empty()).then_some(inbound)
 }

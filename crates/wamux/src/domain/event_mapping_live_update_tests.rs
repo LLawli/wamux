@@ -59,7 +59,13 @@ fn mapped(event: &Event) -> pb::NewsletterLiveUpdate {
 #[test]
 fn a_live_push_maps_its_channel_and_every_message() {
     let update = mapped(&captured_push());
-    assert_eq!(update.newsletter_jid, CHANNEL);
+    // #122: `newsletter_jid` became `Jid newsletter`.
+    assert_eq!(
+        update.newsletter,
+        Some(pb::Jid {
+            value: CHANNEL.to_string()
+        })
+    );
     let ids: Vec<u64> = update.messages.iter().map(|m| m.server_id).collect();
     assert_eq!(ids, vec![777, 778]);
 }

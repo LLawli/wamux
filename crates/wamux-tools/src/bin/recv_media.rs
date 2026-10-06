@@ -13,7 +13,7 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::media_service_client::MediaServiceClient;
-use wamux_tools::live_env::{account_ref_from, process_env, socket_path_from};
+use wamux_tools::live_env::{account_ref_from, jid_text_of, process_env, socket_path_from};
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 
@@ -63,7 +63,7 @@ async fn wait_for_media(
                 };
                 println!(
                     "[recv] from={} text={:?} media={:?}",
-                    m.sender,
+                    jid_text_of(&m.sender),
                     m.text,
                     m.media.as_ref().map(|d| &d.media_type)
                 );

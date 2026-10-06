@@ -1,4 +1,4 @@
-"""#72 / #120: scripts/check-proto-jids.py fails CI when a field of the socket
+"""#72 / #120 / #122: scripts/check-proto-jids.py fails CI when a field of the socket
 contract carries a jid as a bare `string` instead of the `Jid` message.
 
 Run: python3 -m unittest discover -s scripts/tests -v
@@ -15,30 +15,19 @@ CHECK = REPO / "scripts" / "check-proto-jids.py"
 PROTO = "crates/wamux-proto/proto"
 
 
-def load_pending():
+def load_check():
     spec = importlib.util.spec_from_file_location("check_proto_jids", CHECK)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.PENDING
+    return module
 
 
 def run_check(root):
     return subprocess.run([str(CHECK), "--root", str(root)], capture_output=True, text=True, check=False)
 
 
-def pending_files():
-    """Every pending field, still a string, in a file of its own name."""
-    files: dict[str, str] = {}
-    for name in load_pending():
-        file, qualified = name.split(":")
-        message, field = qualified.split(".")
-        files.setdefault(file, "")
-        files[file] += f"message {message} {{\n  string {field} = 1;\n}}\n"
-    return files
-
-
 def clean_tree():
-    files = pending_files()
+    files: dict[str, str] = {}
     for i in range(8):
         files[f"clean_{i}.proto"] = 'syntax = "proto3";\nmessage Empty {}\n'
     files["common.proto"] = (
@@ -92,16 +81,17 @@ class CheckProtoJids(unittest.TestCase):
         files["clean_2.proto"] += "message Outer {\n  message Inner {}\n  string participant = 1;\n}\n"
         self.assert_reported_failure(self.check(files), "Outer.participant")
 
-    def test_a_pending_field_that_was_migrated_fails(self):
+    # #122 migrated the last pending field: no list of exceptions is left for a
+    # new string jid to hide in, and the summary no longer mentions one.
+    def test_nothing_is_pending_any_more(self):
+        self.assertFalse(hasattr(load_check(), "PENDING"))
+        result = run_check(REPO)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("pending", result.stdout)
+        # The events fields were the last ones: one of them as a string fails.
         files = clean_tree()
-        name = sorted(load_pending())[0]
-        file, qualified = name.split(":")
-        message, field = qualified.split(".")
-        files[file] = files[file].replace(
-            f"message {message} {{\n  string {field} = 1;\n}}\n",
-            f"message {message} {{\n  Jid {field} = 2;\n}}\n",
-        )
-        self.assert_reported_failure(self.check(files), f"{name} is no longer a string jid")
+        files["events.proto"] = "message ServerAckEvent {\n  string from = 3;\n}\n"
+        self.assert_reported_failure(self.check(files), "ServerAckEvent.from")
 
     def test_a_scan_that_reads_too_few_files_fails(self):
         self.assert_reported_failure(self.check({"one.proto": "message Empty {}\n"}), "expected at least")
