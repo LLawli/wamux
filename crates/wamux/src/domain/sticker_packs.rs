@@ -61,8 +61,8 @@ pub(crate) fn sticker_pack_info(pack: &StickerPackMessage) -> pb::StickerPackInf
         pack_size: pack.sticker_pack_size.unwrap_or(0),
         origin: pack
             .sticker_pack_origin
-            .map(origin_label)
-            .unwrap_or_default(),
+            .map(origin_of)
+            .unwrap_or(pb::StickerPackOrigin::Unspecified) as i32,
         thumbnail: thumbnail_descriptor(pack),
         thumbnail_width: pack.thumbnail_width.unwrap_or(0),
         thumbnail_height: pack.thumbnail_height.unwrap_or(0),
@@ -80,17 +80,16 @@ fn sticker_pack_entry(sticker: &Sticker) -> pb::StickerPackEntry {
     }
 }
 
-/// Lowercase wire tokens, the same convention as `ReceiptEvent.type`. The enum
-/// is closed in the waproto, so an unknown number never reaches here: buffa's
-/// decoder leaves the field `None` when `from_i32` fails, so it relays empty,
-/// and the number survives only in `raw_message`.
-fn origin_label(origin: StickerPackOrigin) -> String {
+/// The enum is closed in the waproto, so an unknown number never reaches here:
+/// buffa's decoder leaves the field `None` when `from_i32` fails, so it relays
+/// UNSPECIFIED, and the number survives only in `raw_message`. The match lives
+/// here because wacore does not re-export the waproto (#126).
+fn origin_of(origin: StickerPackOrigin) -> pb::StickerPackOrigin {
     match origin {
-        StickerPackOrigin::FIRST_PARTY => "first_party",
-        StickerPackOrigin::THIRD_PARTY => "third_party",
-        StickerPackOrigin::USER_CREATED => "user_created",
+        StickerPackOrigin::FIRST_PARTY => pb::StickerPackOrigin::FirstParty,
+        StickerPackOrigin::THIRD_PARTY => pb::StickerPackOrigin::ThirdParty,
+        StickerPackOrigin::USER_CREATED => pb::StickerPackOrigin::UserCreated,
     }
-    .to_string()
 }
 
 #[cfg(test)]

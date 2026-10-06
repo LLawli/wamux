@@ -187,3 +187,85 @@ shape; typing it is #74.
 With this section, every field of the contract that carries a jid is the `Jid`
 message. `scripts/check-proto-jids.py` keeps it that way: there is no list of
 exceptions, so a new `string` field named for a jid fails CI.
+
+## 2. Enums with a raw fallback instead of free strings and `Debug` (#73)
+
+Before, enum-like values travelled as free strings whose valid values lived in
+comments, and three of them were the Rust `Debug` output of a library value, so
+a rename in whatsapp-rust silently changed the contract. Each one becomes a
+proto enum.
+
+**The rules, the same for every field:**
+
+- **`*_UNSPECIFIED = 0`** means the event has no value for the field (a real
+  presence has no chat state, a sticker pack may carry no origin).
+- **`*_UNKNOWN = 1`** means a value the library hands over that wamux does not
+  name. Where the original survives, a raw field next to it carries it, set only
+  on `UNKNOWN`: `string *_raw` for a token, `int32 *_code` for a numeric server
+  code. Where the library's set is closed there is no raw field, and `UNKNOWN`
+  is either the library's own "unknown" or never emitted (each enum says which).
+- **A retyped field takes a new number,** and the old one is `reserved`. A
+  string and an enum do not even share a wire type, so under the old number an
+  old edge would fail to decode the event.
+- Read the enum, never its number: values are named, and the numbers are not
+  the server's codes.
+
+### 2a. `events.proto` (#126)
+
+| Message | Before | After |
+|---|---|---|
+| `ReceiptEvent` | `string type = 4` | `ReceiptType type = 8`, `string type_raw = 9` |
+| `PresenceUpdate` | `string chat_state = 4` | `ChatState chat_state = 8` |
+| `AppStateUpdate` | `string kind = 2` | `AppStateKind kind = 5` |
+| `CallEvent` | `string action = 3` | `CallActionKind action = 6`, `string action_raw = 7` |
+| `StickerPackInfo` | `string origin = 8` | `StickerPackOrigin origin = 12` |
+| `UndecryptableEvent` | `string reason = 3` (`Debug`) | `UnavailableReason reason = 6` |
+| `ConnectionStateChanged` | `string detail = 2` (`Debug`) | `LoggedOutInfo logged_out = 3`, `TemporaryBanInfo ban = 4` |
+
+Old values to new ones:
+
+- **`ReceiptEvent.type`:** `delivered` → `RECEIPT_TYPE_DELIVERED`, `read` →
+  `READ`, `played` → `PLAYED`, `read-self` → `READ_SELF`, `played-self` →
+  `PLAYED_SELF`, `sender` → `SENDER`, `retry` → `RETRY`, `enc_rekey_retry` →
+  `ENC_REKEY_RETRY`, `server-error` → `SERVER_ERROR`, `inactive` → `INACTIVE`,
+  `peer_msg` → `PEER_MSG`, `hist_sync` → `HISTORY_SYNC`, and `sent` (which no
+  comment listed) → `SENT`. Any other token, which used to relay verbatim, is
+  `RECEIPT_TYPE_UNKNOWN` with the token in `type_raw`.
+- **`PresenceUpdate.chat_state`:** `composing`, `recording`, `paused` →
+  `CHAT_STATE_COMPOSING`, `RECORDING`, `PAUSED`; `""` (real presence) →
+  `CHAT_STATE_UNSPECIFIED`.
+- **`AppStateUpdate.kind`:** `archive`, `pin`, `mute`, `star`, `mark_read`,
+  `delete_chat` → `APP_STATE_KIND_ARCHIVE` ... `DELETE_CHAT`.
+- **`CallEvent.action`:** `offer`, `offer_notice`, `pre_accept`, `accept`,
+  `reject`, `terminate` → `CALL_ACTION_KIND_OFFER` ... `TERMINATE`. The eight
+  actions that used to relay as the library's wire tag are named too:
+  `transport`, `relaylatency` (`RELAY_LATENCY`), `video` (`VIDEO_STATE`),
+  `group_update`, `enc_rekey`, `waiting_room_update`, `user_action`
+  (`RAISE_HAND`), `screen_share`. One the library adds later is
+  `CALL_ACTION_KIND_UNKNOWN` with its wire tag in `action_raw`.
+- **`StickerPackInfo.origin`:** `first_party`, `third_party`, `user_created` →
+  `STICKER_PACK_ORIGIN_FIRST_PARTY` ... `USER_CREATED`; `""` → `UNSPECIFIED`.
+- **`UndecryptableEvent.reason`:** `ViewOnce`, `Hosted`, `Bot` →
+  `UNAVAILABLE_REASON_VIEW_ONCE`, `HOSTED`, `BOT`; `Unknown` →
+  `UNAVAILABLE_REASON_UNKNOWN`.
+- **`ConnectionStateChanged.detail`** is gone. On `LOGGED_OUT`, `logged_out`
+  carries `reason` (a `LogoutReason`, the server's `<failure>` codes: `401` is
+  `LOGOUT_REASON_LOGGED_OUT`, `403` is `ACCOUNT_LOCKED`, and so on; each value's
+  code is in `events.proto`). On `BANNED`, `ban` carries `reason` (a
+  `BanReason`), `expire_seconds` (how long the ban lasts, not a deadline),
+  `message` and `url`. A code the library does not name is `*_UNKNOWN` with the
+  number in `reason_code`, where it used to read `Unknown(416)` inside `detail`.
+  Both are unset in every other state, where `detail` was `""`.
+
+**What does not change:** which events are emitted, and every value they relay.
+`RawEvent.kind` stays a string, because it is the catch-all for a library event
+wamux does not know; `ServerAckEvent.class` stays a string too, because it is
+the server's open set.
+
+**What the edge has to do:**
+
+- Compare against the enum values where it compared strings, and read
+  `type_raw` / `action_raw` / `reason_code` only when the value is `UNKNOWN`.
+- Read the logout and ban details from `logged_out` / `ban` instead of parsing
+  `detail`.
+- Treat `UNSPECIFIED` as "no value" where it treated `""` that way.

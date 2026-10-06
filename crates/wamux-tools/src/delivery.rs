@@ -42,7 +42,11 @@ pub fn send_reached_phone(result: &pb::SendResult) -> Result<String, String> {
 
 /// Receipt types that prove the message reached the recipient. `sender`,
 /// `retry`, `read-self` and `server-error` say nothing of the kind.
-const DELIVERY_RECEIPT_TYPES: [&str; 3] = ["delivered", "read", "played"];
+const DELIVERY_RECEIPT_TYPES: [pb::ReceiptType; 3] = [
+    pb::ReceiptType::Delivered,
+    pb::ReceiptType::Read,
+    pb::ReceiptType::Played,
+];
 
 /// Whether `envelope` is a receipt that proves `message_id` reached the
 /// recipient: `delivered`, or the later `read` / `played`, carrying the id.
@@ -50,7 +54,7 @@ pub fn is_delivery_receipt(envelope: &pb::EventEnvelope, message_id: &str) -> bo
     let Some(pb::event_envelope::Event::Receipt(receipt)) = &envelope.event else {
         return false;
     };
-    DELIVERY_RECEIPT_TYPES.contains(&receipt.r#type.as_str())
+    DELIVERY_RECEIPT_TYPES.contains(&receipt.r#type())
         && receipt.message_ids.iter().any(|id| id == message_id)
 }
 

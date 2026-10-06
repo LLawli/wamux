@@ -5,10 +5,13 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use wacore::types::call::{CallAction, IncomingCall};
-use wacore::types::events::Event;
+use wacore::types::call::IncomingCall;
+use wacore::types::events::{ConnectFailureReason, Event, Receipt, TemporaryBan};
 use wacore::types::message::MessageInfo;
-use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
+use wamux_types::event_enums::{
+    ban_reason_of, call_action_of, chat_state_of, logout_reason_of, receipt_type_of,
+    unavailable_reason_of,
+};
 use wamux_types::{MediaKind, relay_jid};
 use whatsapp_rust::Jid;
 use whatsapp_rust::buffa::Message as _;
@@ -26,13 +29,10 @@ use crate::proto::v1 as pb;
 pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
     use pb::event_envelope::Event as Pb;
     match event {
-        Event::Connected(_) => one(connection(pb::ConnectionState::Connected, "")),
-        Event::Disconnected(_) => one(connection(pb::ConnectionState::Disconnected, "")),
-        Event::LoggedOut(l) => one(connection(
-            pb::ConnectionState::LoggedOut,
-            &format!("{:?}", l.reason),
-        )),
-        Event::TemporaryBan(b) => one(connection(pb::ConnectionState::Banned, &format!("{b:?}"))),
+        Event::Connected(_) => one(connection(pb::ConnectionState::Connected)),
+        Event::Disconnected(_) => one(connection(pb::ConnectionState::Disconnected)),
+        Event::LoggedOut(l) => one(logged_out(l.reason)),
+        Event::TemporaryBan(b) => one(temporary_ban(b)),
 
         // 0.7 sealed every payload into its own struct, so these are tuple
         // variants now instead of struct variants with a `code` field.
@@ -66,17 +66,11 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             .iter()
             .map(|m| Pb::Message(map_message(&m.message, &m.info)))
             .collect(),
-        Event::Receipt(r) => one(Pb::Receipt(pb::ReceiptEvent {
-            chat: lib_jid(&r.source.chat),
-            sender: lib_jid(&r.source.sender),
-            message_ids: r.message_ids.iter().map(|m| m.to_string()).collect(),
-            r#type: receipt_type_label(&r.r#type),
-            timestamp: r.timestamp.timestamp_millis(),
-        })),
+        Event::Receipt(r) => one(Pb::Receipt(receipt_event(r))),
         Event::UndecryptableMessage(u) => one(Pb::Undecryptable(pb::UndecryptableEvent {
             chat: lib_jid(&u.info.source.chat),
             sender: lib_jid(&u.info.source.sender),
-            reason: format!("{:?}", u.unavailable_type),
+            reason: unavailable_reason_of(u.unavailable_type) as i32,
         })),
 
         // The two arms fill disjoint halves of PresenceUpdate: presence answers
@@ -87,7 +81,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             jid: lib_jid(&p.from),
             online: Some(!p.unavailable),
             last_seen: p.last_seen.map(|t| t.timestamp()).unwrap_or(0),
-            chat_state: String::new(),
+            chat_state: pb::ChatState::Unspecified as i32,
             // Unset, not empty: a real presence has no chat (#122).
             chat: None,
         })),
@@ -98,7 +92,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             jid: lib_jid(&c.source.sender),
             online: None,
             last_seen: 0,
-            chat_state: chat_state_label(c.state, c.media).to_string(),
+            chat_state: chat_state_of(c.state, c.media) as i32,
             chat: lib_jid(&c.source.chat),
         })),
 
@@ -127,12 +121,28 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // chat + a kind token, with the action detail in `raw`. StarUpdate names
         // its chat `chat_jid` (it points at a message, not the chat itself), so
         // it can't share the `jid`-projecting helper.
-        Event::ArchiveUpdate(s) => one(Pb::AppState(app_state(&s.jid, "archive", s))),
-        Event::PinUpdate(s) => one(Pb::AppState(app_state(&s.jid, "pin", s))),
-        Event::MuteUpdate(s) => one(Pb::AppState(app_state(&s.jid, "mute", s))),
-        Event::StarUpdate(s) => one(Pb::AppState(app_state(&s.chat_jid, "star", s))),
-        Event::MarkChatAsReadUpdate(s) => one(Pb::AppState(app_state(&s.jid, "mark_read", s))),
-        Event::DeleteChatUpdate(s) => one(Pb::AppState(app_state(&s.jid, "delete_chat", s))),
+        Event::ArchiveUpdate(s) => one(Pb::AppState(app_state(
+            &s.jid,
+            pb::AppStateKind::Archive,
+            s,
+        ))),
+        Event::PinUpdate(s) => one(Pb::AppState(app_state(&s.jid, pb::AppStateKind::Pin, s))),
+        Event::MuteUpdate(s) => one(Pb::AppState(app_state(&s.jid, pb::AppStateKind::Mute, s))),
+        Event::StarUpdate(s) => one(Pb::AppState(app_state(
+            &s.chat_jid,
+            pb::AppStateKind::Star,
+            s,
+        ))),
+        Event::MarkChatAsReadUpdate(s) => one(Pb::AppState(app_state(
+            &s.jid,
+            pb::AppStateKind::MarkRead,
+            s,
+        ))),
+        Event::DeleteChatUpdate(s) => one(Pb::AppState(app_state(
+            &s.jid,
+            pb::AppStateKind::DeleteChat,
+            s,
+        ))),
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),
@@ -227,55 +237,16 @@ fn history_sync(h: &wacore::types::events::LazyHistorySync) -> pb::event_envelop
     }
 }
 
-/// Receipt types relay as the lowercase tokens `ReceiptEvent.type` documents
-/// (code-review 2026-06-11: the old `{:?}` Debug casing — "Read" — broke any
-/// edge written against the proto contract). `Other` already carries the raw
-/// stanza attribute, so it relays verbatim.
-fn receipt_type_label(receipt: &ReceiptType) -> String {
-    match receipt {
-        ReceiptType::Delivered => "delivered".to_string(),
-        ReceiptType::Sender => "sender".to_string(),
-        ReceiptType::Retry => "retry".to_string(),
-        ReceiptType::EncRekeyRetry => "enc_rekey_retry".to_string(),
-        ReceiptType::Read => "read".to_string(),
-        ReceiptType::ReadSelf => "read-self".to_string(),
-        ReceiptType::Played => "played".to_string(),
-        ReceiptType::PlayedSelf => "played-self".to_string(),
-        ReceiptType::ServerError => "server-error".to_string(),
-        ReceiptType::Inactive => "inactive".to_string(),
-        ReceiptType::PeerMsg => "peer_msg".to_string(),
-        ReceiptType::HistorySync => "hist_sync".to_string(),
-        ReceiptType::Other(raw) => raw.clone(),
-        // 0.7 made this #[non_exhaustive]. A variant added upstream relays the
-        // lib's own canonical wire string rather than being dropped or coerced
-        // into a neighbouring token. The known arms stay hand-written because
-        // `as_wire_str` renders Delivered as "delivery", and the proto contract
-        // promises "delivered".
-        other => other.as_wire_str().to_string(),
-    }
-}
-
-/// The lib models "recording" as Composing with media=Audio; the wire contract
-/// (`composing|recording|paused`, the same tokens SendPresence accepts back)
-/// flattens that pair into one token.
-fn chat_state_label(state: ChatPresence, media: ChatPresenceMedia) -> &'static str {
-    match (state, media) {
-        (ChatPresence::Composing, ChatPresenceMedia::Audio) => "recording",
-        (ChatPresence::Composing, ChatPresenceMedia::Text) => "composing",
-        (ChatPresence::Paused, _) => "paused",
-    }
-}
-
 /// Build an `AppStateUpdate` from any app-state lib struct. Generic over the
 /// concrete update type so all six variants share the `serde_json` projection;
 /// the caller passes the already-extracted chat jid (named `jid` on five of
 /// them, `chat_jid` on StarUpdate).
-fn app_state<T: Serialize>(chat: &Jid, kind: &str, update: &T) -> pb::AppStateUpdate {
+fn app_state<T: Serialize>(chat: &Jid, kind: pb::AppStateKind, update: &T) -> pb::AppStateUpdate {
     pb::AppStateUpdate {
         // A lib Jid always renders non-empty, so this is set; the field is a
         // message only because every jid on the wire is (#122).
         chat: lib_jid(chat),
-        kind: kind.to_string(),
+        kind: kind as i32,
         raw: serde_json::to_vec(update).unwrap_or_default(),
     }
 }
@@ -332,41 +303,71 @@ fn live_update_message(
     }
 }
 
-/// Map an inbound call to the typed `CallEvent`. `action` is a lowercase token
-/// per the proto contract; `call_id` is the CallAction id (lib note: distinct
-/// from the stanza id, which the edge reads from `raw`).
+/// Map an inbound call to the typed `CallEvent`. `action` is the enum, with the
+/// library's wire tag in `action_raw` only when it is UNKNOWN (#126); `call_id`
+/// is the CallAction id (lib note: distinct from the stanza id, which the edge
+/// reads from `raw`).
 fn map_call(call: &IncomingCall) -> pb::CallEvent {
+    let (action, action_raw) = call_action_of(&call.action);
     pb::CallEvent {
         from: lib_jid(&call.from),
         call_id: call.action.call_id().to_string(),
-        action: call_action_label(&call.action),
+        action: action as i32,
+        action_raw,
         raw: serde_json::to_vec(call).unwrap_or_default(),
     }
 }
 
-/// Lowercase wire tokens for `CallEvent.action`, never Debug casing (mirrors the
-/// receipt/chat-state token convention so the edge codes against the proto).
-fn call_action_label(action: &CallAction) -> String {
-    match action {
-        CallAction::Offer { .. } => "offer".to_string(),
-        CallAction::OfferNotice { .. } => "offer_notice".to_string(),
-        CallAction::PreAccept { .. } => "pre_accept".to_string(),
-        CallAction::Accept { .. } => "accept".to_string(),
-        CallAction::Reject { .. } => "reject".to_string(),
-        CallAction::Terminate { .. } => "terminate".to_string(),
-        // 0.7 made this #[non_exhaustive] and added eight call sub-types. They
-        // relay under the lib's own `wire_tag`; the six above stay hand-written
-        // because the proto contract promises "pre_accept" where the wire says
-        // "preaccept".
-        other => other.wire_tag().to_string(),
-    }
+fn connection(state: pb::ConnectionState) -> pb::event_envelope::Event {
+    connection_with(state, None, None)
 }
 
-fn connection(state: pb::ConnectionState, detail: &str) -> pb::event_envelope::Event {
+fn connection_with(
+    state: pb::ConnectionState,
+    logged_out: Option<pb::LoggedOutInfo>,
+    ban: Option<pb::TemporaryBanInfo>,
+) -> pb::event_envelope::Event {
     pb::event_envelope::Event::Connection(pb::ConnectionStateChanged {
         state: state as i32,
-        detail: detail.to_string(),
+        logged_out,
+        ban,
     })
+}
+
+/// The reason the server gave, as the enum plus its code when UNKNOWN (#126).
+fn logged_out(reason: ConnectFailureReason) -> pb::event_envelope::Event {
+    let (reason, reason_code) = logout_reason_of(reason);
+    let info = pb::LoggedOutInfo {
+        reason: reason as i32,
+        reason_code,
+    };
+    connection_with(pb::ConnectionState::LoggedOut, Some(info), None)
+}
+
+/// `expire` is a duration, not a deadline, relayed in whole seconds verbatim;
+/// `message` and `url` are empty when the server sent none (#126).
+fn temporary_ban(ban: &TemporaryBan) -> pb::event_envelope::Event {
+    let (reason, reason_code) = ban_reason_of(&ban.code);
+    let info = pb::TemporaryBanInfo {
+        reason: reason as i32,
+        reason_code,
+        expire_seconds: ban.expire.num_seconds(),
+        message: ban.message.clone().unwrap_or_default(),
+        url: ban.url.clone().unwrap_or_default(),
+    };
+    connection_with(pb::ConnectionState::Banned, None, Some(info))
+}
+
+fn receipt_event(r: &Receipt) -> pb::ReceiptEvent {
+    let (receipt_type, type_raw) = receipt_type_of(&r.r#type);
+    pb::ReceiptEvent {
+        chat: lib_jid(&r.source.chat),
+        sender: lib_jid(&r.source.sender),
+        message_ids: r.message_ids.iter().map(|m| m.to_string()).collect(),
+        r#type: receipt_type as i32,
+        type_raw,
+        timestamp: r.timestamp.timestamp_millis(),
+    }
 }
 
 fn pairing(event: pb::pairing_update::Event) -> pb::event_envelope::Event {
@@ -669,6 +670,9 @@ fn variant_name(event: &Event) -> String {
 #[cfg(test)]
 #[path = "event_mapping_action_timestamp_tests.rs"]
 mod action_timestamp_tests;
+#[cfg(test)]
+#[path = "event_mapping_enum_tests.rs"]
+mod enum_tests;
 #[cfg(test)]
 #[path = "event_mapping_favorites_tests.rs"]
 mod favorites_tests;

@@ -29,7 +29,7 @@ fn fanout(addressed: u32, encrypted: u32, skipped_primary: bool) -> pb::Recipien
     }
 }
 
-fn receipt(kind: &str, ids: &[&str]) -> pb::EventEnvelope {
+fn receipt(kind: pb::ReceiptType, ids: &[&str]) -> pb::EventEnvelope {
     pb::EventEnvelope {
         account_uuid: "acct".into(),
         event: Some(pb::event_envelope::Event::Receipt(pb::ReceiptEvent {
@@ -40,7 +40,8 @@ fn receipt(kind: &str, ids: &[&str]) -> pb::EventEnvelope {
                 value: "5561900000001@s.whatsapp.net".into(),
             }),
             message_ids: ids.iter().map(|s| s.to_string()).collect(),
-            r#type: kind.into(),
+            r#type: kind as i32,
+            type_raw: String::new(),
             timestamp: 1,
         })),
         ..Default::default()
@@ -94,10 +95,11 @@ fn a_missing_key_fails() {
 
 #[test]
 fn delivered_read_and_played_receipts_carrying_the_id_count() {
-    for kind in ["delivered", "read", "played"] {
+    use pb::ReceiptType as T;
+    for kind in [T::Delivered, T::Read, T::Played] {
         assert!(
             is_delivery_receipt(&receipt(kind, &["X", "ABC"]), "ABC"),
-            "{kind}"
+            "{kind:?}"
         );
     }
 }
@@ -105,17 +107,19 @@ fn delivered_read_and_played_receipts_carrying_the_id_count() {
 #[test]
 fn a_receipt_for_another_id_does_not_count() {
     assert!(!is_delivery_receipt(
-        &receipt("delivered", &["OTHER"]),
+        &receipt(pb::ReceiptType::Delivered, &["OTHER"]),
         "ABC"
     ));
 }
 
 #[test]
 fn a_sender_or_retry_receipt_does_not_count() {
-    for kind in ["sender", "retry", "server-error", "read-self"] {
+    use pb::ReceiptType as T;
+    // #126: an UNKNOWN type says nothing of delivery either.
+    for kind in [T::Sender, T::Retry, T::ServerError, T::ReadSelf, T::Unknown] {
         assert!(
             !is_delivery_receipt(&receipt(kind, &["ABC"]), "ABC"),
-            "{kind}"
+            "{kind:?}"
         );
     }
 }
@@ -133,7 +137,7 @@ fn a_non_receipt_event_does_not_count() {
 
 #[tokio::test(start_paused = true)]
 async fn the_tap_finds_a_receipt_that_arrived_before_the_wait() {
-    let events = vec![Ok(receipt("delivered", &["ABC"]))];
+    let events = vec![Ok(receipt(pb::ReceiptType::Delivered, &["ABC"]))];
     let tap = EventTap::spawn(tokio_stream::iter(events));
     assert!(tap.delivered("ABC", Duration::from_secs(5)).await);
 }
@@ -145,7 +149,9 @@ async fn the_tap_finds_a_receipt_that_arrives_during_the_wait() {
     tokio::spawn(async move {
         // not a sync point: the paused clock stands in for the receipt arriving 2 s into the wait, in virtual time
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let _ = tx.send(Ok(receipt("delivered", &["ABC"]))).await;
+        let _ = tx
+            .send(Ok(receipt(pb::ReceiptType::Delivered, &["ABC"])))
+            .await;
     });
     assert!(tap.delivered("ABC", Duration::from_secs(10)).await);
 }
@@ -163,8 +169,8 @@ async fn the_tap_gives_up_when_the_window_closes() {
 #[tokio::test(start_paused = true)]
 async fn the_tap_keeps_every_event_in_arrival_order() {
     let events = vec![
-        Ok(receipt("delivered", &["A"])),
-        Ok(receipt("read", &["B"])),
+        Ok(receipt(pb::ReceiptType::Delivered, &["A"])),
+        Ok(receipt(pb::ReceiptType::Read, &["B"])),
     ];
     let tap = EventTap::spawn(tokio_stream::iter(events));
     let found = tap

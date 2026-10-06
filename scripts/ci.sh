@@ -148,6 +148,12 @@ scripts/check-domain-inputs.py
 stage "no string jid fields in the contract"
 scripts/check-proto-jids.py
 
+# #73 / #126: no Rust Debug output on the wire. The event mapping names every
+# library value through an explicit match; only variant_name (the RawEvent
+# catch-all) may derive a name from Debug. Pure text check.
+stage "no Debug output in the event mapping"
+scripts/check-wire-debug.py
+
 # #114: the named types and the error mapping. No database, so both modes run it.
 stage "tests (wamux-types)"
 must_run_pkg_tests wamux-types

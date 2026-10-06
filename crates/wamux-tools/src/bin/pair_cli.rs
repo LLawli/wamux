@@ -22,7 +22,7 @@ use wamux::domain::messaging;
 use wamux::proto::v1 as pb;
 use wamux::state::AccountHandle;
 use wamux_tools::inproc::{database_url_from, init_tracing, open_registry, resolve_or_create};
-use wamux_tools::live_env::{account_ref_from, jid_text_of, process_env};
+use wamux_tools::live_env::{account_ref_from, connection_line_of, jid_text_of, process_env};
 use wamux_tools::qr::{ascii_qr, open_in_viewer, write_qr_png};
 use wamux_tools::report::Report;
 use wamux_types::{Jid, OutgoingText};
@@ -93,10 +93,7 @@ async fn watch_events(
                 }
             }
             Some(pb::event_envelope::Event::Connection(state)) => {
-                let name = pb::ConnectionState::try_from(state.state)
-                    .map(|s| format!("{s:?}"))
-                    .unwrap_or_else(|_| state.state.to_string());
-                println!("[conn] {name} {}", state.detail);
+                println!("[conn] {}", connection_line_of(&state));
             }
             Some(pb::event_envelope::Event::Message(message)) => {
                 println!(

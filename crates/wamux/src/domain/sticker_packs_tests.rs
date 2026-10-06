@@ -108,7 +108,7 @@ fn the_summary_relays_the_pack_and_each_entry() {
     assert_eq!(info.publisher, "Someone");
     assert_eq!(info.tray_icon_file_name, "maker-app-pack-1.png");
     assert_eq!(info.pack_size, 501_503);
-    assert_eq!(info.origin, "third_party");
+    assert_eq!(info.origin(), pb::StickerPackOrigin::ThirdParty);
     assert_eq!((info.thumbnail_width, info.thumbnail_height), (252, 252));
     let names: Vec<&str> = info.stickers.iter().map(|s| s.file_name.as_str()).collect();
     assert_eq!(names, ["01_aa.webp", "02_bb.webp"]);
@@ -118,28 +118,39 @@ fn the_summary_relays_the_pack_and_each_entry() {
     assert_eq!(info.stickers[1].mime_type, "image/webp");
 }
 
+// #126: the contract's enum, one value per waproto value (was a lowercase token).
 #[test]
-fn each_origin_relays_as_its_lowercase_token() {
+fn each_origin_relays_as_its_enum_value() {
     let cases = [
-        (StickerPackOrigin::FIRST_PARTY, "first_party"),
-        (StickerPackOrigin::THIRD_PARTY, "third_party"),
-        (StickerPackOrigin::USER_CREATED, "user_created"),
+        (
+            StickerPackOrigin::FIRST_PARTY,
+            pb::StickerPackOrigin::FirstParty,
+        ),
+        (
+            StickerPackOrigin::THIRD_PARTY,
+            pb::StickerPackOrigin::ThirdParty,
+        ),
+        (
+            StickerPackOrigin::USER_CREATED,
+            pb::StickerPackOrigin::UserCreated,
+        ),
     ];
-    for (origin, token) in cases {
+    for (origin, wire) in cases {
         let info = sticker_pack_info(&StickerPackMessage {
             sticker_pack_origin: Some(origin),
             ..pack()
         });
-        assert_eq!(info.origin, token);
+        assert_eq!(info.origin(), wire);
     }
 }
 
-// FIRST_PARTY is the enum's 0, so absence must not collapse into it.
+// FIRST_PARTY is waproto's 0, so absence must not collapse into it: it is
+// UNSPECIFIED (#126; it was "").
 #[test]
-fn an_absent_origin_relays_empty_not_first_party() {
+fn an_absent_origin_relays_unspecified_not_first_party() {
     let info = sticker_pack_info(&StickerPackMessage {
         sticker_pack_origin: None,
         ..pack()
     });
-    assert_eq!(info.origin, "");
+    assert_eq!(info.origin(), pb::StickerPackOrigin::Unspecified);
 }

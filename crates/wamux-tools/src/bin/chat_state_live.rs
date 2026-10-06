@@ -195,7 +195,7 @@ async fn ensure_group(
 }
 
 /// Every chat state the watcher sees, until the deadline. Real presence
-/// (`chat_state` empty) is dropped: it is a different event and would only
+/// (`chat_state` UNSPECIFIED) is dropped: it is a different event and would only
 /// muddy the comparison.
 async fn collect_chat_states(
     stream: &mut tonic::Streaming<pb::EventEnvelope>,
@@ -212,12 +212,12 @@ async fn collect_chat_states(
         let Some(pb::event_envelope::Event::Presence(p)) = envelope.event else {
             continue;
         };
-        if p.chat_state.is_empty() {
+        if p.chat_state() == pb::ChatState::Unspecified {
             continue;
         }
         println!(
             "[recv] chat_state={} jid={} chat={:?} online={:?}",
-            p.chat_state,
+            p.chat_state().as_str_name(),
             jid_text_of(&p.jid),
             jid_text_of(&p.chat),
             p.online
