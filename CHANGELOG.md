@@ -496,6 +496,26 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: every jid an event carries is the `Jid` message** (issue #122,
+  part 3 of #72, which it closes). Eighteen fields of `events.proto`, with the
+  rules of parts 1 and 2: a new number with the old one `reserved`, and only
+  the `_jid` suffix dropped (`GroupUpdate.group_jid` is now `group`,
+  `NewsletterLiveUpdate.newsletter_jid` is now `newsletter`). Before and after
+  for each field: `docs/BREAKING-CHANGES-2026-10-05.md`, section 1c.
+  - A jid the event does not have is an unset field where it was an empty
+    string: `InboundMessage.sender_alt` and `.recipient_alt` when the stanza
+    carried none, `PresenceUpdate.chat` on real presence, `ServerAckEvent.from`
+    when the server sent none, the echo's `sender` while the account has no jid
+    of its own, and the `sender` of a channel-history row.
+  - A favorite whose id is empty is skipped like one with no id; `raw` still
+    carries both.
+  - `EventEnvelope.account_uuid` stays a `string`: it is not a jid, and no
+    other uuid in the contract is a message.
+  - An edge built against the old contract reads each retyped event field as
+    empty (the field is unknown to it), never as the bytes of a `Jid`.
+  - `scripts/check-proto-jids.py` has no pending list any more: any `string`
+    field named for a jid fails CI.
+
 - **BREAKING: every jid in `groups.proto`, `contacts.proto` and
   `newsletters.proto` is the `Jid` message** (issue #121, part 2 of #72).
   Twenty-five fields, with the rules of part 1: a new number with the old one
