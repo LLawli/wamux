@@ -1,10 +1,11 @@
 //! `media_transfer` (#115): the tests that lived inline, moved so the loop can
 //! seal them. Same assertions; the header is the domain's `OutgoingMedia` and
-//! the descriptor its `DownloadableMedia`. The `MediaKind` token tests stay as
-//! they were (they never took a `pb::*`); reading a descriptor's kind moved
-//! to `wamux-types` (`messaging/media_tests.rs`).
+//! the descriptor its `DownloadableMedia`. The `MediaKind` parse tests take the
+//! wire's enum value since #127; reading a descriptor's kind moved to
+//! `wamux-types` (`messaging/media_tests.rs`).
 
 use wacore::download::MediaType;
+use wamux_proto::v1 as pb;
 use wamux_types::{
     DownloadableMedia, Jid, MediaKind, MessageId, OutgoingContext, OutgoingMedia, QuotedRef,
 };
@@ -45,59 +46,47 @@ fn a_download_only_kind_has_no_outgoing_message() {
 }
 
 #[test]
-fn media_kind_parses_each_accepted_string_to_its_upload_type() {
-    assert_eq!(
-        MediaKind::parse_sendable("image").unwrap().media_type(),
-        MediaType::Image
-    );
-    assert_eq!(
-        MediaKind::parse_sendable("video").unwrap().media_type(),
-        MediaType::Video
-    );
-    assert_eq!(
-        MediaKind::parse_sendable("audio").unwrap().media_type(),
-        MediaType::Audio
-    );
-    assert_eq!(
-        MediaKind::parse_sendable("document").unwrap().media_type(),
-        MediaType::Document
-    );
-    assert_eq!(
-        MediaKind::parse_sendable("sticker").unwrap().media_type(),
-        MediaType::Sticker
-    );
-}
-
-#[test]
-fn media_kind_unknown_value_is_invalid_argument_with_value() {
-    let err = MediaKind::parse_sendable("gif").unwrap_err();
-    match err {
-        WamuxError::InvalidArgument(msg) => assert!(msg.contains("gif"), "got: {msg}"),
-        other => panic!("expected InvalidArgument, got {other:?}"),
+fn media_kind_parses_each_accepted_value_to_its_upload_type() {
+    let accepted = [
+        (pb::MediaType::Image, MediaType::Image),
+        (pb::MediaType::Video, MediaType::Video),
+        (pb::MediaType::Audio, MediaType::Audio),
+        (pb::MediaType::Document, MediaType::Document),
+        (pb::MediaType::Sticker, MediaType::Sticker),
+    ];
+    for (wire, upload) in accepted {
+        let kind = MediaKind::parse_sendable(wire as i32).unwrap();
+        assert_eq!(kind.media_type(), upload, "{wire:?}");
     }
 }
 
-// The match arms are exact lowercase literals: "Image" must be rejected.
-// Pinned so a future "helpful" case-fold doesn't sneak policy into the core.
+// #127: the refusal names the value it got, by proto name or bare number.
 #[test]
-fn media_kind_is_case_sensitive() {
-    assert!(matches!(
-        MediaKind::parse_sendable("Image"),
-        Err(WamuxError::InvalidArgument(_))
-    ));
+fn media_kind_unknown_value_is_invalid_argument_with_value() {
+    for (value, shown) in [(0, "MEDIA_TYPE_UNSPECIFIED"), (42, "42")] {
+        match MediaKind::parse_sendable(value).unwrap_err() {
+            WamuxError::InvalidArgument(msg) => {
+                assert!(msg.ends_with(&format!("got {shown}")), "got: {msg}")
+            }
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+    }
 }
 
-// The pack tokens are download-only: SendMedia parses through MediaKind,
+// The pack values are download-only: SendMedia parses through MediaKind,
 // which must keep refusing them, since there is no sub-message to build.
 #[test]
-fn send_media_still_refuses_the_pack_tokens() {
-    for value in ["sticker_pack", "sticker_pack_thumbnail"] {
+fn send_media_still_refuses_the_pack_values() {
+    for value in [
+        pb::MediaType::StickerPack,
+        pb::MediaType::StickerPackThumbnail,
+    ] {
         assert!(
             matches!(
-                MediaKind::parse_sendable(value),
+                MediaKind::parse_sendable(value as i32),
                 Err(WamuxError::InvalidArgument(_))
             ),
-            "value: {value}"
+            "value: {value:?}"
         );
     }
 }
@@ -435,7 +424,12 @@ fn media_quote_and_mentions_relay_into_context() {
 // Every media branch must relay the expiration, not just image/audio.
 #[test]
 fn ephemeral_applies_to_every_media_branch() {
-    let kinds = ["video", "audio", "document", "sticker"];
+    let kinds = [
+        MediaKind::Video,
+        MediaKind::Audio,
+        MediaKind::Document,
+        MediaKind::Sticker,
+    ];
     for kind in kinds {
         let message = build_media_message(
             &OutgoingMedia {
@@ -443,18 +437,18 @@ fn ephemeral_applies_to_every_media_branch() {
                     ephemeral_seconds: 604_800,
                     ..Default::default()
                 },
-                ..media(MediaKind::parse_sendable(kind).expect("test kinds are valid"))
+                ..media(kind)
             },
             fake_upload(),
         );
         let expiration = match kind {
-            "video" => message.video_message.unwrap().context_info,
-            "audio" => message.audio_message.unwrap().context_info,
-            "document" => message.document_message.unwrap().context_info,
+            MediaKind::Video => message.video_message.unwrap().context_info,
+            MediaKind::Audio => message.audio_message.unwrap().context_info,
+            MediaKind::Document => message.document_message.unwrap().context_info,
             _ => message.sticker_message.unwrap().context_info,
         }
         .expect("context_info must be set")
         .expiration;
-        assert_eq!(expiration, Some(604_800), "branch: {kind}");
+        assert_eq!(expiration, Some(604_800), "branch: {kind:?}");
     }
 }

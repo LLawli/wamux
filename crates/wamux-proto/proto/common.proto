@@ -63,8 +63,25 @@ message MediaDescriptor {
   bytes file_sha256 = 4;
   uint64 file_length = 5;
   string mime_type = 6;
-  // image|video|audio|document|sticker, plus two that are download-only (issue
-  // #58): sticker_pack (a received pack's ZIP) and sticker_pack_thumbnail (its
+  // #127: was `string media_type = 7`. Two values are download-only (issue
+  // #58): STICKER_PACK (a received pack's ZIP) and STICKER_PACK_THUMBNAIL (its
   // thumbnail). SendMedia refuses those two; sending a pack is not relayed.
-  string media_type = 7;
+  reserved 7;
+  MediaType media_type = 8;
+}
+
+// The kind of a media payload (#127). A closed set: the core builds every
+// descriptor from its own kinds, so UNKNOWN is never emitted and there is no
+// raw field. On a request, UNSPECIFIED, UNKNOWN and any value the operation
+// does not take are InvalidArgument.
+enum MediaType {
+  MEDIA_TYPE_UNSPECIFIED = 0;
+  MEDIA_TYPE_UNKNOWN = 1;                  // never emitted; refused on a request
+  MEDIA_TYPE_IMAGE = 2;
+  MEDIA_TYPE_VIDEO = 3;
+  MEDIA_TYPE_AUDIO = 4;
+  MEDIA_TYPE_DOCUMENT = 5;
+  MEDIA_TYPE_STICKER = 6;
+  MEDIA_TYPE_STICKER_PACK = 7;             // download only (#58)
+  MEDIA_TYPE_STICKER_PACK_THUMBNAIL = 8;   // download only (#58)
 }

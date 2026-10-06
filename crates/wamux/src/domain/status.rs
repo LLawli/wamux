@@ -87,10 +87,7 @@ pub async fn post_status_media(
         // `parse_status` only yields the two kinds above; the arm keeps the
         // match exhaustive now that `MediaKind` has seven (#114).
         other => {
-            return Err(WamuxError::InvalidArgument(format!(
-                "status media_type must be image|video, got '{}'",
-                other.token()
-            )));
+            return Err(other.refused_as_status());
         }
     };
     result.map_err(client_err)

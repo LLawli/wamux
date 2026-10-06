@@ -75,11 +75,11 @@ async fn mark_read_with_no_ids_sends_nothing() {
     f.cleanup().await;
 }
 
-fn presence(f: &Fixture, state: &str) -> pb::SendPresenceRequest {
+fn presence(f: &Fixture, state: i32) -> pb::SendPresenceRequest {
     pb::SendPresenceRequest {
         account: f.a(),
         chat: jid(f.peer.pn()),
-        state: state.into(),
+        state,
     }
 }
 
@@ -89,10 +89,14 @@ fn presence(f: &Fixture, state: &str) -> pb::SendPresenceRequest {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn send_presence_sends_each_state() {
     let mut f = fixture("send_presence_sends_each_state").await;
-    for state in ["available", "unavailable"] {
+    let own = [
+        (pb::PresenceState::Available, "available"),
+        (pb::PresenceState::Unavailable, "unavailable"),
+    ];
+    for (wire, state) in own {
         let before = f.mock.client_stanzas("presence").len();
         f.messages
-            .send_presence(presence(&f, state))
+            .send_presence(presence(&f, wire as i32))
             .await
             .expect(state);
         let sent = newest_stanza(&f.mock, "presence", before).await;
@@ -101,14 +105,15 @@ async fn send_presence_sends_each_state() {
     }
     let peer = f.peer.pn().to_string();
     let typing = [
-        ("composing", "composing", None),
-        ("recording", "composing", Some("audio")),
-        ("paused", "paused", None),
+        (pb::PresenceState::Composing, "composing", None),
+        (pb::PresenceState::Recording, "composing", Some("audio")),
+        (pb::PresenceState::Paused, "paused", None),
     ];
-    for (state, tag, media) in typing {
+    for (wire, tag, media) in typing {
+        let state = wire.as_str_name();
         let before = f.mock.client_stanzas("chatstate").len();
         f.messages
-            .send_presence(presence(&f, state))
+            .send_presence(presence(&f, wire as i32))
             .await
             .expect(state);
         let sent = newest_stanza(&f.mock, "chatstate", before).await;
@@ -120,21 +125,30 @@ async fn send_presence_sends_each_state() {
     f.cleanup().await;
 }
 
-// The state is one of five exact tokens; nothing else reaches the wire.
+// The state is one of five values (#127); unset, unknown or a number outside
+// the enum is refused with the one message shape, and nothing reaches the wire.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unknown_presence_state_is_invalid_argument() {
     let mut f = fixture("an_unknown_presence_state_is_invalid_argument").await;
     let before = wire_count(&f);
-    for state in ["typing", "", "Available"] {
+    let refused = [
+        (0, "PRESENCE_STATE_UNSPECIFIED"),
+        (1, "PRESENCE_STATE_UNKNOWN"),
+        (42, "42"),
+    ];
+    for (value, shown) in refused {
         let status = f
             .messages
-            .send_presence(presence(&f, state))
+            .send_presence(presence(&f, value))
             .await
-            .expect_err(state);
+            .expect_err(shown);
+        assert_eq!(status.code(), Code::InvalidArgument, "{shown}: {status:?}");
         assert_eq!(
-            status.code(),
-            Code::InvalidArgument,
-            "{state:?}: {status:?}"
+            status.message(),
+            format!(
+                "state must be one of PRESENCE_STATE_AVAILABLE|PRESENCE_STATE_UNAVAILABLE|\
+PRESENCE_STATE_COMPOSING|PRESENCE_STATE_RECORDING|PRESENCE_STATE_PAUSED, got {shown}"
+            )
         );
     }
     assert_only_the_probe_was_sent(&mut f, before).await;

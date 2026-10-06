@@ -40,7 +40,7 @@ impl TryFrom<pb::SendMediaHeader> for OutgoingMedia {
     type Error = WamuxError;
 
     fn try_from(header: pb::SendMediaHeader) -> Result<Self, WamuxError> {
-        let kind = MediaKind::parse_sendable(&header.media_type)?;
+        let kind = MediaKind::parse_sendable(header.media_type)?;
         Ok(Self {
             kind,
             context: OutgoingContext::from_proto(
@@ -66,7 +66,7 @@ impl TryFrom<pb::MediaDescriptor> for DownloadableMedia {
 
     fn try_from(descriptor: pb::MediaDescriptor) -> Result<Self, WamuxError> {
         Ok(Self {
-            kind: MediaKind::parse_downloadable(&descriptor.media_type)?,
+            kind: MediaKind::parse_downloadable(descriptor.media_type)?,
             direct_path: descriptor.direct_path,
             media_key: descriptor.media_key,
             file_enc_sha256: descriptor.file_enc_sha256,

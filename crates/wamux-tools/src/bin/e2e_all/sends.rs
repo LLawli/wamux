@@ -25,7 +25,7 @@ pub async fn run_sends(
         .send_presence(pb::SendPresenceRequest {
             account: Some(ctx.acct.clone()),
             chat: Some(jid_of(&ctx.dest)),
-            state: "composing".to_string(),
+            state: pb::PresenceState::Composing as i32,
         })
         .await;
     report.accepted_rpc("Messaging.SendPresence(composing)", presence);
@@ -116,7 +116,7 @@ async fn send_image(
         to: Some(jid_of(&ctx.dest)),
         mime_type: "image/png".to_string(),
         caption: "wamux e2e_all: imagem".to_string(),
-        media_type: "image".to_string(),
+        media_type: pb::MediaType::Image as i32,
         filename: "e2e.png".to_string(),
         ..Default::default()
     };

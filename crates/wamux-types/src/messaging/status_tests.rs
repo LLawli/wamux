@@ -28,9 +28,11 @@ fn jids(values: &[&str]) -> Vec<Jid> {
     values.iter().map(|v| Jid::parse(v).unwrap()).collect()
 }
 
-fn media_header(media_type: &str, recipients: &[&str]) -> pb::PostStatusMediaHeader {
+const STATUS: &str = "status media_type must be one of MEDIA_TYPE_IMAGE|MEDIA_TYPE_VIDEO, got";
+
+fn media_header(media_type: pb::MediaType, recipients: &[&str]) -> pb::PostStatusMediaHeader {
     pb::PostStatusMediaHeader {
-        media_type: media_type.to_string(),
+        media_type: media_type as i32,
         recipients: strings(recipients),
         ..Default::default()
     }
@@ -83,7 +85,7 @@ fn status_text_leaves_an_empty_recipient_list_to_the_library() {
 fn status_media_converts_every_field() {
     let status = StatusMedia::try_from(pb::PostStatusMediaHeader {
         account: None,
-        media_type: "video".to_string(),
+        media_type: pb::MediaType::Video as i32,
         mime_type: "video/mp4".to_string(),
         thumbnail: vec![0xff, 0xd8],
         caption: "legenda".to_string(),
@@ -101,10 +103,18 @@ fn status_media_converts_every_field() {
 // Audio, document and sticker are valid for a message but NOT for a status.
 #[test]
 fn status_media_refuses_a_non_status_kind() {
-    for bad in ["audio", "document", "sticker", "gif"] {
+    let refused = [
+        pb::MediaType::Audio,
+        pb::MediaType::Document,
+        pb::MediaType::Sticker,
+        pb::MediaType::StickerPack,
+        pb::MediaType::Unspecified,
+        pb::MediaType::Unknown,
+    ];
+    for bad in refused {
         assert_eq!(
             invalid_argument(StatusMedia::try_from(media_header(bad, &[PHONE]))),
-            format!("status media_type must be image|video, got '{bad}'")
+            format!("{STATUS} {}", bad.as_str_name())
         );
     }
 }
@@ -112,11 +122,17 @@ fn status_media_refuses_a_non_status_kind() {
 // The kind is read before the recipients, the order the domain used.
 #[test]
 fn status_media_refuses_a_malformed_recipient() {
-    let message = invalid_argument(StatusMedia::try_from(media_header("image", &["not a jid"])));
+    let message = invalid_argument(StatusMedia::try_from(media_header(
+        pb::MediaType::Image,
+        &["not a jid"],
+    )));
     assert!(message.starts_with("invalid jid 'not a jid'"), "{message}");
     assert_eq!(
-        invalid_argument(StatusMedia::try_from(media_header("audio", &["not a jid"]))),
-        "status media_type must be image|video, got 'audio'"
+        invalid_argument(StatusMedia::try_from(media_header(
+            pb::MediaType::Audio,
+            &["not a jid"]
+        ))),
+        format!("{STATUS} MEDIA_TYPE_AUDIO")
     );
 }
 

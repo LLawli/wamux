@@ -67,12 +67,12 @@ async fn post_status_text_reaches_every_recipient() {
     f.cleanup().await;
 }
 
-fn status_head(f: &Fixture, media_type: &str) -> pb::PostStatusMediaChunk {
+fn status_head(f: &Fixture, media_type: pb::MediaType) -> pb::PostStatusMediaChunk {
     pb::PostStatusMediaChunk {
         part: Some(pb::post_status_media_chunk::Part::Header(
             pb::PostStatusMediaHeader {
                 account: f.a(),
-                media_type: media_type.into(),
+                media_type: media_type as i32,
                 mime_type: "image/jpeg".into(),
                 caption: "foto do dia".into(),
                 recipients: recipients(f),
@@ -102,7 +102,7 @@ async fn post_media(
 async fn post_status_media_uploads_and_reaches_every_recipient() {
     let mut f = fixture("post_status_media_uploads_and_reaches_every_recipient").await;
     let plain = plaintext(60_000);
-    let frames = vec![status_head(&f, "image"), status_chunk(&plain)];
+    let frames = vec![status_head(&f, pb::MediaType::Image), status_chunk(&plain)];
     let posted = post_media(&mut f, frames).await.expect("post media");
     let uploads = f.cdn.uploads();
     assert_eq!(uploads.len(), 1, "one upload");
@@ -220,26 +220,26 @@ async fn post_status_media_stream_errors_are_refused() {
         ("an empty stream", Vec::new(), Code::InvalidArgument),
         (
             "a chunk first",
-            vec![status_chunk(b"jpeg"), status_head(&f, "image")],
+            vec![status_chunk(b"jpeg"), status_head(&f, pb::MediaType::Image)],
             Code::InvalidArgument,
         ),
         (
             "a second header",
             vec![
-                status_head(&f, "image"),
+                status_head(&f, pb::MediaType::Image),
                 status_chunk(b"jpeg"),
-                status_head(&f, "image"),
+                status_head(&f, pb::MediaType::Image),
             ],
             Code::InvalidArgument,
         ),
         (
             "an audio status",
-            vec![status_head(&f, "audio"), status_chunk(b"ogg")],
+            vec![status_head(&f, pb::MediaType::Audio), status_chunk(b"ogg")],
             Code::InvalidArgument,
         ),
         (
             "over the limit",
-            vec![status_head(&f, "image"), status_chunk(&over)],
+            vec![status_head(&f, pb::MediaType::Image), status_chunk(&over)],
             Code::ResourceExhausted,
         ),
     ];

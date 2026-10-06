@@ -116,32 +116,46 @@ async fn main() -> anyhow::Result<ExitCode> {
         .into_inner();
 
     let mut messaging = MessagingServiceClient::new(channel);
-    type_in(&mut messaging, &mut report, &typist, &group, "composing").await;
+    type_in(
+        &mut messaging,
+        &mut report,
+        &typist,
+        &group,
+        pb::PresenceState::Composing,
+    )
+    .await;
     type_in(
         &mut messaging,
         &mut report,
         &typist,
         &watcher_jid,
-        "composing",
+        pb::PresenceState::Composing,
     )
     .await;
     // Recording carries the same source; it is the one whose label the mapping
     // synthesizes (Composing + Audio), so it is worth seeing on the wire too.
-    type_in(&mut messaging, &mut report, &typist, &group, "recording").await;
+    type_in(
+        &mut messaging,
+        &mut report,
+        &typist,
+        &group,
+        pb::PresenceState::Recording,
+    )
+    .await;
 
     let seen = collect_chat_states(&mut stream, secs).await;
     judge(&mut report, &seen, &group);
     Ok(report.finish())
 }
 
-/// Raise one chat state from `account` in `chat`. `state` is the wire token the
-/// proto documents (composing|recording|paused|available|unavailable).
+/// Raise one chat state from `account` in `chat`. `state` is the enum the
+/// proto documents (#127).
 async fn type_in(
     messaging: &mut MessagingServiceClient<Channel>,
     report: &mut Report,
     account: &pb::AccountRef,
     chat: &str,
-    state: &str,
+    state: pb::PresenceState,
 ) {
     let sent = messaging
         .send_presence(pb::SendPresenceRequest {
@@ -149,10 +163,13 @@ async fn type_in(
             chat: Some(pb::Jid {
                 value: chat.to_string(),
             }),
-            state: state.to_string(),
+            state: state as i32,
         })
         .await;
-    report.accepted_rpc(&format!("Messaging.SendPresence({state} in {chat})"), sent);
+    report.accepted_rpc(
+        &format!("Messaging.SendPresence({} in {chat})", state.as_str_name()),
+        sent,
+    );
 }
 
 /// Reuse `WAMUX_LIVE_GROUP` when set, otherwise create the group between the two

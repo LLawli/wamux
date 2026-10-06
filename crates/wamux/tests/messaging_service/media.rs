@@ -16,13 +16,13 @@ pub fn plaintext(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i * 31 % 251) as u8).collect()
 }
 
-pub fn header(f: &Fixture, media_type: &str) -> pb::SendMediaHeader {
+pub fn header(f: &Fixture, media_type: pb::MediaType) -> pb::SendMediaHeader {
     pb::SendMediaHeader {
         account: f.a(),
         to: jid(f.peer.pn()),
         mime_type: "image/jpeg".into(),
         caption: "uma foto".into(),
-        media_type: media_type.into(),
+        media_type: media_type as i32,
         ..Default::default()
     }
 }
@@ -55,7 +55,7 @@ async fn send_media_uploads_and_sends_its_descriptor() {
     let mut f = fixture("send_media_uploads_and_sends_its_descriptor").await;
     let plain = plaintext(100_000);
     let frames = vec![
-        head(header(&f, "image")),
+        head(header(&f, pb::MediaType::Image)),
         chunk(&plain[..40_000]),
         chunk(&plain[40_000..]),
     ];
@@ -105,7 +105,7 @@ async fn send_media_over_the_limit_is_resource_exhausted() {
     let mut f = fixture("send_media_over_the_limit_is_resource_exhausted").await;
     let before = wire_count(&f);
     let plain = plaintext(MEDIA_LIMIT as usize + 1);
-    let frames = vec![head(header(&f, "image")), chunk(&plain)];
+    let frames = vec![head(header(&f, pb::MediaType::Image)), chunk(&plain)];
     let status = send_media(&mut f, frames)
         .await
         .expect_err("over the limit");
@@ -124,14 +124,14 @@ async fn send_media_stream_framing_errors_are_invalid_argument() {
         ("an empty stream", Vec::new()),
         (
             "a chunk first",
-            vec![chunk(b"jpeg"), head(header(&f, "image"))],
+            vec![chunk(b"jpeg"), head(header(&f, pb::MediaType::Image))],
         ),
         (
             "a second header",
             vec![
-                head(header(&f, "image")),
+                head(header(&f, pb::MediaType::Image)),
                 chunk(b"jpeg"),
-                head(header(&f, "image")),
+                head(header(&f, pb::MediaType::Image)),
             ],
         ),
     ];
@@ -143,19 +143,30 @@ async fn send_media_stream_framing_errors_are_invalid_argument() {
     f.cleanup().await;
 }
 
-// `media_type` is one of five exact tokens; anything else is refused before
-// the upload, with the value named.
+// `media_type` is one of five sendable values (#127); unset, unknown, a
+// download-only kind or a number outside the enum is refused before the
+// upload, with the value named.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn send_media_with_an_unknown_type_is_invalid_argument() {
     let mut f = fixture("send_media_with_an_unknown_type_is_invalid_argument").await;
     let before = wire_count(&f);
-    for media_type in ["gif", "Image", ""] {
-        let frames = vec![head(header(&f, media_type)), chunk(b"jpeg")];
-        let status = send_media(&mut f, frames).await.expect_err(media_type);
-        assert_eq!(
-            status.code(),
-            Code::InvalidArgument,
-            "{media_type:?}: {status:?}"
+    let refused = [
+        (pb::MediaType::Unspecified as i32, "MEDIA_TYPE_UNSPECIFIED"),
+        (pb::MediaType::Unknown as i32, "MEDIA_TYPE_UNKNOWN"),
+        (pb::MediaType::StickerPack as i32, "MEDIA_TYPE_STICKER_PACK"),
+        (42, "42"),
+    ];
+    for (value, shown) in refused {
+        let raw = pb::SendMediaHeader {
+            media_type: value,
+            ..header(&f, pb::MediaType::Image)
+        };
+        let frames = vec![head(raw), chunk(b"jpeg")];
+        let status = send_media(&mut f, frames).await.expect_err(shown);
+        assert_eq!(status.code(), Code::InvalidArgument, "{shown}: {status:?}");
+        assert!(
+            status.message().ends_with(&format!("got {shown}")),
+            "{shown}: {status:?}"
         );
     }
     assert_only_the_probe_was_sent(&mut f, before).await;

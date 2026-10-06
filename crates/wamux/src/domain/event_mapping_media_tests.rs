@@ -4,6 +4,19 @@
 use super::tests::mapped_media;
 use super::*;
 
+/// The descriptor's enum value for each sub-message's kind (#127: was the
+/// lowercase token itself).
+fn wire_of(kind: &str) -> pb::MediaType {
+    match kind {
+        "image" => pb::MediaType::Image,
+        "video" => pb::MediaType::Video,
+        "audio" => pb::MediaType::Audio,
+        "document" => pb::MediaType::Document,
+        "sticker" => pb::MediaType::Sticker,
+        other => panic!("no media sub-message named {other}"),
+    }
+}
+
 /// The five wa media sub-messages share descriptor field names (production
 /// dedupes them with `media_descriptor!`); this mirrors that table shape so
 /// each kind pins type/mime/size/path/caption in one invocation.
@@ -31,7 +44,7 @@ macro_rules! media_descriptor_test {
                 }),
                 ..Default::default()
             });
-            assert_eq!(media.media_type, $kind);
+            assert_eq!(media.media_type(), wire_of($kind));
             assert_eq!(media.mime_type, $mime);
             assert_eq!(media.file_length, 2048);
             assert_eq!(media.direct_path, concat!("/v/t62.", $kind));
@@ -94,14 +107,14 @@ fn a_sticker_pack_maps_to_its_archive_and_summary() {
         ..Default::default()
     });
     let media = out.media.expect("a pack yields a descriptor");
-    assert_eq!(media.media_type, "sticker_pack");
+    assert_eq!(media.media_type(), pb::MediaType::StickerPack);
     assert_eq!(media.file_length, 501_859);
     assert_eq!(out.caption, "for you");
     let pack = out.sticker_pack.expect("a pack yields its summary");
     assert_eq!(pack.name, "A pack");
     assert_eq!(
-        pack.thumbnail.map(|t| t.media_type).as_deref(),
-        Some("sticker_pack_thumbnail")
+        pack.thumbnail.map(|t| t.media_type()),
+        Some(pb::MediaType::StickerPackThumbnail)
     );
 }
 

@@ -52,22 +52,20 @@ fn each_download_only_token_picks_its_own_hkdf_info() {
     assert_eq!(thumb.upload_path(), "/mms/thumbnail-sticker-pack");
 }
 
-// Exact literals, like `MediaKind::parse_downloadable`: the library's own
-// "sticker-pack" spelling is its MMS path segment, not this contract's token.
+// #127: the two download-only kinds are enum values, and each descriptor
+// value reads back as the kind it was written from.
 #[test]
-fn other_spellings_are_not_download_only_tokens() {
-    for value in ["sticker-pack", "Sticker_Pack", ""] {
-        assert!(
-            MediaKind::parse_downloadable(value).is_err(),
-            "value: {value:?}"
-        );
+fn the_download_only_values_read_back_as_their_kinds() {
+    for kind in [MediaKind::StickerPack, MediaKind::StickerPackThumbnail] {
+        let value = kind.to_wire() as i32;
+        assert_eq!(MediaKind::parse_downloadable(value).unwrap(), kind);
     }
 }
 
 #[test]
 fn the_pack_descriptor_is_the_archive_verbatim() {
     let descriptor = pack_descriptor(&pack());
-    assert_eq!(descriptor.media_type, "sticker_pack");
+    assert_eq!(descriptor.media_type(), pb::MediaType::StickerPack);
     assert_eq!(descriptor.direct_path, "/v/t62.15575-24/pack.enc");
     assert_eq!(descriptor.media_key, vec![8u8; 32]);
     assert_eq!(descriptor.file_sha256, vec![6u8; 32]);
@@ -83,7 +81,7 @@ fn the_thumbnail_descriptor_pairs_its_own_hashes_with_the_pack_key() {
     let thumb = sticker_pack_info(&pack())
         .thumbnail
         .expect("thumbnail descriptor");
-    assert_eq!(thumb.media_type, "sticker_pack_thumbnail");
+    assert_eq!(thumb.media_type(), pb::MediaType::StickerPackThumbnail);
     assert_eq!(thumb.direct_path, "/v/t62.15575-24/thumb.enc");
     assert_eq!(thumb.media_key, vec![8u8; 32]);
     assert_eq!(thumb.file_sha256, vec![16u8; 32]);

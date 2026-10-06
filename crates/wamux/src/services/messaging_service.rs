@@ -7,7 +7,8 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status, Streaming};
 use wamux_types::{
     ContactCard, InteractiveReply, Jid, MessageId, MessageTarget, NewPoll, OutgoingMedia,
-    OutgoingText, PollVoteCast, PollVotesToTally, StatusMedia, StatusRevoke, StatusText,
+    OutgoingText, PollVoteCast, PollVotesToTally, PresenceState, StatusMedia, StatusRevoke,
+    StatusText,
 };
 use whatsapp_rust::SendResult;
 
@@ -235,7 +236,7 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let chat = require_typed_jid(req.chat)?;
-        messaging::send_presence(&client, chat, &req.state).await?;
+        messaging::send_presence(&client, chat, PresenceState::parse(req.state)?).await?;
         Ok(Response::new(pb::Empty {}))
     }
 

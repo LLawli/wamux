@@ -62,11 +62,12 @@ fn plaintext(len: usize) -> Vec<u8> {
 }
 
 /// Encrypt `plain` as `media_type`, serve the ciphertext at `path`, and return
-/// the descriptor an inbound message event would carry for it.
+/// the descriptor an inbound message event would carry for it: `wire` is the
+/// descriptor's `media_type`, and its name labels the mime type.
 fn encrypted(
     f: &Fixture,
     plain: &[u8],
-    kind: &str,
+    wire: pb::MediaType,
     media_type: MediaType,
     path: &str,
 ) -> pb::MediaDescriptor {
@@ -79,8 +80,8 @@ fn encrypted(
         file_enc_sha256: enc.file_enc_sha256.to_vec(),
         file_sha256: enc.file_sha256.to_vec(),
         file_length: plain.len() as u64,
-        mime_type: format!("test/{kind}"),
-        media_type: kind.into(),
+        mime_type: format!("test/{}", wire.as_str_name()),
+        media_type: wire as i32,
     }
 }
 
@@ -161,9 +162,9 @@ async fn download_streams_meta_then_64k_chunks_of_the_decrypted_bytes() {
     let mut f = fixture("download_streams_meta_then_64k_chunks").await;
     let plain = plaintext(150_000);
     let path = "/v/t62.7118-24/wamux-69/image";
-    let descriptor = encrypted(&f, &plain, "image", MediaType::Image, path);
+    let descriptor = encrypted(&f, &plain, pb::MediaType::Image, MediaType::Image, path);
     let (frames, status) = download(&mut f, Some(descriptor)).await;
-    assert_delivered(&frames, status, "test/image", &plain);
+    assert_delivered(&frames, status, "test/MEDIA_TYPE_IMAGE", &plain);
     let sizes: Vec<usize> = chunks_of(&frames).iter().map(Vec::len).collect();
     assert_eq!(sizes, [CHUNK, CHUNK, 150_000 - 2 * CHUNK]);
     let asked = f.cdn.requests();
@@ -191,15 +192,16 @@ async fn download_streams_meta_then_64k_chunks_of_the_decrypted_bytes() {
 async fn download_decrypts_every_media_type() {
     let mut f = fixture("download_decrypts_every_media_type").await;
     let kinds = [
-        ("image", MediaType::Image),
-        ("video", MediaType::Video),
-        ("audio", MediaType::Audio),
-        ("document", MediaType::Document),
-        ("sticker", MediaType::Sticker),
+        (pb::MediaType::Image, MediaType::Image),
+        (pb::MediaType::Video, MediaType::Video),
+        (pb::MediaType::Audio, MediaType::Audio),
+        (pb::MediaType::Document, MediaType::Document),
+        (pb::MediaType::Sticker, MediaType::Sticker),
     ];
-    for (i, (kind, media_type)) in kinds.into_iter().enumerate() {
+    for (i, (wire, media_type)) in kinds.into_iter().enumerate() {
         let plain = plaintext(10_000 + i);
-        let descriptor = encrypted(&f, &plain, kind, media_type, &format!("/v/wamux-69/{kind}"));
+        let kind = wire.as_str_name();
+        let descriptor = encrypted(&f, &plain, wire, media_type, &format!("/v/wamux-69/{kind}"));
         let (frames, status) = download(&mut f, Some(descriptor)).await;
         assert_delivered(&frames, status, &format!("test/{kind}"), &plain);
     }
@@ -212,12 +214,16 @@ async fn download_decrypts_every_media_type() {
 async fn download_serves_both_sticker_pack_types() {
     let mut f = fixture("download_serves_both_sticker_pack_types").await;
     let kinds = [
-        ("sticker_pack", MediaType::StickerPack),
-        ("sticker_pack_thumbnail", MediaType::StickerPackThumbnail),
+        (pb::MediaType::StickerPack, MediaType::StickerPack),
+        (
+            pb::MediaType::StickerPackThumbnail,
+            MediaType::StickerPackThumbnail,
+        ),
     ];
-    for (kind, media_type) in kinds {
+    for (wire, media_type) in kinds {
         let plain = plaintext(70_000);
-        let descriptor = encrypted(&f, &plain, kind, media_type, &format!("/v/wamux-69/{kind}"));
+        let kind = wire.as_str_name();
+        let descriptor = encrypted(&f, &plain, wire, media_type, &format!("/v/wamux-69/{kind}"));
         let (frames, status) = download(&mut f, Some(descriptor)).await;
         assert_delivered(&frames, status, &format!("test/{kind}"), &plain);
     }
@@ -237,7 +243,7 @@ async fn download_of_keyless_channel_media_checks_file_sha256() {
         file_sha256: sha256_of(&plain),
         file_length: plain.len() as u64,
         mime_type: "image/jpeg".into(),
-        media_type: "image".into(),
+        media_type: pb::MediaType::Image as i32,
         ..Default::default()
     };
     let (frames, status) = download(&mut f, Some(descriptor)).await;
@@ -266,7 +272,7 @@ async fn a_tampered_ciphertext_fails_without_a_single_frame() {
         file_sha256: enc.file_sha256.to_vec(),
         file_length: plain.len() as u64,
         mime_type: "image/jpeg".into(),
-        media_type: "image".into(),
+        media_type: pb::MediaType::Image as i32,
     };
     let (frames, status) = download(&mut f, Some(descriptor)).await;
     assert!(
@@ -291,7 +297,7 @@ async fn a_keyless_download_with_a_wrong_hash_fails() {
         file_sha256: sha256_of(&plaintext(5_001)),
         file_length: 5_000,
         mime_type: "image/jpeg".into(),
-        media_type: "image".into(),
+        media_type: pb::MediaType::Image as i32,
         ..Default::default()
     };
     let (frames, status) = download(&mut f, Some(descriptor)).await;
@@ -317,7 +323,7 @@ async fn a_cdn_404_fails_with_unavailable() {
         file_sha256: vec![2; 32],
         file_length: 10,
         mime_type: "image/jpeg".into(),
-        media_type: "image".into(),
+        media_type: pb::MediaType::Image as i32,
     };
     let (frames, status) = download(&mut f, Some(descriptor)).await;
     assert!(frames.is_empty());
@@ -341,7 +347,7 @@ fn some_descriptor() -> pb::MediaDescriptor {
         file_sha256: vec![2; 32],
         file_length: 10,
         mime_type: "image/jpeg".into(),
-        media_type: "image".into(),
+        media_type: pb::MediaType::Image as i32,
     }
 }
 
@@ -394,22 +400,34 @@ async fn a_missing_descriptor_is_invalid_argument() {
     f.logged.cleanup().await;
 }
 
+// #127: unset, unknown or a number outside the enum is refused before the
+// CDN, with the one message shape naming the value.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unknown_media_type_is_invalid_argument() {
     let mut f = fixture("an_unknown_media_type_is_invalid_argument").await;
-    let descriptor = pb::MediaDescriptor {
-        media_type: "gif".into(),
-        ..some_descriptor()
-    };
-    let (frames, status) = download(&mut f, Some(descriptor)).await;
-    assert!(frames.is_empty());
-    let status = status.expect("must fail");
-    assert_eq!(status.code(), Code::InvalidArgument);
-    assert!(
-        status.message().contains("gif"),
-        "the message names the value: {}",
-        status.message()
-    );
+    let refused = [
+        (0, "MEDIA_TYPE_UNSPECIFIED"),
+        (1, "MEDIA_TYPE_UNKNOWN"),
+        (42, "42"),
+    ];
+    for (value, shown) in refused {
+        let descriptor = pb::MediaDescriptor {
+            media_type: value,
+            ..some_descriptor()
+        };
+        let (frames, status) = download(&mut f, Some(descriptor)).await;
+        assert!(frames.is_empty(), "{shown}");
+        let status = status.expect("must fail");
+        assert_eq!(status.code(), Code::InvalidArgument, "{shown}");
+        assert_eq!(
+            status.message(),
+            format!(
+                "media_type must be one of MEDIA_TYPE_IMAGE|MEDIA_TYPE_VIDEO|MEDIA_TYPE_AUDIO|\
+MEDIA_TYPE_DOCUMENT|MEDIA_TYPE_STICKER|MEDIA_TYPE_STICKER_PACK|\
+MEDIA_TYPE_STICKER_PACK_THUMBNAIL, got {shown}"
+            )
+        );
+    }
     assert!(f.cdn.requests().is_empty(), "nothing goes to the CDN");
     f.logged.cleanup().await;
 }

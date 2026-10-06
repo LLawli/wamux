@@ -46,7 +46,7 @@ const DOWNLOAD_CAP_BYTES: usize = 32 * 1024 * 1024;
 /// One media message: the wire fields that differ between the kinds.
 struct InlineMedia {
     mime: &'static str,
-    media_type: &'static str,
+    media_type: pb::MediaType,
     filename: &'static str,
     data: Vec<u8>,
     ptt_seconds: Option<u32>,
@@ -95,11 +95,11 @@ async fn main() -> anyhow::Result<ExitCode> {
     let want = |k: &str| kinds == "all" || kinds == k;
 
     if want("video") {
-        let media = download("video/mp4", "video", VIDEO_URL).await;
+        let media = download("video/mp4", pb::MediaType::Video, VIDEO_URL).await;
         send_kind(&mut messaging, &mut report, &ctx, "video", media).await;
     }
     if want("audio") {
-        let media = download("audio/mpeg", "audio", AUDIO_URL).await;
+        let media = download("audio/mpeg", pb::MediaType::Audio, AUDIO_URL).await;
         send_kind(&mut messaging, &mut report, &ctx, "audio", media).await;
     }
     if want("sticker") {
@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             .map_err(|e| e.to_string())
             .map(|data| InlineMedia {
                 mime: "image/webp",
-                media_type: "sticker",
+                media_type: pb::MediaType::Sticker,
                 filename: "s.webp",
                 data,
                 ptt_seconds: None,
@@ -145,7 +145,7 @@ async fn send_kind(
 /// the bytes itself and streams them inline.
 async fn download(
     mime: &'static str,
-    media_type: &'static str,
+    media_type: pb::MediaType,
     url: &str,
 ) -> Result<InlineMedia, String> {
     let data = fetch_url_capped(url, DOWNLOAD_CAP_BYTES)
@@ -171,7 +171,7 @@ async fn voice_note() -> Result<InlineMedia, String> {
         .map_err(|e| format!("read {path}: {e}"))?;
     Ok(InlineMedia {
         mime: "audio/ogg; codecs=opus",
-        media_type: "audio",
+        media_type: pb::MediaType::Audio,
         filename: "",
         data,
         ptt_seconds: Some(secs),
@@ -189,7 +189,7 @@ async fn send_inline(
             value: ctx.target.clone(),
         }),
         mime_type: media.mime.to_string(),
-        media_type: media.media_type.to_string(),
+        media_type: media.media_type as i32,
         filename: media.filename.to_string(),
         ptt: media.ptt_seconds.is_some(),
         seconds: media.ptt_seconds.unwrap_or(0),

@@ -34,7 +34,7 @@ async fn sends(m: &mut MessagingServiceClient<Channel>, account: &pb::AccountRef
             part: Some(pb::send_media_chunk::Part::Header(pb::SendMediaHeader {
                 account: a(),
                 to: jid(peer()),
-                media_type: "image".into(),
+                media_type: pb::MediaType::Image as i32,
                 ..Default::default()
             })),
         },
@@ -120,7 +120,7 @@ async fn reads_and_marks(
             m.send_presence(pb::SendPresenceRequest {
                 account: a(),
                 chat: jid(peer()),
-                state: "composing".into(),
+                state: pb::PresenceState::Composing as i32,
             })
             .await
             .map(drop),
@@ -280,7 +280,7 @@ async fn statuses(
             part: Some(pb::post_status_media_chunk::Part::Header(
                 pb::PostStatusMediaHeader {
                     account: a(),
-                    media_type: "image".into(),
+                    media_type: pb::MediaType::Image as i32,
                     recipients: recipients(),
                     ..Default::default()
                 },

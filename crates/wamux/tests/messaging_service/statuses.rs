@@ -78,7 +78,7 @@ async fn chat_scoped(f: &mut Fixture, chat: Option<pb::Jid>) -> Vec<(&'static st
         part: Some(pb::send_media_chunk::Part::Header(pb::SendMediaHeader {
             account: a.clone(),
             to: c(),
-            media_type: "image".into(),
+            media_type: pb::MediaType::Image as i32,
             ..Default::default()
         })),
     }];
@@ -133,7 +133,7 @@ async fn chat_scoped(f: &mut Fixture, chat: Option<pb::Jid>) -> Vec<(&'static st
                 .send_presence(pb::SendPresenceRequest {
                     account: a.clone(),
                     chat: c(),
-                    state: "composing".into(),
+                    state: pb::PresenceState::Composing as i32,
                 })
                 .await
                 .map(drop)),

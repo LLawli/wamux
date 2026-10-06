@@ -127,7 +127,7 @@ async fn a_disconnected_account_is_not_connected() {
         "account is not connected",
         "SendText",
     );
-    let mut media_header = header(&f, "image");
+    let mut media_header = header(&f, pb::MediaType::Image);
     media_header.account = idle_ref;
     let media = send_media(&mut f, vec![head(media_header), chunk(b"jpeg")]).await;
     assert_refused(
@@ -176,31 +176,38 @@ async fn send_media_stream_errors_keep_their_messages() {
         ),
         (
             "a chunk first",
-            vec![chunk(b"jpeg"), head(header(&f, "image"))],
+            vec![chunk(b"jpeg"), head(header(&f, pb::MediaType::Image))],
             Code::InvalidArgument,
             "first chunk must be the header",
         ),
         (
             "a second header",
             vec![
-                head(header(&f, "image")),
+                head(header(&f, pb::MediaType::Image)),
                 chunk(b"jpeg"),
-                head(header(&f, "image")),
+                head(header(&f, pb::MediaType::Image)),
             ],
             Code::InvalidArgument,
             "unexpected second header",
         ),
         (
             "over the limit",
-            vec![head(header(&f, "image")), chunk(&over)],
+            vec![head(header(&f, pb::MediaType::Image)), chunk(&over)],
             Code::ResourceExhausted,
             "media exceeds size limit",
         ),
         (
             "an unknown type",
-            vec![head(header(&f, "gif")), chunk(b"gif")],
+            vec![
+                head(pb::SendMediaHeader {
+                    media_type: 42,
+                    ..header(&f, pb::MediaType::Image)
+                }),
+                chunk(b"gif"),
+            ],
             Code::InvalidArgument,
-            "unknown media_type 'gif'",
+            "media_type must be one of MEDIA_TYPE_IMAGE|MEDIA_TYPE_VIDEO|MEDIA_TYPE_AUDIO|\
+MEDIA_TYPE_DOCUMENT|MEDIA_TYPE_STICKER, got 42",
         ),
     ];
     for (case, frames, code, message) in cases {
@@ -209,12 +216,12 @@ async fn send_media_stream_errors_keep_their_messages() {
     f.cleanup().await;
 }
 
-fn status_head(f: &Fixture, media_type: &str) -> pb::PostStatusMediaChunk {
+fn status_head(f: &Fixture, media_type: pb::MediaType) -> pb::PostStatusMediaChunk {
     pb::PostStatusMediaChunk {
         part: Some(pb::post_status_media_chunk::Part::Header(
             pb::PostStatusMediaHeader {
                 account: f.a(),
-                media_type: media_type.into(),
+                media_type: media_type as i32,
                 mime_type: "image/jpeg".into(),
                 recipients: jids(&[f.peer.pn()]),
                 ..Default::default()
@@ -242,31 +249,32 @@ async fn post_status_media_stream_errors_keep_their_messages() {
         ),
         (
             "a chunk first",
-            vec![status_chunk(b"jpeg"), status_head(&f, "image")],
+            vec![status_chunk(b"jpeg"), status_head(&f, pb::MediaType::Image)],
             Code::InvalidArgument,
             "first chunk must be the header".to_string(),
         ),
         (
             "a second header",
             vec![
-                status_head(&f, "image"),
+                status_head(&f, pb::MediaType::Image),
                 status_chunk(b"jpeg"),
-                status_head(&f, "image"),
+                status_head(&f, pb::MediaType::Image),
             ],
             Code::InvalidArgument,
             "unexpected second header".to_string(),
         ),
         (
             "over the limit",
-            vec![status_head(&f, "image"), status_chunk(&over)],
+            vec![status_head(&f, pb::MediaType::Image), status_chunk(&over)],
             Code::ResourceExhausted,
             "media exceeds size limit".to_string(),
         ),
         (
             "an audio status",
-            vec![status_head(&f, "audio"), status_chunk(b"ogg")],
+            vec![status_head(&f, pb::MediaType::Audio), status_chunk(b"ogg")],
             Code::InvalidArgument,
-            "status media_type must be image|video, got 'audio'".to_string(),
+            "status media_type must be one of MEDIA_TYPE_IMAGE|MEDIA_TYPE_VIDEO, got MEDIA_TYPE_AUDIO"
+                .to_string(),
         ),
     ];
     for (case, frames, code, message) in cases {
