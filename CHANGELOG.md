@@ -496,6 +496,24 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: the channel fields are proto enums** (issue #128, part 3 of #73,
+  which it closes). `Newsletter.verification`, `.state` and `.role`, and
+  `NewsletterMessage.type`, `.poll_type` and `.edit` are enums, each under a new
+  number with the old one `reserved`. Old string to new value for each:
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 2c.
+  - A value the library does not name is `UNKNOWN`, with the server's token
+    next to it in `verification_raw`, `state_raw`, `type_raw`, `poll_type_raw`
+    or `edit_raw`. The token is now verbatim: an unmodelled state used to relay
+    lowercased (`deleted`), and is now `DELETED`.
+  - `role` has no raw field: the library drops a role it does not model, so
+    that and "no role" are both `UNSPECIFIED`.
+  - An absent state still reads `ACTIVE` and an absent verification
+    `UNVERIFIED`, the library's defaults (#56).
+  - `type` names text, media and poll, the three the server sends. A history
+    row with no `type` is `UNSPECIFIED`, not `TEXT`.
+  - `poll_type` and `edit` were not on #73's list and joined it: `edit` is the
+    `EditAttribute` enum instead of `"3"` / `"8"`.
+
 - **BREAKING: the media type and the presence state are proto enums** (issue
   #127, part 2 of #73). `MediaDescriptor.media_type`, `SendMediaHeader.media_type`
   and `PostStatusMediaHeader.media_type` are `MediaType`, and
