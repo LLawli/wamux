@@ -180,7 +180,12 @@ async fn pushed_receipt_surfaces_as_event() {
     let _ = registry.delete(&handle).await;
 
     let receipt = got.expect("pushed <receipt> should surface as a ReceiptEvent");
-    assert_eq!(receipt.chat, PUSHED_RECEIPT_FROM, "receipt chat (from)");
+    // #122: the receipt's chat is a Jid on the wire.
+    assert_eq!(
+        receipt.chat.as_ref().map(|c| c.value.as_str()),
+        Some(PUSHED_RECEIPT_FROM),
+        "receipt chat (from)"
+    );
     assert!(
         receipt.message_ids.iter().any(|id| id == PUSHED_RECEIPT_ID),
         "receipt should carry the pushed message id, got {:?}",

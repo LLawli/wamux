@@ -169,6 +169,12 @@ pub fn same_user(one: &str, other: &str) -> bool {
     user_of(one) == user_of(other)
 }
 
+/// The text of an optional wire `Jid`, empty when unset (#122): the binaries
+/// compare and print jids as text, and an unset field reads as "no jid".
+pub fn jid_text_of(jid: &Option<wamux::proto::v1::Jid>) -> &str {
+    jid.as_ref().map_or("", |j| j.value.as_str())
+}
+
 /// Refuse a destination that is the connected account's own number.
 pub fn refuse_own_number(own: &str, dest: &str) -> Result<(), LiveEnvError> {
     if same_user(own, dest) {

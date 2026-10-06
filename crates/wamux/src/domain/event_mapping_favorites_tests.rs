@@ -31,6 +31,16 @@ fn favorites_event(ids: &[Option<&str>]) -> Event {
     )
 }
 
+/// The chats as the core relays them (#122): each a Jid, verbatim.
+fn wire_chats(values: &[&str]) -> Vec<pb::Jid> {
+    values
+        .iter()
+        .map(|v| pb::Jid {
+            value: v.to_string(),
+        })
+        .collect()
+}
+
 fn mapped_favorites(event: &Event) -> pb::FavoritesChanged {
     match map_event(event).into_iter().next() {
         Some(PbEvent::FavoritesChanged(f)) => f,
@@ -43,7 +53,7 @@ fn mapped_favorites(event: &Event) -> pb::FavoritesChanged {
 #[test]
 fn maps_favorites_list_in_order_and_verbatim() {
     let f = mapped_favorites(&favorites_event(&[Some(LID_JID), Some(GROUP_JID)]));
-    assert_eq!(f.chats, vec![LID_JID.to_string(), GROUP_JID.to_string()]);
+    assert_eq!(f.chats, wire_chats(&[LID_JID, GROUP_JID]));
     assert_eq!(f.timestamp, MUTATION_MS);
     assert!(f.from_full_sync);
 }
@@ -62,7 +72,17 @@ fn maps_empty_favorites_to_an_event_with_no_chats() {
 #[test]
 fn skips_a_favorite_without_an_id() {
     let f = mapped_favorites(&favorites_event(&[None, Some(GROUP_JID)]));
-    assert_eq!(f.chats, vec![GROUP_JID.to_string()]);
+    assert_eq!(f.chats, wire_chats(&[GROUP_JID]));
+}
+
+// #122: an id the wire sent empty names no chat either. It is dropped, never
+// relayed as `Jid { value: "" }`; `raw` still carries the entry.
+#[test]
+fn a_favorite_with_an_empty_id_is_dropped() {
+    let f = mapped_favorites(&favorites_event(&[Some(""), Some(GROUP_JID)]));
+    assert_eq!(f.chats, wire_chats(&[GROUP_JID]));
+    let action = FavoritesAction::decode_from_slice(&f.raw).unwrap();
+    assert_eq!(action.favorites.len(), 2);
 }
 
 // `raw` is the action protobuf itself, entries without an id included.

@@ -35,7 +35,7 @@ use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux_tools::delivery::{EventTap, judge_send};
 use wamux_tools::live_env::{
-    PEER_REF_VAR, account_ref_from, delivery_window_from, live_dest_from, process_env,
+    PEER_REF_VAR, account_ref_from, delivery_window_from, jid_text_of, live_dest_from, process_env,
     refuse_own_number, socket_path_from,
 };
 use wamux_tools::report::Report;
@@ -161,7 +161,7 @@ fn sighting_of(envelope: &pb::EventEnvelope, sent_id: &str) -> Option<Sighting> 
         "text={:?} raw={}B chat={}",
         inbound.text,
         inbound.raw_message.len(),
-        inbound.chat
+        jid_text_of(&inbound.chat)
     );
     Some((envelope.account_uuid.clone(), key.from_me, body))
 }

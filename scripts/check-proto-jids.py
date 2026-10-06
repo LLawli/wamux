@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#72 / #120: every field of the socket contract that carries a jid is the
+"""#72 / #120 / #122: every field of the socket contract that carries a jid is the
 `Jid` message, never a bare `string`.
 
 Usage: scripts/check-proto-jids.py [--root DIR]   (DIR defaults to the repo)
@@ -14,10 +14,11 @@ its role (`chat`, `sender`, `participant(s)`, `recipient(s)`, `voter(s)`,
 `from`, `lid`, `pn`, ...). Only `crates/wamux-proto/proto/*.proto` is read:
 `proto/store/` is the on-disk blob format, not the contract.
 
-PENDING names the fields #122 still has to migrate (#121 emptied its own), each with its
-issue. A pending field that is no longer a `string` jid fails too, so the list
-only shrinks. The scan must read at least MIN_SCANNED files, so a scan that
-reads nothing cannot pass.
+There is no list of exceptions: #122 migrated the last pending field and the
+list that tracked them went with it, so any `string` jid field fails. Two names
+look like jid roles and are not, so ROLES leaves them out: `phone_number`
+(PairPhone takes digits) and `query`. The scan must read at least MIN_SCANNED
+files, so a scan that reads nothing cannot pass.
 """
 import argparse
 import re
@@ -30,26 +31,6 @@ ROLES = {
     "chat", "chats", "sender", "sender_alt", "recipient", "recipients", "recipient_alt",
     "participant", "participants", "voter", "voters", "creator", "poll_creator", "from",
     "lid", "pn", "group", "newsletter", "mention", "mentions",
-}
-PENDING: dict[str, str] = {
-    "events.proto:InboundMessage.chat": "#122",
-    "events.proto:InboundMessage.sender": "#122",
-    "events.proto:InboundMessage.sender_alt": "#122",
-    "events.proto:InboundMessage.recipient_alt": "#122",
-    "events.proto:ReceiptEvent.chat": "#122",
-    "events.proto:ReceiptEvent.sender": "#122",
-    "events.proto:UndecryptableEvent.chat": "#122",
-    "events.proto:UndecryptableEvent.sender": "#122",
-    "events.proto:PresenceUpdate.jid": "#122",
-    "events.proto:PresenceUpdate.chat": "#122",
-    "events.proto:GroupUpdate.group_jid": "#122",
-    "events.proto:PushNameUpdate.jid": "#122",
-    "events.proto:ContactUpdate.jid": "#122",
-    "events.proto:AppStateUpdate.chat": "#122",
-    "events.proto:FavoritesChanged.chats": "#122",
-    "events.proto:NewsletterLiveUpdate.newsletter_jid": "#122",
-    "events.proto:CallEvent.from": "#122",
-    "events.proto:ServerAckEvent.from": "#122",
 }
 FIELD = re.compile(r"^\s*(?:repeated\s+|optional\s+)?string\s+(\w+)\s*=\s*\d+")
 BLOCK = re.compile(r"^\s*(?:message|enum|oneof|service)\s+(\w+)\s*\{")
@@ -83,22 +64,18 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--root", type=Path, default=REPO)
     args = parser.parse_args(argv)
     problems: list[str] = []
-    found: set[str] = set()
     files = sorted((args.root / PROTO_DIR).glob("*.proto"))
     for path in files:
         rel = path.relative_to(args.root / PROTO_DIR).as_posix()
         for name, number in string_jid_fields(path, rel):
-            found.add(name)
-            if name not in PENDING:
-                problems.append(f"{PROTO_DIR}/{rel.split(':')[0]}:{number}: {name.split(':')[1]} is a string jid")
-    problems += [f"{name} is no longer a string jid: remove it from PENDING" for name in sorted(PENDING) if name not in found]
+            problems.append(f"{PROTO_DIR}/{rel.split(':')[0]}:{number}: {name.split(':')[1]} is a string jid")
     if len(files) < MIN_SCANNED:
         problems.append(f"scanned {len(files)} files under {PROTO_DIR}, expected at least {MIN_SCANNED}: the layout moved or the scan broke")
     if problems:
         print("proto jid check FAILED (a jid field is the Jid message, #72):")
         print("\n".join(f"  - {p}" for p in problems))
         return 1
-    print(f"no string jid field in {len(files)} proto files ({len(PENDING)} pending: {', '.join(sorted(set(PENDING.values())))})")
+    print(f"no string jid field in {len(files)} proto files")
     return 0
 
 

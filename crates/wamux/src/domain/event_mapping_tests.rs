@@ -139,8 +139,9 @@ fn a_sent_text_echoes_with_the_inbound_shape() {
     let key = out.key.expect("key must be set");
     assert!(key.from_me, "an echo is always from_me");
     assert_eq!(key.id, "3EB0SENT");
-    assert_eq!(out.chat, "5511999999999@s.whatsapp.net");
-    assert_eq!(out.sender, "5511888888888@s.whatsapp.net");
+    // #122: both ends are Jids, verbatim.
+    assert_eq!(out.chat, wire("5511999999999@s.whatsapp.net"));
+    assert_eq!(out.sender, wire("5511888888888@s.whatsapp.net"));
     assert_eq!(out.text, "oi");
     assert_eq!(out.timestamp, 1_756_800_000_000);
 }
@@ -334,8 +335,8 @@ fn maps_conversation_text_message_with_key_and_metadata() {
         ..Default::default()
     });
     assert_eq!(out.text, "hello world");
-    assert_eq!(out.chat, CHAT_JID);
-    assert_eq!(out.sender, SENDER_JID);
+    assert_eq!(out.chat, wire(CHAT_JID));
+    assert_eq!(out.sender, wire(SENDER_JID));
     assert_eq!(out.push_name, "Alice");
     assert_eq!(out.timestamp, 1_717_932_000_000);
 
@@ -379,21 +380,22 @@ fn relays_the_stanza_alt_jids_of_a_lid_sender() {
         Some(PbEvent::Message(m)) => m,
         other => panic!("expected inbound message, got {other:?}"),
     };
-    assert_eq!(out.sender, LID_JID);
-    assert_eq!(out.sender_alt, SENDER_JID);
-    assert_eq!(out.recipient_alt, "5511888000222@s.whatsapp.net");
+    assert_eq!(out.sender, wire(LID_JID));
+    assert_eq!(out.sender_alt, wire(SENDER_JID));
+    assert_eq!(out.recipient_alt, wire("5511888000222@s.whatsapp.net"));
 }
 
 // Absent on the stanza means absent on the wire: the core must not synthesize
 // the other namespace from the user part (that would be guessing identity).
+// #122: absent is an unset Jid, never `Jid { value: "" }`.
 #[test]
-fn absent_alt_jids_stay_empty_never_synthesized() {
+fn absent_alt_jids_stay_unset_never_synthesized() {
     let out = mapped_inbound(wa::Message {
         conversation: Some("hello".to_string()),
         ..Default::default()
     });
-    assert!(out.sender_alt.is_empty(), "got {:?}", out.sender_alt);
-    assert!(out.recipient_alt.is_empty(), "got {:?}", out.recipient_alt);
+    assert_eq!(out.sender_alt, None);
+    assert_eq!(out.recipient_alt, None);
 }
 
 #[test]
@@ -569,8 +571,8 @@ fn maps_receipt_with_ids_type_and_millis() {
     );
     match map_one(&event) {
         Some(PbEvent::Receipt(r)) => {
-            assert_eq!(r.chat, CHAT_JID);
-            assert_eq!(r.sender, SENDER_JID);
+            assert_eq!(r.chat, wire(CHAT_JID));
+            assert_eq!(r.sender, wire(SENDER_JID));
             assert_eq!(r.message_ids, ["AAA111", "BBB222"]);
             // Lowercase wire token per the proto contract, never Debug casing.
             assert_eq!(r.r#type, "read");
@@ -592,8 +594,8 @@ fn maps_undecryptable_message_with_reason() {
     );
     match map_one(&event) {
         Some(PbEvent::Undecryptable(u)) => {
-            assert_eq!(u.chat, CHAT_JID);
-            assert_eq!(u.sender, SENDER_JID);
+            assert_eq!(u.chat, wire(CHAT_JID));
+            assert_eq!(u.sender, wire(SENDER_JID));
             assert_eq!(u.reason, "ViewOnce");
         }
         other => panic!("expected undecryptable, got {other:?}"),
@@ -609,13 +611,13 @@ fn maps_presence_offline_with_last_seen_seconds() {
             .last_seen(wacore::time::from_secs(1_717_932_000).unwrap())
             .build(),
     ));
-    assert_eq!(p.jid, SENDER_JID);
+    assert_eq!(p.jid, wire(SENDER_JID));
     // "unavailable" on the wire means offline for the edge: the flag inverts.
     assert_eq!(p.online, Some(false));
     assert_eq!(p.last_seen, 1_717_932_000);
     assert!(p.chat_state.is_empty());
-    // Real presence is not scoped to a conversation (issue #24).
-    assert!(p.chat.is_empty());
+    // Real presence is not scoped to a conversation (issue #24): unset (#122).
+    assert_eq!(p.chat, None);
 }
 
 #[test]
@@ -639,7 +641,7 @@ fn maps_chat_presence_to_composing_state() {
             .media(ChatPresenceMedia::Text)
             .build(),
     ));
-    assert_eq!(p.jid, SENDER_JID);
+    assert_eq!(p.jid, wire(SENDER_JID));
     // A chat state measures no presence: the field used to hardcode true, which
     // lit an "online" dot off a literal (issue #24).
     assert_eq!(p.online, None);
@@ -660,8 +662,8 @@ fn chat_presence_in_a_group_names_the_group_not_only_the_sender() {
             .media(ChatPresenceMedia::Text)
             .build(),
     ));
-    assert_eq!(p.jid, SENDER_JID);
-    assert_eq!(p.chat, CHAT_JID);
+    assert_eq!(p.jid, wire(SENDER_JID));
+    assert_eq!(p.chat, wire(CHAT_JID));
 }
 
 #[test]
@@ -678,7 +680,7 @@ fn chat_presence_in_a_direct_chat_names_the_contact_as_the_conversation() {
             .media(ChatPresenceMedia::Text)
             .build(),
     ));
-    assert_eq!(p.chat, SENDER_JID);
+    assert_eq!(p.chat, wire(SENDER_JID));
     assert_eq!(p.chat_state, "paused");
 }
 
@@ -906,7 +908,7 @@ fn maps_server_ack_so_a_send_can_be_confirmed_against_the_server() {
             // Correlates with SendResult.key.id; that pairing is the whole point.
             assert_eq!(a.id, "3EB0ABCDEF");
             assert_eq!(a.class, "message");
-            assert_eq!(a.from, SENDER_JID);
+            assert_eq!(a.from, wire(SENDER_JID));
             assert_eq!(a.timestamp, 1_717_932_222_000);
             // A plain ack is not a nack: the error field stays empty.
             assert!(a.error.is_empty());
@@ -929,8 +931,9 @@ fn server_nack_relays_its_error_code() {
     match map_one(&event) {
         Some(PbEvent::ServerAck(a)) => {
             assert_eq!(a.error, "479");
-            // Absent server attrs stay proto3 defaults, never a fake value.
-            assert!(a.from.is_empty());
+            // Absent server attrs stay proto3 defaults, never a fake value; an
+            // absent jid is an unset field (#122).
+            assert_eq!(a.from, None);
             assert_eq!(a.timestamp, 0);
         }
         other => panic!("expected server ack, got {other:?}"),
@@ -1010,7 +1013,7 @@ fn maps_archive_update_to_typed_app_state() {
             .from_full_sync(false)
             .build(),
     ));
-    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.chat, wire(CHAT_JID));
     assert_eq!(s.kind, "archive");
     // raw is the verbatim serde_json of the lib struct: the edge decodes it.
     // Jid serializes structurally (user/server/...), so we assert the user part
@@ -1031,7 +1034,7 @@ fn maps_pin_update_to_typed_app_state() {
             .from_full_sync(false)
             .build(),
     ));
-    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.chat, wire(CHAT_JID));
     assert_eq!(s.kind, "pin");
 }
 
@@ -1045,7 +1048,7 @@ fn maps_mute_update_to_typed_app_state() {
             .from_full_sync(false)
             .build(),
     ));
-    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.chat, wire(CHAT_JID));
     assert_eq!(s.kind, "mute");
 }
 
@@ -1063,7 +1066,7 @@ fn maps_star_update_reads_chat_jid() {
             .from_full_sync(false)
             .build(),
     ));
-    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.chat, wire(CHAT_JID));
     assert_eq!(s.kind, "star");
 }
 
@@ -1077,7 +1080,7 @@ fn maps_mark_chat_as_read_update_to_typed_app_state() {
             .from_full_sync(false)
             .build(),
     ));
-    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.chat, wire(CHAT_JID));
     assert_eq!(s.kind, "mark_read");
 }
 
@@ -1092,7 +1095,7 @@ fn maps_delete_chat_update_to_typed_app_state() {
             .from_full_sync(false)
             .build(),
     ));
-    assert_eq!(s.chat, CHAT_JID);
+    assert_eq!(s.chat, wire(CHAT_JID));
     assert_eq!(s.kind, "delete_chat");
 }
 
@@ -1119,7 +1122,7 @@ fn maps_incoming_call_offer_to_typed_call_event() {
     ));
     match map_one(&event) {
         Some(PbEvent::Call(c)) => {
-            assert_eq!(c.from, SENDER_JID);
+            assert_eq!(c.from, wire(SENDER_JID));
             // call_id is the CallAction id, NOT the stanza id.
             assert_eq!(c.call_id, "CALL-ID-1");
             assert_eq!(c.action, "offer");

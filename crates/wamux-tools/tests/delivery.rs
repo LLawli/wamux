@@ -33,8 +33,12 @@ fn receipt(kind: &str, ids: &[&str]) -> pb::EventEnvelope {
     pb::EventEnvelope {
         account_uuid: "acct".into(),
         event: Some(pb::event_envelope::Event::Receipt(pb::ReceiptEvent {
-            chat: "5561900000001@s.whatsapp.net".into(),
-            sender: "5561900000001@s.whatsapp.net".into(),
+            chat: Some(pb::Jid {
+                value: "5561900000001@s.whatsapp.net".into(),
+            }),
+            sender: Some(pb::Jid {
+                value: "5561900000001@s.whatsapp.net".into(),
+            }),
             message_ids: ids.iter().map(|s| s.to_string()).collect(),
             r#type: kind.into(),
             timestamp: 1,

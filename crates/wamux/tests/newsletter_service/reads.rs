@@ -109,7 +109,9 @@ fn relayed_row(row: &Row) -> pb::NewsletterMessage {
                 from_me: false,
                 participant: None,
             }),
-            chat: CHANNEL.into(),
+            chat: Some(pb::Jid {
+                value: CHANNEL.into(),
+            }),
             timestamp: t * 1000,
             raw_message: captured::payload(server_id, mediatype).encode_to_vec(),
             media: Some(media),

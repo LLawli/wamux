@@ -46,7 +46,7 @@ use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::group_service_client::GroupServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux_tools::live_env::{
-    PEER_REF_VAR, account_ref_from, bare_jid, process_env, required_from, same_user,
+    PEER_REF_VAR, account_ref_from, bare_jid, jid_text_of, process_env, required_from, same_user,
     socket_path_from,
 };
 use wamux_tools::report::Report;
@@ -217,7 +217,10 @@ async fn collect_chat_states(
         }
         println!(
             "[recv] chat_state={} jid={} chat={:?} online={:?}",
-            p.chat_state, p.jid, p.chat, p.online
+            p.chat_state,
+            jid_text_of(&p.jid),
+            jid_text_of(&p.chat),
+            p.online
         );
         seen.push(p);
     }
@@ -227,14 +230,14 @@ async fn collect_chat_states(
 /// The verdict. Both halves must be present and must differ in `chat`, which is
 /// the property #24 asked for; a run that saw only one half proves nothing.
 fn judge(report: &mut Report, seen: &[pb::PresenceUpdate], group: &str) {
-    let in_group = seen.iter().find(|p| p.chat == group);
+    let in_group = seen.iter().find(|p| jid_text_of(&p.chat) == group);
     let in_dm = seen
         .iter()
-        .find(|p| !p.chat.is_empty() && !p.chat.contains("@g.us"));
+        .find(|p| !jid_text_of(&p.chat).is_empty() && !jid_text_of(&p.chat).contains("@g.us"));
     match in_group {
         Some(g) => report.pass(
             "group chat state names the group",
-            format!("chat={}", g.chat),
+            format!("chat={}", jid_text_of(&g.chat)),
         ),
         None => report.fail(
             "group chat state names the group",
@@ -244,7 +247,7 @@ fn judge(report: &mut Report, seen: &[pb::PresenceUpdate], group: &str) {
     match in_dm {
         Some(d) => report.pass(
             "direct chat state names the contact",
-            format!("chat={}", d.chat),
+            format!("chat={}", jid_text_of(&d.chat)),
         ),
         None => report.fail(
             "direct chat state names the contact",

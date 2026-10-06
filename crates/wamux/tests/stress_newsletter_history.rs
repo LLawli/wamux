@@ -195,7 +195,7 @@ async fn core_reads_the_captured_page() {
     // The point of #26: a row lands in the shape the event bus delivers.
     let first = inbound(&rows[0]);
     assert_eq!(first.text, "bom dia");
-    assert_eq!(first.chat, CHANNEL);
+    assert_eq!(first.chat.as_ref().map(|c| c.value.as_str()), Some(CHANNEL));
     assert_eq!(first.timestamp, 1_790_001_172_000, "seconds become ms");
     assert_eq!(first.raw_message, text_payload("bom dia"));
     let key = first.key.as_ref().expect("the key is always built");
@@ -206,8 +206,10 @@ async fn core_reads_the_captured_page() {
     // #120: the row names no participant, and an absent jid is unset.
     assert_eq!(key.participant, None);
     assert!(!key.from_me);
-    // The row names no sender, so nothing is invented beyond `from_me`.
-    assert!(first.sender.is_empty() && first.push_name.is_empty());
+    // The row names no sender, so nothing is invented beyond `from_me`: an
+    // unset Jid (#122), not an empty one.
+    assert_eq!(first.sender, None);
+    assert!(first.push_name.is_empty());
     assert!(inbound(&rows[6]).key.as_ref().expect("key").from_me);
 
     // The server-side tallies, the reason this RPC exists.

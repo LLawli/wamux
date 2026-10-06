@@ -8,7 +8,7 @@ use tonic::transport::Channel;
 
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::media_service_client::MediaServiceClient;
-use wamux_tools::live_env::same_user;
+use wamux_tools::live_env::{jid_text_of, same_user};
 use wamux_tools::report::Report;
 
 use crate::E2eCtx;
@@ -57,8 +57,10 @@ fn received_message<'a>(
         return None;
     };
     let from_other = m.key.as_ref().is_some_and(|key| !key.from_me);
-    let direct = !m.chat.ends_with("@g.us") && !m.chat.ends_with("@newsletter");
-    let from_dest = same_user(&m.sender, dest) || same_user(&m.sender_alt, dest);
+    let chat = jid_text_of(&m.chat);
+    let direct = !chat.ends_with("@g.us") && !chat.ends_with("@newsletter");
+    let from_dest =
+        same_user(jid_text_of(&m.sender), dest) || same_user(jid_text_of(&m.sender_alt), dest);
     (from_other && direct && from_dest).then_some(m)
 }
 
