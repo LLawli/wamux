@@ -496,6 +496,26 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: event fields that were free strings or Rust `Debug` output are
+  proto enums** (issue #126, part 1 of #73). `ReceiptEvent.type`,
+  `PresenceUpdate.chat_state`, `AppStateUpdate.kind`, `CallEvent.action`,
+  `StickerPackInfo.origin` and `UndecryptableEvent.reason` are enums, each under
+  a new number with the old one `reserved`. Old string to new value for each:
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 2a.
+  - Each enum has `*_UNSPECIFIED = 0` for "no value" and `*_UNKNOWN = 1` for a
+    value the library hands over that wamux does not name. Where the original
+    survives, it travels next to `UNKNOWN`: an unnamed receipt type in
+    `type_raw`, a call action added upstream in `action_raw`.
+  - `ConnectionStateChanged.detail`, the `Debug` of the logout reason or of the
+    whole ban, is replaced by `logged_out { reason, reason_code }` and
+    `ban { reason, reason_code, expire_seconds, message, url }`, each set only
+    in its own state. A server code the library does not name is `UNKNOWN`
+    with the number in `reason_code`.
+  - Every value the library names is an enum value. That includes the `sent`
+    receipt and eight call actions that used to relay as the library's wire tag.
+  - `scripts/check-wire-debug.py` fails CI on a `Debug` format spec in the
+    event mapping outside `variant_name`, the `RawEvent` catch-all.
+
 - **BREAKING: every jid an event carries is the `Jid` message** (issue #122,
   part 3 of #72, which it closes). Eighteen fields of `events.proto`, with the
   rules of parts 1 and 2: a new number with the old one `reserved`, and only
