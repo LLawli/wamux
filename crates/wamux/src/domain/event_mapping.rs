@@ -4,9 +4,8 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
 use wacore::types::call::IncomingCall;
-use wacore::types::events::{ConnectFailureReason, Event, Receipt, TemporaryBan};
+use wacore::types::events::{Event, LoggedOut, Receipt, TemporaryBan};
 use wacore::types::message::MessageInfo;
 use wamux_types::event_enums::{
     ban_reason_of, call_action_of, chat_state_of, logout_reason_of, receipt_type_of,
@@ -17,6 +16,10 @@ use whatsapp_rust::Jid;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
+use crate::domain::app_state_update::{
+    archive_update_of, delete_chat_update_of, mark_read_update_of, mute_update_of, pin_update_of,
+    star_update_of,
+};
 use crate::domain::contact_update::contact_update_of;
 use crate::domain::group_update::group_update_of;
 use crate::domain::sticker_packs;
@@ -33,7 +36,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
     match event {
         Event::Connected(_) => one(connection(pb::ConnectionState::Connected)),
         Event::Disconnected(_) => one(connection(pb::ConnectionState::Disconnected)),
-        Event::LoggedOut(l) => one(logged_out(l.reason)),
+        Event::LoggedOut(l) => one(logged_out(l)),
         Event::TemporaryBan(b) => one(temporary_ban(b)),
 
         // 0.7 sealed every payload into its own struct, so these are tuple
@@ -111,33 +114,14 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // decodes `raw` (a `wa.HistorySync` protobuf) itself.
         Event::HistorySync(h) => one(history_sync(h)),
 
-        // App-state (companion-sync) chat mutations. Each lib variant is its own
-        // struct sharing a `jid`/`chat_jid` + serde shape; we relay the typed
-        // chat + a kind token, with the action detail in `raw`. StarUpdate names
-        // its chat `chat_jid` (it points at a message, not the chat itself), so
-        // it can't share the `jid`-projecting helper.
-        Event::ArchiveUpdate(s) => one(Pb::AppState(app_state(
-            &s.jid,
-            pb::AppStateKind::Archive,
-            s,
-        ))),
-        Event::PinUpdate(s) => one(Pb::AppState(app_state(&s.jid, pb::AppStateKind::Pin, s))),
-        Event::MuteUpdate(s) => one(Pb::AppState(app_state(&s.jid, pb::AppStateKind::Mute, s))),
-        Event::StarUpdate(s) => one(Pb::AppState(app_state(
-            &s.chat_jid,
-            pb::AppStateKind::Star,
-            s,
-        ))),
-        Event::MarkChatAsReadUpdate(s) => one(Pb::AppState(app_state(
-            &s.jid,
-            pb::AppStateKind::MarkRead,
-            s,
-        ))),
-        Event::DeleteChatUpdate(s) => one(Pb::AppState(app_state(
-            &s.jid,
-            pb::AppStateKind::DeleteChat,
-            s,
-        ))),
+        // App-state (companion-sync) chat mutations, one concrete function per
+        // library struct (#134: was one generic helper and JSON).
+        Event::ArchiveUpdate(s) => one(Pb::AppState(archive_update_of(s))),
+        Event::PinUpdate(s) => one(Pb::AppState(pin_update_of(s))),
+        Event::MuteUpdate(s) => one(Pb::AppState(mute_update_of(s))),
+        Event::StarUpdate(s) => one(Pb::AppState(star_update_of(s))),
+        Event::MarkChatAsReadUpdate(s) => one(Pb::AppState(mark_read_update_of(s))),
+        Event::DeleteChatUpdate(s) => one(Pb::AppState(delete_chat_update_of(s))),
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),
@@ -232,20 +216,6 @@ fn history_sync(h: &wacore::types::events::LazyHistorySync) -> pb::event_envelop
     }
 }
 
-/// Build an `AppStateUpdate` from any app-state lib struct. Generic over the
-/// concrete update type so all six variants share the `serde_json` projection;
-/// the caller passes the already-extracted chat jid (named `jid` on five of
-/// them, `chat_jid` on StarUpdate).
-fn app_state<T: Serialize>(chat: &Jid, kind: pb::AppStateKind, update: &T) -> pb::AppStateUpdate {
-    pb::AppStateUpdate {
-        // A lib Jid always renders non-empty, so this is set; the field is a
-        // message only because every jid on the wire is (#122).
-        chat: lib_jid(chat),
-        kind: kind as i32,
-        raw: serde_json::to_vec(update).unwrap_or_default(),
-    }
-}
-
 /// The whole favorites list, ids verbatim and in the phone's order. `id` is
 /// optional on the wire; a missing one is skipped rather than relayed as an
 /// empty string a consumer would take for a chat. `raw` keeps every entry.
@@ -329,12 +299,22 @@ fn connection_with(
     })
 }
 
-/// The reason the server gave, as the enum plus its code when UNKNOWN (#126).
-fn logged_out(reason: ConnectFailureReason) -> pb::event_envelope::Event {
-    let (reason, reason_code) = logout_reason_of(reason);
+/// The reason the server gave, as the enum plus its code when UNKNOWN (#126),
+/// the server's logout copy and whether it refused the connection (#134).
+fn logged_out(logout: &LoggedOut) -> pb::event_envelope::Event {
+    let (reason, reason_code) = logout_reason_of(logout.reason);
     let info = pb::LoggedOutInfo {
         reason: reason as i32,
         reason_code,
+        logout_message: logout
+            .logout_message
+            .as_ref()
+            .map(|message| pb::LogoutMessage {
+                header: message.header.clone(),
+                subtext: message.subtext.clone(),
+                locale: message.locale.clone(),
+            }),
+        on_connect: logout.on_connect,
     };
     connection_with(pb::ConnectionState::LoggedOut, Some(info), None)
 }
@@ -525,7 +505,7 @@ fn optional_lib_jid(jid: Option<&Jid>) -> Option<pb::Jid> {
 }
 
 /// Project a wa `MessageKey` into the proto one (proto3 empty == lib `None`).
-fn wa_key_to_proto(k: &wa::MessageKey) -> pb::MessageKey {
+pub(crate) fn wa_key_to_proto(k: &wa::MessageKey) -> pb::MessageKey {
     pb::MessageKey {
         chat: relay_jid(k.remote_jid.clone().unwrap_or_default()),
         id: k.id.clone().unwrap_or_default(),
@@ -677,6 +657,9 @@ mod jid_tests;
 #[cfg(test)]
 #[path = "event_mapping_live_update_tests.rs"]
 mod live_update_tests;
+#[cfg(test)]
+#[path = "event_mapping_logout_tests.rs"]
+mod logout_tests;
 #[cfg(test)]
 #[path = "event_mapping_media_tests.rs"]
 mod media_tests;
