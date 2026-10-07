@@ -564,3 +564,51 @@ The action cases, by payload:
   and stop reading `kind`.
 - Read jids as `.value` instead of rebuilding them from `user` and `server`.
 - Read the times as milliseconds.
+
+### 3c. App-state updates and the logout message (#134)
+
+| Message | Before | After |
+|---|---|---|
+| `AppStateUpdate` | `AppStateKind kind = 5`, `bytes raw = 3` | both `reserved`; `timestamp = 6`, `action_timestamp = 7`, `from_full_sync = 8`, `oneof action` (10 to 15) |
+| `LoggedOutInfo` | `reason`, `reason_code` | plus `LogoutMessage logout_message = 3` and `bool on_connect = 4` |
+
+The `AppStateKind` enum is removed from the contract. Section 2a's
+`kind` values map to the `oneof action` cases: `APP_STATE_KIND_ARCHIVE` is
+`archive`, `PIN` is `pin`, `MUTE` is `mute`, `STAR` is `star`, `MARK_READ` is
+`mark_read`, and `DELETE_CHAT` is `delete_chat`. The payload messages live in the new
+`app_state.proto`.
+
+**App-state update, JSON key to field.**
+
+| JSON (`raw`) | `AppStateUpdate` |
+|---|---|
+| `jid` / `chat_jid` (star) | `chat` (already a `Jid` since #122) |
+| `timestamp` (RFC 3339) | `timestamp` (ms) |
+| `action_timestamp` (RFC 3339 or `null`) | `action_timestamp` (ms, unset when the mutation had none) |
+| `from_full_sync` | `from_full_sync` |
+| `action.archived` | `archive.archived` |
+| `action.pinned` | `pin.pinned` |
+| `action.muted`, `action.auto_muted` | `mute.muted`, `mute.auto_muted` |
+| `action.mute_end_timestamp` (ms) | `mute.mute_end_timestamp` (ms, unchanged; unset on an unmute) |
+| `action.mute_everyone_mention_end_timestamp` | `mute.mute_everyone_mention_end_timestamp` (verbatim, unit not verified) |
+| `participant_jid`, `message_id`, `from_me`, `action.starred` (star) | `star.participant` (`Jid`), `star.message_id`, `star.from_me`, `star.starred` |
+| `action.read` | `mark_read.read` (false is "mark as unread") |
+| `delete_media` (delete) | `delete_chat.delete_media` |
+| `action.message_range.last_message_timestamp`, `last_system_message_timestamp` (unix s) | `message_range.last_message_timestamp`, `last_system_message_timestamp` (ms) |
+| `action.message_range.messages[].key` (`remote_jid`, `from_me`, `id`, `participant`) | `message_range.messages[].key` (`MessageKey`: `chat`, `from_me`, `id`, `participant`) |
+| `action.message_range.messages[].timestamp` (unix s) | `message_range.messages[].timestamp` (ms) |
+
+`message_range` sits on `archive`, `mark_read` and `delete_chat`.
+
+**Logout.** `ConnectionStateChanged.logged_out` (section 2a) now also carries:
+
+- `logout_message`: the server's own copy. It is set in practice on an
+  account lock. Show it only when its `locale` matches the user's, as WA Web
+  does.
+- `on_connect`: true when the server refused the connection itself.
+
+**What the edge has to do:**
+
+- Switch on the `oneof action` case where it switched on `kind`.
+- Read the message range's times as milliseconds. They were seconds.
+- Read a range message's chat from `key.chat.value`.

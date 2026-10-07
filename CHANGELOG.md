@@ -496,6 +496,22 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: app-state updates are typed, and a forced logout carries the
+  server's copy** (issue #134, part 3 of #74). `AppStateUpdate` loses `raw`
+  (the library's JSON) and `kind` (the #126 enum, now redundant), both
+  `reserved`, and the `AppStateKind` enum is gone. JSON key to field:
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3c.
+  - `AppStateUpdate` carries `timestamp` and `action_timestamp` in ms,
+    `from_full_sync`, and a `oneof action`: `archive`, `pin`, `mute`, `star`,
+    `mark_read` or `delete_chat`, each with that action's own fields.
+  - A mute's end crosses in ms, as the server sends it. The message range's
+    times were unix seconds and are ms now. Both were measured live.
+  - A range message's key is a `MessageKey`, with `chat` and `participant` as
+    `Jid`s.
+  - `LoggedOutInfo` gains `logout_message` (`header`, `subtext`, `locale`), the
+    text the server wants shown on a forced logout, and `on_connect`. The raw
+    logout stanza (an account lock's appeal token) is #138.
+
 - **BREAKING: the group and contact update events are typed, not JSON**
   (issue #133, part 2 of #74). `GroupUpdate` and `ContactUpdate` lose `raw`
   (the library's JSON) and `kind` (a constant), both `reserved`. JSON key to
