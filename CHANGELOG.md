@@ -496,6 +496,31 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: group metadata, membership requests and the business profile
+  are typed messages, not JSON** (issue #132, part 1 of #74).
+  `GroupJidResponse.metadata`, `GroupMetadataResponse.metadata` and
+  `GroupSummary.metadata` are a `GroupMetadata` message, and
+  `MembershipRequestsResponse.requests` and `BusinessProfileResponse.profile`
+  are typed too, each under a new number with the old one `reserved`. JSON key
+  to field for each: `docs/BREAKING-CHANGES-2026-10-05.md`, section 3a.
+  - `GroupMetadata` carries every field the library parses (56), not the five
+    the JSON picked, and each participant whole: jid, phone number, lid,
+    username, role and the roster details (join time, label, display name).
+  - A field the server left out is unset, never `0` or `""`. An absent subject
+    used to be `""` in the JSON; inside `GroupMetadata` it is unset now.
+    `GroupSummary.subject` keeps `""`.
+  - Times are milliseconds, like every timestamp in the contract: the creation,
+    subject, description, join and request times were unix seconds.
+    `appeal_update_time`, `participant_label_mtime` and the growth lock's
+    `expiration` cross as the server sent them, because their unit is not
+    verified.
+  - A membership request's `jid` was the library's struct serialized as an
+    object (`{"user":..,"server":"lid",..}`, #96); it is a `Jid` now.
+  - `BusinessProfileResponse.profile` is unset for a jid with no business
+    profile, where `raw` held `null`.
+  - A serialization failure no longer reaches the edge as an empty payload: the
+    projections cannot fail.
+
 - **BREAKING: the channel fields are proto enums** (issue #128, part 3 of #73,
   which it closes). `Newsletter.verification`, `.state` and `.role`, and
   `NewsletterMessage.type`, `.poll_type` and `.edit` are enums, each under a new
