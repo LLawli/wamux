@@ -147,7 +147,7 @@ fn poll_rows(
     name: &str,
 ) -> Vec<String> {
     page.iter()
-        .filter(|row| row.r#type.contains("poll"))
+        .filter(|row| row.r#type() == pb::NewsletterMessageType::Poll)
         .map(|row| describe_poll(row, report, jid, name))
         .collect()
 }
@@ -168,8 +168,8 @@ fn describe_poll(
     let mut out = format!(
         "{} <{jid}> [{}/{}] server_id={} {} option(s), {} vote node(s)",
         display_name(name, jid),
-        row.r#type,
-        row.poll_type,
+        type_label(row),
+        poll_type_label(row),
         row.server_id,
         options.len(),
         row.votes.len(),
@@ -228,6 +228,23 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// The row's `type` as its enum name, plus the server's token when UNKNOWN.
+fn type_label(row: &pb::NewsletterMessage) -> String {
+    with_raw(row.r#type().as_str_name(), &row.type_raw)
+}
+
+/// The row's `poll_type` as its enum name, plus the server's token when UNKNOWN.
+fn poll_type_label(row: &pb::NewsletterMessage) -> String {
+    with_raw(row.poll_type().as_str_name(), &row.poll_type_raw)
+}
+
+fn with_raw(name: &str, raw: &str) -> String {
+    if raw.is_empty() {
+        return name.to_string();
+    }
+    format!("{name}({raw})")
+}
+
 /// One row, in one line: what the projection actually produced.
 ///
 /// The reaction tally is clipped. A big channel carries hundreds of distinct
@@ -238,7 +255,7 @@ fn describe(row: &pb::NewsletterMessage) -> String {
     format!(
         "server_id={:<8} type={:<8} from_me={:<5} t={} raw={}B fwd={} {} {}",
         row.server_id,
-        row.r#type,
+        type_label(row),
         message.key.as_ref().is_some_and(|key| key.from_me),
         message.timestamp,
         message.raw_message.len(),

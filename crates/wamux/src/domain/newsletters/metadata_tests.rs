@@ -3,6 +3,7 @@
 //! a real client in `tests/stress_newsletter_parse.rs`.
 
 use super::*;
+use whatsapp_rust::features::{NewsletterRole, NewsletterState, NewsletterVerification};
 
 /// A jid as the core relays it out (#121): the value verbatim.
 fn wire(value: &str) -> Option<pb::Jid> {
@@ -44,57 +45,44 @@ fn a_channel_relays_its_name_and_jid() {
     assert_eq!(out.creation_time, 1_688_746_895);
 }
 
+// #128: enums, with the raw halves empty on a named value.
 #[test]
-fn known_variants_relay_as_lowercase_tokens() {
+fn known_variants_relay_as_enum_values() {
     let out = metadata_to_proto(&metadata());
+    assert_eq!(out.verification(), pb::NewsletterVerification::Verified);
+    assert_eq!(out.state(), pb::NewsletterState::Active);
+    assert_eq!(out.role(), pb::NewsletterRole::Subscriber);
     assert_eq!(
-        (
-            out.verification.as_str(),
-            out.state.as_str(),
-            out.role.as_str()
-        ),
-        ("verified", "active", "subscriber")
-    );
-    for (state, token) in [
-        (NewsletterState::Suspended, "suspended"),
-        (NewsletterState::Geosuspended, "geosuspended"),
-    ] {
-        assert_eq!(state_token(&state), token);
-    }
-    for (role, token) in [
-        (NewsletterRole::Owner, "owner"),
-        (NewsletterRole::Admin, "admin"),
-        (NewsletterRole::Guest, "guest"),
-    ] {
-        assert_eq!(role_token(&role), token);
-    }
-    assert_eq!(
-        verification_token(&NewsletterVerification::Unverified),
-        "unverified"
+        (out.verification_raw.as_str(), out.state_raw.as_str()),
+        ("", "")
     );
 }
 
 // Upstream #1557 keeps a value it does not model in the server's spelling;
-// the contract carries it lowercased, like every other token.
+// since #128 the contract carries it verbatim next to UNKNOWN (it used to
+// lowercase it).
 #[test]
-fn an_unmodelled_state_or_verification_relays_lowercased() {
+fn an_unmodelled_state_or_verification_is_unknown_verbatim() {
     let mut meta = metadata();
     meta.state = NewsletterState::Other("DELETED".into());
     meta.verification = NewsletterVerification::Other("PENDING_REVIEW".into());
     let out = metadata_to_proto(&meta);
-    assert_eq!(
-        (out.state.as_str(), out.verification.as_str()),
-        ("deleted", "pending_review")
-    );
+    assert_eq!(out.state(), pb::NewsletterState::Unknown);
+    assert_eq!(out.state_raw, "DELETED");
+    assert_eq!(out.verification(), pb::NewsletterVerification::Unknown);
+    assert_eq!(out.verification_raw, "PENDING_REVIEW");
 }
 
 // Accepted loss (see the note in newsletters.rs): no role, or one the library
-// has no variant for, is the same `None`.
+// has no variant for, is the same `None`, which is UNSPECIFIED.
 #[test]
-fn no_role_relays_as_empty() {
+fn no_role_relays_as_unspecified() {
     let mut meta = metadata();
     meta.role = None;
-    assert_eq!(metadata_to_proto(&meta).role, "");
+    assert_eq!(
+        metadata_to_proto(&meta).role(),
+        pb::NewsletterRole::Unspecified
+    );
 }
 
 #[test]

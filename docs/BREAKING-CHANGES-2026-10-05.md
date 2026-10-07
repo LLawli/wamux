@@ -329,3 +329,69 @@ byte stream, and `SendPresence` still resolves the account and the chat first.
   token.
 - Pass the descriptor from the event to `DownloadMedia` untouched, as before.
 - Match the new refusal text if it parsed the old one; better, match the code.
+
+### 2c. Channel fields (#128, closes #73)
+
+| Message | Before | After |
+|---|---|---|
+| `Newsletter` | `string verification = 6` | `NewsletterVerification verification = 11`, `string verification_raw = 12` |
+| `Newsletter` | `string state = 7` | `NewsletterState state = 13`, `string state_raw = 14` |
+| `Newsletter` | `string role = 8` | `NewsletterRole role = 15` |
+| `NewsletterMessage` | `string type = 3` | `NewsletterMessageType type = 11`, `string type_raw = 12` |
+| `NewsletterMessage` | `string poll_type = 7` | `NewsletterPollType poll_type = 13`, `string poll_type_raw = 14` |
+| `NewsletterMessage` | `string edit = 8` | `EditAttribute edit = 15`, `string edit_raw = 16` |
+
+`poll_type` and `edit` were not on #73's list; they are the same case and
+joined it.
+
+Old values to new ones:
+
+- **`Newsletter.verification`:** `verified`, `unverified` →
+  `NEWSLETTER_VERIFICATION_VERIFIED`, `UNVERIFIED`.
+- **`Newsletter.state`:** `active`, `suspended`, `geosuspended` →
+  `NEWSLETTER_STATE_ACTIVE`, `SUSPENDED`, `GEOSUSPENDED`.
+- **`Newsletter.role`:** `owner`, `admin`, `subscriber`, `guest` →
+  `NEWSLETTER_ROLE_OWNER`, `ADMIN`, `SUBSCRIBER`, `GUEST`; `""` →
+  `NEWSLETTER_ROLE_UNSPECIFIED`.
+- **`NewsletterMessage.type`:** `text`, `media`, `poll` →
+  `NEWSLETTER_MESSAGE_TYPE_TEXT`, `MEDIA`, `POLL`; `""` (no attribute) →
+  `UNSPECIFIED`. Any other token is `UNKNOWN` with the token in `type_raw`.
+  That includes the five the library names but documents as never sent by the
+  server (`reaction`, `revoke`, `poll_creation`, `poll_vote`, `edit`).
+- **`NewsletterMessage.poll_type`:** `creation`, `quiz_creation`, `vote`,
+  `result_snapshot`, `edit` → `NEWSLETTER_POLL_TYPE_CREATION` ...
+  `RESULT_SNAPSHOT`, `EDIT`; `""` → `UNSPECIFIED`. It is still read on any row,
+  as before, not only on a `POLL` row.
+- **`NewsletterMessage.edit`:** `"1"` → `EDIT_ATTRIBUTE_MESSAGE_EDIT`, `"2"` →
+  `PIN_IN_CHAT`, `"3"` → `ADMIN_EDIT`, `"7"` → `SENDER_REVOKE`, `"8"` →
+  `ADMIN_REVOKE`, `""` → `UNSPECIFIED`. The enum numbers are not the server's
+  tokens.
+
+**Two things that are not a plain rename:**
+
+- **The raw value is now verbatim.** A state or verification the library does
+  not model used to relay lowercased (`deleted`, `pending_review`). It is now
+  `UNKNOWN` with the server's spelling in `state_raw` / `verification_raw`
+  (`DELETED`, `PENDING_REVIEW`). The core relays the token; it does not rewrite
+  it.
+- **Two defaults stay as they were (#56).** The library reads an absent state as
+  `ACTIVE` and an absent verification as `UNVERIFIED`, and the core cannot tell
+  those apart from a value the server sent. So `NEWSLETTER_STATE_UNSPECIFIED`
+  and `NEWSLETTER_VERIFICATION_UNSPECIFIED` are never emitted. A role the
+  library does not model reaches the core as no role at all, so it is
+  `NEWSLETTER_ROLE_UNSPECIFIED`, and there is no `role_raw` because no token
+  survives.
+
+**What the edge has to do:**
+
+- Compare against the enum values where it compared strings, and read the
+  `*_raw` field only when the value is `UNKNOWN`.
+- Stop lowercasing or case-folding an unknown state or verification. It arrives
+  as the server spelled it.
+- Read `edit` as the enum instead of matching `"3"` and `"8"`.
+
+With this section, the Phase D enum work (#73) is complete: every enum-like
+value in the contract is a proto enum. Four stay strings because they relay an
+open set the server or the library can grow at any time (decided in #126):
+`RawEvent.kind`, `ServerAckEvent.class`, `ParticipantChange.status` and
+`PairedInfo.platform`.

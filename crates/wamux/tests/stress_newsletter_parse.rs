@@ -19,6 +19,7 @@
 
 use serde_json::{Value, json};
 use wamux::domain::newsletters;
+use wamux::proto::v1 as pb;
 use wamux::stress::MockWaServer;
 use wamux_types::Jid;
 
@@ -64,31 +65,80 @@ fn answer_one_channel(mock: &MockWaServer, node: Value) {
     mock.answer_mex_with(&json!({ "data": { "xwa2_newsletter": node } }).to_string());
 }
 
+/// One server answer and what the core relays for it (#128): each enum, and
+/// the raw halves of state and verification.
+struct ChannelCase {
+    wire: (&'static str, &'static str, &'static str),
+    state: (pb::NewsletterState, &'static str),
+    verification: (pb::NewsletterVerification, &'static str),
+    role: pb::NewsletterRole,
+}
+
+fn channel_cases() -> [ChannelCase; 5] {
+    use pb::{NewsletterRole as R, NewsletterState as S, NewsletterVerification as V};
+    [
+        ChannelCase {
+            wire: ("ACTIVE", "VERIFIED", "SUBSCRIBER"),
+            state: (S::Active, ""),
+            verification: (V::Verified, ""),
+            role: R::Subscriber,
+        },
+        ChannelCase {
+            wire: ("SUSPENDED", "VERIFIED", "GUEST"),
+            state: (S::Suspended, ""),
+            verification: (V::Verified, ""),
+            role: R::Guest,
+        },
+        ChannelCase {
+            wire: ("GEOSUSPENDED", "UNVERIFIED", "ADMIN"),
+            state: (S::Geosuspended, ""),
+            verification: (V::Unverified, ""),
+            role: R::Admin,
+        },
+        // A state and a verification no enum models: kept, not folded
+        // (#1557), and since #128 relayed as the server spelled them.
+        ChannelCase {
+            wire: ("ARCHIVED", "PENDING_REVIEW", "OWNER"),
+            state: (S::Unknown, "ARCHIVED"),
+            verification: (V::Unknown, "PENDING_REVIEW"),
+            role: R::Owner,
+        },
+        ChannelCase {
+            wire: ("DELETED", "unverified", "owner"),
+            state: (S::Unknown, "DELETED"),
+            verification: (V::Unverified, ""),
+            role: R::Owner,
+        },
+    ]
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn core_relays_the_servers_tokens_lowercased() {
+async fn core_relays_the_servers_values_as_enums() {
     let mock = MockWaServer::start().await.expect("start mock");
     let prefix = common::test_prefix(
         "stress_newsletter_parse",
-        "core_relays_the_servers_tokens_lowercased",
+        "core_relays_the_servers_values_as_enums",
     );
     let logged = common::logged_in_client(&mock, &prefix).await;
     let client = logged.client.clone();
 
-    let cases = [
-        ("ACTIVE", "VERIFIED", "SUBSCRIBER"),
-        ("SUSPENDED", "VERIFIED", "SUBSCRIBER"),
-        ("GEOSUSPENDED", "UNVERIFIED", "ADMIN"),
-        // A state and a verification no enum models: kept, not folded (#1557).
-        ("ARCHIVED", "PENDING_REVIEW", "OWNER"),
-    ];
-    for (state, verification, role) in cases {
+    for case in channel_cases() {
+        let (state, verification, role) = case.wire;
         answer_one_channel(&mock, channel_node(state, verification, role));
         let out = newsletters::get_metadata(&client, &channel())
             .await
             .expect("core get_metadata");
-        assert_eq!(out.state, state.to_lowercase(), "state {state}");
-        assert_eq!(out.verification, verification.to_lowercase());
-        assert_eq!(out.role, role.to_lowercase());
+        assert_eq!(
+            (out.state(), out.state_raw.as_str()),
+            case.state,
+            "state {state}"
+        );
+        assert_eq!(
+            (out.verification(), out.verification_raw.as_str()),
+            case.verification,
+            "verification {verification}"
+        );
+        assert_eq!(out.role(), case.role, "role {role}");
         assert_eq!(out.jid.as_ref().map(|j| j.value.as_str()), Some(CHANNEL));
         assert_eq!(out.name, "WhatsApp");
     }
@@ -187,13 +237,14 @@ async fn core_relays_a_mex_refusal_as_the_servers_code() {
     logged.cleanup().await;
 }
 
-// Accepted loss 1: a role the library has no variant for relays as absent.
+// Accepted loss 1: a role the library has no variant for relays as absent,
+// UNSPECIFIED since #128.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn accepted_an_unmodelled_role_relays_as_empty() {
+async fn accepted_an_unmodelled_role_relays_as_unspecified() {
     let mock = MockWaServer::start().await.expect("start mock");
     let prefix = common::test_prefix(
         "stress_newsletter_parse",
-        "accepted_an_unmodelled_role_relays_as_empty",
+        "accepted_an_unmodelled_role_relays_as_unspecified",
     );
     let logged = common::logged_in_client(&mock, &prefix).await;
     let client = logged.client.clone();
@@ -203,7 +254,8 @@ async fn accepted_an_unmodelled_role_relays_as_empty() {
         .await
         .expect("core get_metadata");
     assert_eq!(
-        out.role, "",
+        out.role(),
+        pb::NewsletterRole::Unspecified,
         "upstream now keeps an unknown role: relay the token"
     );
     logged.cleanup().await;
@@ -232,9 +284,16 @@ async fn accepted_absent_state_and_verification_read_as_defaults() {
         .await
         .expect("core get_metadata");
     assert_eq!(
-        (out.state.as_str(), out.verification.as_str()),
-        ("active", "unverified"),
-        "upstream now keeps absence: relay it as \"\""
+        (out.state(), out.verification()),
+        (
+            pb::NewsletterState::Active,
+            pb::NewsletterVerification::Unverified
+        ),
+        "upstream now keeps absence: relay it as UNSPECIFIED"
+    );
+    assert_eq!(
+        (out.state_raw.as_str(), out.verification_raw.as_str()),
+        ("", "")
     );
     logged.cleanup().await;
 }
