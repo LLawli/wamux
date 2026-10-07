@@ -274,11 +274,15 @@ async fn rename_and_describe(
     report.accepted_rpc("Group.SetGroupDescription", description);
     match groups.get_group_metadata(run.gref()).await {
         Ok(r) => {
-            let meta = String::from_utf8_lossy(&r.into_inner().metadata).into_owned();
+            let metadata = r.into_inner().metadata.unwrap_or_default();
             report.verify(
                 "Group.GetGroupMetadata after subject+description",
-                meta.contains(NEW_SUBJECT) && meta.contains(NEW_DESCRIPTION),
-                format!("metadata {} bytes", meta.len()),
+                metadata.subject.as_deref() == Some(NEW_SUBJECT)
+                    && metadata.description.as_deref() == Some(NEW_DESCRIPTION),
+                format!(
+                    "subject {:?}, description {:?}",
+                    metadata.subject, metadata.description
+                ),
             );
         }
         Err(e) => report.fail(

@@ -53,7 +53,67 @@ message AboutResponse {
 }
 
 message BusinessProfileResponse {
-  bytes raw = 1;
+  reserved 1;
+  reserved "raw";  // #132: was the library's profile as JSON
+  // Unset when the jid has no business profile (the library answers `None`).
+  BusinessProfile profile = 2;
+}
+
+// A business profile, every field the library parses (#132). Names follow the
+// library's, so each key of the old JSON is the field of the same name.
+message BusinessProfile {
+  Jid wid = 1;
+  string description = 2;  // "" when the profile has none: the library's own default
+  optional string email = 3;
+  repeated string website = 4;
+  repeated BusinessCategory categories = 5;
+  optional string address = 6;
+  BusinessHours business_hours = 7;
+}
+
+message BusinessCategory {
+  string id = 1;
+  string name = 2;
+}
+
+message BusinessHours {
+  optional string timezone = 1;  // IANA name, e.g. "America/Sao_Paulo"
+  // One entry per opening range: a day with two ranges is two entries.
+  repeated BusinessHoursConfig business_config = 2;
+}
+
+message BusinessHoursConfig {
+  BusinessDayOfWeek day_of_week = 1;
+  // The server's token, only when `day_of_week` is UNKNOWN.
+  string day_of_week_raw = 2;
+  BusinessHourMode mode = 3;
+  // The server's token, only when `mode` is UNKNOWN.
+  string mode_raw = 4;
+  optional uint32 open_time = 5;   // minutes past local midnight
+  optional uint32 close_time = 6;  // minutes past local midnight
+}
+
+// The library names seven days and keeps any other token, so UNKNOWN carries
+// that token in `day_of_week_raw`.
+enum BusinessDayOfWeek {
+  BUSINESS_DAY_OF_WEEK_UNSPECIFIED = 0;
+  BUSINESS_DAY_OF_WEEK_UNKNOWN = 1;
+  BUSINESS_DAY_OF_WEEK_SUNDAY = 2;     // was "sun"
+  BUSINESS_DAY_OF_WEEK_MONDAY = 3;     // was "mon"
+  BUSINESS_DAY_OF_WEEK_TUESDAY = 4;    // was "tue"
+  BUSINESS_DAY_OF_WEEK_WEDNESDAY = 5;  // was "wed"
+  BUSINESS_DAY_OF_WEEK_THURSDAY = 6;   // was "thu"
+  BUSINESS_DAY_OF_WEEK_FRIDAY = 7;     // was "fri"
+  BUSINESS_DAY_OF_WEEK_SATURDAY = 8;   // was "sat"
+}
+
+// Same rule: UNKNOWN carries the server's token in `mode_raw`.
+enum BusinessHourMode {
+  BUSINESS_HOUR_MODE_UNSPECIFIED = 0;
+  BUSINESS_HOUR_MODE_UNKNOWN = 1;
+  BUSINESS_HOUR_MODE_OPEN_24H = 2;          // was "open_24h"
+  BUSINESS_HOUR_MODE_SPECIFIC_HOURS = 3;    // was "specific_hours"
+  BUSINESS_HOUR_MODE_APPOINTMENT_ONLY = 4;  // was "appointment_only"
 }
 
 message SubscribePresenceRequest {

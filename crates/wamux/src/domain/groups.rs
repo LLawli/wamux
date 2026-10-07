@@ -9,8 +9,9 @@ use wacore::iq::groups::{
 };
 use wamux_types::{Jid, relay_jid};
 use whatsapp_rust::Client;
-use whatsapp_rust::features::{GroupParticipant, MembershipRequest, PreviousDescription};
+use whatsapp_rust::features::PreviousDescription;
 
+use crate::domain::group_metadata::{group_metadata_of, membership_request_of};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
@@ -41,52 +42,7 @@ pub async fn create_group(
         .map_err(client_err)?;
     Ok(pb::GroupJidResponse {
         group: relay_jid(result.metadata.id.to_string()),
-        metadata: metadata_json(&result.metadata),
-    })
-}
-
-/// GroupMetadata isn't Serialize (unlike MembershipRequest, which we relay
-/// verbatim), so the JSON is hand-built -- and hand-picking is exactly what
-/// dropped each participant's identity here. A LID-addressed group hands back
-/// every member as a `@lid` with `phone_number` alongside, so flattening a
-/// participant to its jid string threw away the answer to "who is this @lid"
-/// for the whole roster, plus who is admin (issue #1).
-fn metadata_json(md: &whatsapp_rust::GroupMetadata) -> Vec<u8> {
-    let participants: Vec<serde_json::Value> =
-        md.participants.iter().map(participant_json).collect();
-    serde_json::to_vec(&serde_json::json!({
-        "id": md.id.to_string(),
-        // main made `subject` an `Option<String>` (upstream #1513, #30): the
-        // protocol may omit it. 0.7.0 parsed an absent subject as "", and the
-        // wire contract already promises that string, so absence keeps
-        // projecting as "" rather than a `null` the edge never asked for.
-        "subject": md.subject.clone().unwrap_or_default(),
-        "description": md.description,
-        // Which namespace the roster is addressed in, so the edge knows whether
-        // `jid` is a `@lid` before it tries to name anyone.
-        "addressing_mode": md.addressing_mode.as_str(),
-        "participants": participants,
-    }))
-    .unwrap_or_default()
-}
-
-/// One participant, whole: the jid the group addresses them by, the phone jid
-/// and the lid the server sent alongside it (either can be absent, depending on
-/// the group's addressing mode), the Meta username when the roster carries one,
-/// and the admin role.
-///
-/// `lid` and `username` only exist from whatsapp-rust 0.7 on. Both stay null
-/// rather than being guessed: the group roster is one of the few places the
-/// server volunteers a username at all (a received message never carries one),
-/// so relaying it here is the difference between the edge knowing an identity
-/// and having to go ask for it.
-fn participant_json(p: &GroupParticipant) -> serde_json::Value {
-    serde_json::json!({
-        "jid": p.jid.to_string(),
-        "phone_number": p.phone_number.as_ref().map(|j| j.to_string()),
-        "lid": p.lid.as_ref().map(|j| j.to_string()),
-        "username": p.username.as_ref().map(|u| u.to_string()),
-        "type": p.participant_type.as_str(),
+        metadata: Some(group_metadata_of(&result.metadata)),
     })
 }
 
@@ -228,7 +184,7 @@ pub async fn get_metadata(
         .resolve_participant_addresses(&mut metadata)
         .await;
     Ok(pb::GroupMetadataResponse {
-        metadata: metadata_json(&metadata),
+        metadata: Some(group_metadata_of(&metadata)),
     })
 }
 
@@ -260,7 +216,7 @@ pub async fn join_with_invite(
     };
     Ok(pb::GroupJidResponse {
         group: relay_jid(group_jid),
-        metadata: Vec::new(),
+        metadata: None,
     })
 }
 
@@ -303,7 +259,7 @@ pub async fn list_participating(client: Arc<Client>) -> Result<Vec<pb::GroupSumm
 }
 
 /// ListGroups' projection: one summary per group, sorted by subject, each
-/// carrying the full `metadata_json` (roster included). An absent subject is
+/// carrying the full typed metadata (roster included). An absent subject is
 /// "", as 0.7.0 parsed it. Pure, so the contract is testable without a client.
 pub fn group_summaries(groups: Vec<whatsapp_rust::GroupMetadata>) -> Vec<pb::GroupSummary> {
     let mut summaries: Vec<pb::GroupSummary> = groups
@@ -312,7 +268,7 @@ pub fn group_summaries(groups: Vec<whatsapp_rust::GroupMetadata>) -> Vec<pb::Gro
             jid: relay_jid(m.id.to_string()),
             subject: m.subject.clone().unwrap_or_default(),
             participants: m.participants.len() as u32,
-            metadata: metadata_json(m),
+            metadata: Some(group_metadata_of(m)),
         })
         .collect();
     summaries.sort_by(|a, b| a.subject.cmp(&b.subject));
@@ -349,8 +305,8 @@ pub async fn set_ephemeral(
         .map_err(client_err)
 }
 
-/// Fetch an invite's group metadata without joining. Projected with the same
-/// `metadata_json` helper as GetGroupMetadata.
+/// Fetch an invite's group metadata without joining. Projected the same way
+/// as GetGroupMetadata.
 pub async fn preview_invite(
     client: &Client,
     code: &str,
@@ -361,7 +317,7 @@ pub async fn preview_invite(
         .await
         .map_err(client_err)?;
     Ok(pb::GroupMetadataResponse {
-        metadata: metadata_json(&metadata),
+        metadata: Some(group_metadata_of(&metadata)),
     })
 }
 
@@ -377,8 +333,7 @@ pub async fn set_photo(client: &Client, group: &Jid, image: Vec<u8>) -> Result<(
     Ok(())
 }
 
-/// MembershipRequest derives Serialize, so relay the Vec verbatim as JSON
-/// bytes (mirrors metadata_json: the edge owns any shaping/filtering).
+/// Pending requests, one typed entry each (#132).
 pub async fn membership_requests(
     client: &Client,
     group: &Jid,
@@ -389,13 +344,8 @@ pub async fn membership_requests(
         .await
         .map_err(client_err)?;
     Ok(pb::MembershipRequestsResponse {
-        requests: requests_json(&requests),
+        requests: requests.iter().map(membership_request_of).collect(),
     })
-}
-
-/// Project pending membership requests to a JSON array of {jid, request_time}.
-fn requests_json(requests: &[MembershipRequest]) -> Vec<u8> {
-    serde_json::to_vec(requests).unwrap_or_default()
 }
 
 pub async fn approve_membership(

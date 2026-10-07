@@ -4,8 +4,10 @@
 //! the boundary; `domain/` and `state/` work on these, not on the wire schema.
 
 pub mod account;
+pub mod business_enums;
 pub mod error;
 pub mod event_enums;
+pub mod group_enums;
 pub mod jid;
 pub mod lid;
 pub mod media_kind;
@@ -35,9 +37,13 @@ pub use presence_state::PresenceState;
 #[cfg(test)]
 mod account_tests;
 #[cfg(test)]
+mod business_enums_tests;
+#[cfg(test)]
 mod error_tests;
 #[cfg(test)]
 mod event_enums_tests;
+#[cfg(test)]
+mod group_enums_tests;
 #[cfg(test)]
 mod jid_tests;
 #[cfg(test)]

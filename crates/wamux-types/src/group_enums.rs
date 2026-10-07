@@ -1,0 +1,58 @@
+//! The library's group enums as the contract's enums (#132, part 1 of #74).
+//!
+//! Every one of these library enums is a closed set, so each `match` has no
+//! wildcard arm: a variant added upstream fails the build at the bump instead
+//! of reaching the edge unnamed, and UNKNOWN is never emitted.
+
+use wacore::iq::groups::{
+    AddressingMode, GroupAppealStatus, MemberAddMode, MemberLinkMode, MemberShareHistoryMode,
+    ParticipantType,
+};
+use wamux_proto::v1 as pb;
+
+pub fn addressing_mode_of(mode: AddressingMode) -> pb::GroupAddressingMode {
+    match mode {
+        AddressingMode::Pn => pb::GroupAddressingMode::Pn,
+        AddressingMode::Lid => pb::GroupAddressingMode::Lid,
+    }
+}
+
+pub fn participant_type_of(participant_type: ParticipantType) -> pb::GroupParticipantType {
+    match participant_type {
+        ParticipantType::Member => pb::GroupParticipantType::Member,
+        ParticipantType::Admin => pb::GroupParticipantType::Admin,
+        ParticipantType::SuperAdmin => pb::GroupParticipantType::Superadmin,
+    }
+}
+
+pub fn member_add_mode_of(mode: MemberAddMode) -> pb::GroupMemberAddMode {
+    match mode {
+        MemberAddMode::AdminAdd => pb::GroupMemberAddMode::AdminAdd,
+        MemberAddMode::AllMemberAdd => pb::GroupMemberAddMode::AllMemberAdd,
+    }
+}
+
+pub fn member_link_mode_of(mode: MemberLinkMode) -> pb::GroupMemberLinkMode {
+    match mode {
+        MemberLinkMode::AdminLink => pb::GroupMemberLinkMode::AdminLink,
+        MemberLinkMode::AllMemberLink => pb::GroupMemberLinkMode::AllMemberLink,
+    }
+}
+
+pub fn member_share_history_mode_of(
+    mode: MemberShareHistoryMode,
+) -> pb::GroupMemberShareHistoryMode {
+    match mode {
+        MemberShareHistoryMode::AdminShare => pb::GroupMemberShareHistoryMode::AdminShare,
+        MemberShareHistoryMode::AllMemberShare => pb::GroupMemberShareHistoryMode::AllMemberShare,
+    }
+}
+
+pub fn appeal_status_of(status: GroupAppealStatus) -> pb::GroupAppealStatus {
+    match status {
+        GroupAppealStatus::Approved => pb::GroupAppealStatus::Approved,
+        GroupAppealStatus::InReview => pb::GroupAppealStatus::InReview,
+        GroupAppealStatus::NoAppeal => pb::GroupAppealStatus::NoAppeal,
+        GroupAppealStatus::Rejected => pb::GroupAppealStatus::Rejected,
+    }
+}

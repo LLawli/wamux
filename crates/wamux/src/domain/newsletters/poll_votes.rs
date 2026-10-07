@@ -10,7 +10,7 @@
 use wamux_types::{NewsletterAddOnsQuery, NewsletterJid, NewsletterPollVote};
 use whatsapp_rust::Client;
 
-use super::millis_from_seconds;
+use crate::domain::wire_time::millis_from_seconds;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 

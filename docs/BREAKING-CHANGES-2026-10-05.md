@@ -2,8 +2,8 @@
 
 The `wamux.v1` package keeps its name and breaks in 0.2.0, as the CHANGELOG
 allows while the version is `0.x`. This document collects every Phase D change
-to the contract (#72 split into #120, #121 and #122, then #73, #74, #96, #99
-and #101); each issue adds its section here as it merges. Until the last one
+to the contract (#72 split into #120, #121 and #122, #73 into #126, #127 and
+#128, #74 into #132, #133, #134 and #135, then #96, #99 and #101); each issue adds its section here as it merges. Until the last one
 lands, the contract is mid-migration: build the edge against a released
 `0.2.0`, not against `main`.
 
@@ -395,3 +395,104 @@ value in the contract is a proto enum. Four stay strings because they relay an
 open set the server or the library can grow at any time (decided in #126):
 `RawEvent.kind`, `ServerAckEvent.class`, `ParticipantChange.status` and
 `PairedInfo.platform`.
+
+## 3. Typed messages instead of JSON inside `bytes` (#74)
+
+Some responses and events carried the library's data as JSON inside a
+`bytes` field: a second schema inside the first, undocumented, that moved
+whenever a library struct changed, and that became an empty payload when it
+failed to serialize. Each one is now a protobuf message. `RawEvent.payload`
+stays JSON, because its job is to carry a library event wamux does not know.
+The protobuf blobs the server itself sends (`HistorySyncEvent.raw`,
+`InboundMessage.raw_message`, `FavoritesChanged.raw`) are not JSON and do not
+change.
+
+The rules every new message follows:
+
+- **Absent is unset.** A field the server left out is an unset `optional`, an
+  unset message (`Jid`, or a sub-message), or an enum at `*_UNSPECIFIED`. It
+  never crosses as `0` or `""`.
+- **Times are milliseconds**, like every timestamp in this contract. A value
+  whose unit is not verified crosses as the server sent it, as `uint64`, and the
+  field's comment says so.
+- **Enum-like values are enums** (section 2). A closed library set has no raw
+  field; an open one has `*_raw`, set only on `UNKNOWN`.
+
+### 3a. Group metadata, membership requests, business profile (#132)
+
+| Message | Before | After |
+|---|---|---|
+| `GroupJidResponse` | `bytes metadata = 2` | `GroupMetadata metadata = 4` (unset after JoinWithInvite) |
+| `GroupMetadataResponse` | `bytes metadata = 1` | `GroupMetadata metadata = 2` |
+| `GroupSummary` | `bytes metadata = 4` | `GroupMetadata metadata = 6` |
+| `MembershipRequestsResponse` | `bytes requests = 1` | `repeated MembershipRequest requests = 2` |
+| `BusinessProfileResponse` | `bytes raw = 1` | `BusinessProfile profile = 2` |
+
+`GroupMetadata` lives in the new `group_metadata.proto`. `GroupSummary` keeps
+`jid`, `subject` and `participants` as they were.
+
+**Group metadata, JSON key to field.** The JSON had five keys; the message has
+every field the library parses (56), so the rest are new.
+
+| JSON | `GroupMetadata` |
+|---|---|
+| `id` (string) | `id` (`Jid`) |
+| `subject` (`""` when absent) | `subject` (`optional string`, unset when absent) |
+| `description` (`null` when absent) | `description` (`optional string`) |
+| `addressing_mode` (`"pn"`, `"lid"`) | `addressing_mode` (`GROUP_ADDRESSING_MODE_PN`, `_LID`) |
+| `participants[]` | `participants` (`GroupParticipant`) |
+
+| JSON participant | `GroupParticipant` |
+|---|---|
+| `jid` | `jid` (`Jid`) |
+| `phone_number` (`null` when absent) | `phone_number` (`Jid`, unset when absent) |
+| `lid` | `lid` (`Jid`) |
+| `username` | `username` (`optional string`) |
+| `type` (`"member"`, `"admin"`, `"superadmin"`) | `type` (`GROUP_PARTICIPANT_TYPE_MEMBER`, `_ADMIN`, `_SUPERADMIN`) |
+| (none) | `details`: `join_time` (ms), `group_history_sent`, `participant_label`, `participant_label_mtime`, `display_name`, `is_addressable`; unset when the roster entry had none of them |
+
+New on `GroupMetadata`, among others: the creator and the subject and
+description owners, each with the phone jid and username beside the `@lid`;
+`creation_time`, `subject_time` and `description_time` in milliseconds;
+`is_locked`, `is_announcement`, `membership_approval`, `ephemeral`
+(`expiration_seconds`, `trigger`), `member_add_mode`, `member_link_mode`,
+`member_share_history_mode`, `size`; the community fields (`is_parent_group`,
+`parent_group`, `is_default_sub_group`, `is_general_chat`, ...); and the
+moderation fields (`is_suspended`, `appeal_status`, `growth_locked`, ...).
+`appeal_update_time`, `participant_label_mtime` and `growth_locked.expiration`
+are relayed as the server sent them: their unit is not verified.
+
+**Membership requests.** `[{"jid":{"user":"..","server":"lid","agent":0,
+"device":0,"integrator":0},"request_time":1790947901}]` becomes
+`[MembershipRequest{jid: {value: "...@lid"}, request_time: 1790947901000}]`.
+The jid is a `Jid` like every other one (this settles the third point of #96),
+and the time is in milliseconds. The server also sends each requester's
+`phone_number` and `request_method`; the library does not parse them, so they
+are not relayed.
+
+**Business profile, JSON key to field.** The names are the library's, so each
+key is the field of the same name.
+
+| JSON | `BusinessProfile` |
+|---|---|
+| `null` (no profile) | `profile` unset |
+| `wid` (the jid struct) | `wid` (`Jid`) |
+| `description` | `description` (`""` when the profile has none, the library's default) |
+| `email`, `address` | `email`, `address` (`optional string`) |
+| `website[]` | `website` (repeated) |
+| `categories[]` `{id, name}` | `categories` (`BusinessCategory`) |
+| `business_hours.timezone` | `business_hours.timezone` |
+| `business_hours.business_config[]` | `business_hours.business_config` (`BusinessHoursConfig`) |
+| `day_of_week` (`"sun"` ... `"sat"`) | `day_of_week` (`BUSINESS_DAY_OF_WEEK_SUNDAY` ... `_SATURDAY`), `day_of_week_raw` on `UNKNOWN` |
+| `mode` (`"open_24h"`, `"specific_hours"`, `"appointment_only"`) | `mode` (`BUSINESS_HOUR_MODE_OPEN_24H`, `_SPECIFIC_HOURS`, `_APPOINTMENT_ONLY`), `mode_raw` on `UNKNOWN` |
+| `open_time`, `close_time` | `open_time`, `close_time` (minutes past local midnight, unset when absent) |
+
+**What the edge has to do:**
+
+- Read the message instead of parsing JSON out of the bytes, and check presence
+  where it checked for `null`.
+- Treat an unset `subject` inside `GroupMetadata` as "no subject" (it was `""`).
+  `GroupSummary.subject` is still `""` in that case.
+- Read the times as milliseconds.
+- Read a membership request's jid from `.jid.value`, not from a `user`/`server`
+  object.

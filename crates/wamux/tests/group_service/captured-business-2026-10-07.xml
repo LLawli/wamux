@@ -1,0 +1,13 @@
+<!-- #132: GetBusinessProfile, captured live on 2026-10-07 from WhatsApp's server
+     (whatsapp-rust 6f07e3ab, log target Client/Recv), the answer for a real business
+     account asked from the live-trabalho account. Anonymized: the business number
+     5511900000003, the profile tag, the address, the email, the coordinates, the
+     display name and the identity serial. The anonymized email is longer than 48
+     bytes on purpose: whatsapp-rust's encoder (which the mock answers through)
+     writes a shorter `user@domain` string as a JID_PAIR that its own decoder
+     refuses for an unknown domain, so a short email cannot cross the mock.
+     Everything else (attribute order, the hours, the category, the tags the
+     library does not read) is as received.
+     tests/group_service/business_profile.rs transcribes it and a test proves it
+     renders back to exactly this line. -->
+<iq from="s.whatsapp.net" type="result" id="224.246-40"><business_profile><profile jid="5511900000003@s.whatsapp.net" tag="1000000003"><address>R. Exemplo, 1 - Centro, Cidade - UF, 00000-000, Brasil</address><email>contato.da.clinica.exemplo.anonimizada@example.com</email><latitude>-15.0000</latitude><longitude>-47.0000</longitude><business_hours timezone="America/Sao_Paulo"><business_hours_config day_of_week="mon" mode="specific_hours" open_time="480" close_time="1080"/><business_hours_config day_of_week="tue" mode="specific_hours" open_time="480" close_time="1080"/><business_hours_config day_of_week="wed" mode="specific_hours" open_time="480" close_time="1080"/><business_hours_config day_of_week="thu" mode="specific_hours" open_time="480" close_time="1080"/><business_hours_config day_of_week="fri" mode="specific_hours" open_time="480" close_time="1080"/><business_hours_config day_of_week="sat" mode="specific_hours" open_time="480" close_time="720"/></business_hours><categories><category id="145118935550090">Medical & health</category></categories><profile_options><commerce_experience>none</commerce_experience><cart_enabled>true</cart_enabled><direct_connection>false</direct_connection><is_responsive>true</is_responsive><bot_fields><is_typing_indicator_enabled>false</is_typing_indicator_enabled></bot_fields></profile_options><direct_connection enabled="false"><features name="default"/></direct_connection><member_since_text>Joined in March, 2025</member_since_text><automated_type>unknown</automated_type><biz_identity_info phone_number="" type="smb" display_name="Clinica Exemplo" vlevel="low" serial="1000000000000000003" is_signed="true" revoked="false"/><member_since_ts>1742915099</member_since_ts><aea_account_type value="hybrid_e2ee"/><calling_automated_type>unknown</calling_automated_type></profile></business_profile></iq>

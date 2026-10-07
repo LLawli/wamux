@@ -44,10 +44,21 @@ async fn create_group_relays_the_new_jid_and_metadata() {
         .expect("create")
         .into_inner();
     assert_eq!(answer.group, jid(GROUP));
-    let metadata: serde_json::Value = serde_json::from_slice(&answer.metadata).expect("json");
-    assert_eq!(metadata["id"], GROUP);
-    assert_eq!(metadata["subject"], "new group");
-    assert_eq!(metadata["participants"][0]["phone_number"], OWNER_PN);
+    // #132: the typed metadata, whole. The answer carried only these fields,
+    // so everything else stays unset.
+    let expected = pb::GroupMetadata {
+        id: jid(GROUP),
+        subject: Some("new group".to_string()),
+        participants: vec![pb::GroupParticipant {
+            jid: jid(OWNER_LID),
+            phone_number: jid(OWNER_PN),
+            r#type: pb::GroupParticipantType::Superadmin as i32,
+            ..pb::GroupParticipant::default()
+        }],
+        addressing_mode: pb::GroupAddressingMode::Lid as i32,
+        ..pb::GroupMetadata::default()
+    };
+    assert_eq!(answer.metadata, Some(expected));
     let iq = sent_iq(&f.mock, G2, "set", "create").await;
     assert_eq!(attr(op(&iq), "subject").as_deref(), Some("new group"));
     assert_eq!(participant_jids(op(&iq)), [REQUESTER_PN]);
@@ -152,7 +163,8 @@ async fn join_with_invite_relays_the_group_jid() {
             .expect("join")
             .into_inner();
         assert_eq!(relayed.group, jid(GROUP));
-        assert!(relayed.metadata.is_empty());
+        // The join answer carries no metadata: unset, not an empty message.
+        assert_eq!(relayed.metadata, None);
     }
     let iq = sent_iq(&f.mock, G2, "set", "invite").await;
     assert_eq!(attr(op(&iq), "code").as_deref(), Some(INVITE_CODE));
