@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+// #132 (part 1 of #74): a group as the library hands it over, every field of
+// whatsapp-rust's `GroupMetadata`. It used to cross as JSON inside `bytes`,
+// with five of these fields picked by hand.
+//
+// Rules for every message in this file:
+// - A field the library leaves out is unset, never 0 or "": `optional` on a
+//   scalar, an unset message for a `Jid` or a sub-message, UNSPECIFIED for an
+//   enum.
+// - A point in time is `int64` milliseconds, like every timestamp in this
+//   contract; the server counts these in seconds, and the core converts.
+//   A value whose unit is not verified crosses verbatim as `uint64`, and its
+//   comment says so.
+message GroupMetadata {
+  Jid id = 1;
+  optional string subject = 2;
+  optional string notify = 3;
+  repeated GroupParticipant participants = 4;
+  // Which namespace the roster is addressed in, so the edge knows whether a
+  // participant `jid` is a `@lid` before it tries to name anyone (#1).
+  GroupAddressingMode addressing_mode = 5;
+  Jid creator = 6;
+  Jid creator_pn = 7;
+  optional string creator_username = 8;
+  optional string creator_country_code = 9;
+  optional int64 creation_time = 10;  // ms
+  optional string participant_version_id = 11;
+  optional string admin_version_id = 12;
+  optional string open_thread_id = 13;
+  bool has_missing_participant_identification = 14;
+  optional int64 subject_time = 15;  // ms
+  Jid subject_owner = 16;
+  Jid subject_owner_pn = 17;
+  optional string subject_owner_username = 18;
+  optional string description = 19;
+  optional string description_id = 20;
+  Jid description_owner = 21;
+  Jid description_owner_pn = 22;
+  optional string description_owner_username = 23;
+  optional int64 description_time = 24;  // ms
+  bool is_locked = 25;
+  bool is_announcement = 26;
+  GroupEphemeralSettings ephemeral = 27;
+  bool membership_approval = 28;
+  GroupMemberAddMode member_add_mode = 29;
+  GroupMemberLinkMode member_link_mode = 30;
+  optional uint32 size = 31;
+  bool is_parent_group = 32;
+  bool parent_membership_approval_required = 33;
+  Jid parent_group = 34;  // the library's `parent_group_jid`
+  bool is_default_sub_group = 35;
+  bool is_general_chat = 36;
+  bool allow_non_admin_sub_group_creation = 37;
+  bool no_frequently_forwarded = 38;
+  GroupMemberShareHistoryMode member_share_history_mode = 39;
+  GrowthLockInfo growth_locked = 40;
+  bool is_suspended = 41;
+  bool suspension_can_auto_file = 42;
+  GroupAppealStatus appeal_status = 43;
+  // As the server sent it: the unit is not verified, so it is not converted.
+  optional uint64 appeal_update_time = 44;
+  bool is_support_group = 45;
+  bool allow_admin_reports = 46;
+  bool is_hidden_group = 47;
+  bool is_incognito = 48;
+  bool has_group_history = 49;
+  bool is_auto_add_disabled = 50;
+  bool has_capi = 51;
+  optional uint32 evolution_version = 52;
+  bool has_group_safety_check = 53;
+  bool participant_label_enabled = 54;
+  bool is_limit_sharing_enabled = 55;
+  optional uint32 limit_sharing_trigger = 56;
+}
+
+// One member, whole (#1): the jid the group addresses them by, and the phone
+// jid and lid the server sent beside it. In a LID-addressed group `jid` is a
+// `@lid` and `phone_number` is the only phone the roster carries.
+message GroupParticipant {
+  Jid jid = 1;
+  Jid phone_number = 2;
+  Jid lid = 3;
+  // The roster is one of the few places the server volunteers a username at
+  // all (a received message never carries one).
+  optional string username = 4;
+  GroupParticipantType type = 5;
+  // Unset when the roster entry carried none of these attributes.
+  GroupParticipantDetails details = 6;
+}
+
+message GroupParticipantDetails {
+  optional string participant_label = 1;
+  // As the server sent it: the unit is not verified, so it is not converted.
+  optional uint64 participant_label_mtime = 2;
+  optional int64 join_time = 3;  // ms
+  optional bool group_history_sent = 4;
+  optional string display_name = 5;
+  bool is_addressable = 6;
+}
+
+// Disappearing messages, present when the server sent an `<ephemeral>` node.
+message GroupEphemeralSettings {
+  optional uint32 expiration_seconds = 1;  // a duration; 0 means off
+  optional uint32 trigger = 2;
+}
+
+// Invite links temporarily disabled by the server.
+message GrowthLockInfo {
+  string lock_type = 1;  // the server's own token, an open set
+  // As the server sent it: whether it is a deadline or a duration, and in
+  // which unit, is not verified, so it is not converted.
+  uint64 expiration = 2;
+}
+
+// Every library enum below is a closed set, matched with no wildcard arm, so
+// UNKNOWN is never emitted today: a value added upstream breaks the build at
+// the bump instead of reaching the edge unnamed.
+
+enum GroupAddressingMode {
+  GROUP_ADDRESSING_MODE_UNSPECIFIED = 0;
+  GROUP_ADDRESSING_MODE_UNKNOWN = 1;  // not emitted today: the set is closed
+  GROUP_ADDRESSING_MODE_PN = 2;       // was "pn"
+  GROUP_ADDRESSING_MODE_LID = 3;      // was "lid"
+}
+
+enum GroupParticipantType {
+  GROUP_PARTICIPANT_TYPE_UNSPECIFIED = 0;
+  GROUP_PARTICIPANT_TYPE_UNKNOWN = 1;     // not emitted today: the set is closed
+  GROUP_PARTICIPANT_TYPE_MEMBER = 2;      // was "member"
+  GROUP_PARTICIPANT_TYPE_ADMIN = 3;       // was "admin"
+  GROUP_PARTICIPANT_TYPE_SUPERADMIN = 4;  // was "superadmin"
+}
+
+enum GroupMemberAddMode {
+  GROUP_MEMBER_ADD_MODE_UNSPECIFIED = 0;
+  GROUP_MEMBER_ADD_MODE_UNKNOWN = 1;  // not emitted today: the set is closed
+  GROUP_MEMBER_ADD_MODE_ADMIN_ADD = 2;
+  GROUP_MEMBER_ADD_MODE_ALL_MEMBER_ADD = 3;
+}
+
+enum GroupMemberLinkMode {
+  GROUP_MEMBER_LINK_MODE_UNSPECIFIED = 0;
+  GROUP_MEMBER_LINK_MODE_UNKNOWN = 1;  // not emitted today: the set is closed
+  GROUP_MEMBER_LINK_MODE_ADMIN_LINK = 2;
+  GROUP_MEMBER_LINK_MODE_ALL_MEMBER_LINK = 3;
+}
+
+enum GroupMemberShareHistoryMode {
+  GROUP_MEMBER_SHARE_HISTORY_MODE_UNSPECIFIED = 0;
+  GROUP_MEMBER_SHARE_HISTORY_MODE_UNKNOWN = 1;  // not emitted today: the set is closed
+  GROUP_MEMBER_SHARE_HISTORY_MODE_ADMIN_SHARE = 2;
+  GROUP_MEMBER_SHARE_HISTORY_MODE_ALL_MEMBER_SHARE = 3;
+}
+
+enum GroupAppealStatus {
+  GROUP_APPEAL_STATUS_UNSPECIFIED = 0;
+  GROUP_APPEAL_STATUS_UNKNOWN = 1;  // not emitted today: the set is closed
+  GROUP_APPEAL_STATUS_APPROVED = 2;
+  GROUP_APPEAL_STATUS_IN_REVIEW = 3;
+  GROUP_APPEAL_STATUS_NO_APPEAL = 4;  // the server's "none"
+  GROUP_APPEAL_STATUS_REJECTED = 5;
+}

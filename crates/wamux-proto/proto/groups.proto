@@ -3,6 +3,7 @@ syntax = "proto3";
 package wamux.v1;
 
 import "common.proto";
+import "group_metadata.proto";
 
 // #121: every jid field below took a new number when it became a `Jid`, and
 // the old number is reserved (see `Jid` in common.proto).
@@ -18,7 +19,9 @@ message GroupJidResponse {
   reserved 1;
   reserved "group_jid";
   Jid group = 3;
-  bytes metadata = 2;
+  reserved 2;  // #132: was `bytes metadata` (JSON)
+  // Set by CreateGroup; unset by JoinWithInvite, whose answer carries no metadata.
+  GroupMetadata metadata = 4;
 }
 
 message ParticipantsRequest {
@@ -45,7 +48,8 @@ message GroupRef {
 }
 
 message GroupMetadataResponse {
-  bytes metadata = 1;
+  reserved 1;  // #132: was `bytes metadata` (JSON)
+  GroupMetadata metadata = 2;
 }
 
 message InviteLinkResponse {
@@ -62,7 +66,8 @@ message GroupSummary {
   Jid jid = 5;
   string subject = 2;
   uint32 participants = 3;
-  bytes metadata = 4; // projected JSON (id, subject, description, participants)
+  reserved 4;  // #132: was `bytes metadata` (JSON)
+  GroupMetadata metadata = 6;
 }
 
 message ListGroupsResponse {
@@ -103,9 +108,17 @@ message SetGroupPhotoRequest {
   bytes image = 3;
 }
 
-// Projected pending membership-approval requests (JSON array of {jid, request_time}).
+// Pending membership-approval requests, as the library parses them. The server
+// also sends each requester's `phone_number` and `request_method`; the library
+// does not expose them, so neither does the core.
 message MembershipRequestsResponse {
-  bytes requests = 1;
+  reserved 1;  // #132: was `bytes requests` (JSON, with each jid as an object)
+  repeated MembershipRequest requests = 2;
+}
+
+message MembershipRequest {
+  Jid jid = 1;
+  optional int64 request_time = 2;  // ms; unset when the server sent none
 }
 
 // V4 invite token the server attaches to a participant that a privacy setting

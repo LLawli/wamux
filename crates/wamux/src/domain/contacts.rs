@@ -5,6 +5,7 @@ use std::sync::Arc;
 use wamux_types::{Jid, relay_jid};
 use whatsapp_rust::Client;
 
+use crate::domain::business_profile::business_profile_of;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
@@ -121,7 +122,7 @@ pub async fn get_business_profile(
         .await
         .map_err(client_err)?;
     Ok(pb::BusinessProfileResponse {
-        raw: serde_json::to_vec(&profile).unwrap_or_default(),
+        profile: profile.as_ref().map(business_profile_of),
     })
 }
 

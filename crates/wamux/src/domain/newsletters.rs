@@ -17,6 +17,7 @@ use channel_enums::{
 };
 
 use crate::domain::event_mapping::project_content;
+use crate::domain::wire_time::{millis_from_seconds, saturating_i64};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
@@ -210,19 +211,6 @@ fn row_to_inbound(row: &NewsletterMessage, chat: &Jid) -> pb::InboundMessage {
         project_content(&mut out, message, &chat_text);
     }
     out
-}
-
-/// The stanza counts in seconds; every timestamp in this contract is
-/// milliseconds. Saturating, so a nonsense value cannot come back as a date in
-/// the past.
-fn millis_from_seconds(seconds: u64) -> i64 {
-    saturating_i64(seconds).saturating_mul(1000)
-}
-
-/// A wire `u64` into the contract's `int64`, clamped rather than wrapped into
-/// a negative time.
-fn saturating_i64(value: u64) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 mod channel_enums;

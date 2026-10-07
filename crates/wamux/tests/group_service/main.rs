@@ -2,7 +2,8 @@
 //! and tonic client, with the account logged in against `MockWaServer`.
 //!
 //! The five reads are answered with what WhatsApp's server sent on 2026-10-02
-//! (`captured`, anonymized); the writes with shapes the whatsapp-rust 6f07e3a
+//! (`captured`, anonymized), and GetBusinessProfile (#132, ContactService) with
+//! what it sent on 2026-10-07; the writes with shapes the whatsapp-rust 6f07e3a
 //! parser accepts. Honors `WAMUX_TEST_ENGINE`, so `scripts/ci.sh` runs it on
 //! both engines. `scripts/check-service-coverage.py` fails CI if an RPC of the
 //! service stops being called here.
@@ -13,6 +14,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod business_profile;
 #[allow(dead_code)]
 mod captured;
 mod harness;

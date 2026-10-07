@@ -97,10 +97,10 @@ async fn check_groups(groups: &mut GroupServiceClient<Channel>, report: &mut Rep
             let meta = r.into_inner().metadata;
             report.verify(
                 "Group.GetGroupMetadata",
-                !meta.is_empty(),
+                meta.is_some(),
                 format!(
-                    "{} meta bytes for {}",
-                    meta.len(),
+                    "{} participants for {}",
+                    meta.as_ref().map_or(0, |m| m.participants.len()),
                     first.jid.as_ref().map_or("", |jid| jid.value.as_str())
                 ),
             );
