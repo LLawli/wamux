@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+// #134 (part 3 of #74): the payloads of `AppStateUpdate.action` and the
+// server's logout copy. They used to cross as the library's JSON in `raw`.
+// The rules of group_metadata.proto hold: absent is unset, a point in time is
+// int64 milliseconds, a value of unverified unit crosses verbatim.
+
+// Which messages a chat mutation covers (`wa.SyncActionValue.SyncActionMessageRange`).
+// The server counts these in seconds (measured live 2026-10-07: the last
+// message's own time); the core converts them to ms.
+message SyncMessageRange {
+  optional int64 last_message_timestamp = 1;         // ms
+  // Never seen set; read with the same unit as its sibling.
+  optional int64 last_system_message_timestamp = 2;  // ms
+  repeated SyncRangeMessage messages = 3;
+}
+
+message SyncRangeMessage {
+  MessageKey key = 1;
+  optional int64 timestamp = 2;  // ms
+}
+
+message ArchiveChange {
+  optional bool archived = 1;
+  SyncMessageRange message_range = 2;
+}
+
+message PinChange {
+  optional bool pinned = 1;
+}
+
+message MuteChange {
+  optional bool muted = 1;
+  // When the mute ends, in ms as the server sent it (measured live
+  // 2026-10-07: an 8 h mute ended at the mute time + 28 800 000). Unset on an
+  // unmute.
+  optional int64 mute_end_timestamp = 2;
+  optional bool auto_muted = 3;
+  // As the server sent it: always 0 when measured, so its unit is not verified.
+  optional int64 mute_everyone_mention_end_timestamp = 4;
+}
+
+// A message was starred or unstarred. `AppStateUpdate.chat` is the chat that
+// holds it.
+message StarChange {
+  // The sender, for someone else's message in a group; unset for your own
+  // message or in a direct chat.
+  Jid participant = 1;
+  string message_id = 2;
+  bool from_me = 3;
+  optional bool starred = 4;
+}
+
+message MarkReadChange {
+  optional bool read = 1;  // false is "mark as unread"
+  SyncMessageRange message_range = 2;
+}
+
+message DeleteChatChange {
+  bool delete_media = 1;  // from the mutation's index, not its action
+  // The messages the deletion covers; WA Web deletes by this range.
+  SyncMessageRange message_range = 2;
+}
+
+// Localized text the server wants shown on a forced logout (`<failure>`'s
+// logout_message_header / _subtext). WA Web shows it only when `locale`
+// equals the client's own, and falls back to generic copy otherwise; the
+// locale travels with the text so a consumer can apply the same rule.
+message LogoutMessage {
+  optional string header = 1;
+  optional string subtext = 2;
+  optional string locale = 3;  // e.g. "pt_BR"
+}

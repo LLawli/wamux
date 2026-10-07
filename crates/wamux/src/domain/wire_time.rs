@@ -7,6 +7,12 @@ pub(crate) fn millis_from_seconds(seconds: u64) -> i64 {
     saturating_i64(seconds).saturating_mul(1000)
 }
 
+/// Seconds into milliseconds for a signed wire value (#134). Saturating, for
+/// the same reason as `millis_from_seconds`.
+pub(crate) fn millis_from_signed_seconds(seconds: i64) -> i64 {
+    seconds.saturating_mul(1000)
+}
+
 /// A wire `u64` into the contract's `int64`, clamped rather than wrapped into
 /// a negative time.
 pub(crate) fn saturating_i64(value: u64) -> i64 {

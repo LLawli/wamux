@@ -6,6 +6,7 @@ import "common.proto";
 import "account.proto";
 import "group_metadata.proto";
 import "group_update.proto";
+import "app_state.proto";
 import "newsletter_tallies.proto";
 
 message SubscribeRequest {
@@ -255,6 +256,12 @@ message LoggedOutInfo {
   // The server's numeric code, only when `reason` is UNKNOWN (a code the
   // library does not name). 0 otherwise.
   int32 reason_code = 2;
+  // The server's own copy for this logout, when it sent any (in practice on
+  // an account lock). Unset otherwise (#134).
+  LogoutMessage logout_message = 3;
+  // True when the server refused the connection itself (a `<failure>`), false
+  // for a logout that came later (a `<stream:error>`, or a local logout).
+  bool on_connect = 4;
 }
 
 message TemporaryBanInfo {
@@ -443,29 +450,31 @@ message HistorySyncEvent {
   bytes raw = 20;                 // decompressed `wa.HistorySync` protobuf
 }
 
-// App-state (companion-sync) chat mutation: archive/pin/mute/star/mark-read/
-// delete. The lib emits one struct per kind (ArchiveUpdate, PinUpdate, ...);
-// `kind` distinguishes them and `raw` carries the full serde_json of the lib
-// struct so the edge decodes action details (e.g. the new mute timestamp).
+// App-state (companion-sync) chat mutation made on a linked device: archive,
+// pin, mute, star, mark read, delete. The library emits one struct per kind;
+// the oneof case says which (#134), with that action's own fields.
 message AppStateUpdate {
   reserved 1;  // #122: was `string chat`
+  // The chat the mutation applies to (for a star, the chat that holds the
+  // message).
   Jid chat = 4;
-  reserved 2;  // #126: was `string kind`
-  AppStateKind kind = 5;
-  bytes raw = 3;
-}
-
-// One value per library app-state struct this message relays. The core picks
-// it, so the set is closed: no raw.
-enum AppStateKind {
-  APP_STATE_KIND_UNSPECIFIED = 0;
-  APP_STATE_KIND_UNKNOWN = 1;      // not emitted today: the set is closed
-  APP_STATE_KIND_ARCHIVE = 2;      // was "archive"
-  APP_STATE_KIND_PIN = 3;          // was "pin"
-  APP_STATE_KIND_MUTE = 4;         // was "mute"
-  APP_STATE_KIND_STAR = 5;         // was "star"
-  APP_STATE_KIND_MARK_READ = 6;    // was "mark_read"
-  APP_STATE_KIND_DELETE_CHAT = 7;  // was "delete_chat"
+  reserved 2, 3, 5;
+  reserved "kind", "raw";  // #134: the oneof case names the kind; raw was the JSON
+  // When the mutation was made (ms). Falls back to the epoch or the dispatch
+  // time when the mutation carried none: `action_timestamp` tells them apart.
+  int64 timestamp = 6;
+  // The instant the mutation itself carried (ms); unset when it carried none
+  // (upstream #1562).
+  optional int64 action_timestamp = 7;
+  bool from_full_sync = 8;  // replayed by a full app-state sync
+  oneof action {
+    ArchiveChange archive = 10;
+    PinChange pin = 11;
+    MuteChange mute = 12;
+    StarChange star = 13;
+    MarkReadChange mark_read = 14;
+    DeleteChatChange delete_chat = 15;
+  }
 }
 
 // The account's favorite chats changed on a linked device (the `favorites`

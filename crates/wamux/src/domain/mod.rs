@@ -1,6 +1,7 @@
 //! Transport-agnostic logic: building bots, mapping events,
 //! and the send/media/group/contact helpers used by the thin service layer.
 
+pub mod app_state_update;
 pub mod bot_factory;
 pub mod business_profile;
 pub mod chat_actions;

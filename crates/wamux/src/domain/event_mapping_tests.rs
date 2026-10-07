@@ -4,12 +4,11 @@ use std::time::Duration;
 use bytes::Bytes;
 use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::{
-    ArchiveUpdate, BatchOrigin, ChatPresenceUpdate, ConnectFailureReason, Connected,
-    DecryptFailMode, DeleteChatUpdate, Disconnected, InboundMessage, LazyHistorySync, LoggedOut,
-    MarkChatAsReadUpdate, MessageBatch, MuteUpdate, OfflineSyncCompleted, OfflineSyncInterrupted,
-    OfflineSyncPreview, PairError, PairSuccess, PairingCode, PairingCodeRefresh, PairingQrCode,
-    PinUpdate, PresenceUpdate, Receipt, ServerAck, StarUpdate, TempBanReason, TemporaryBan,
-    UnavailableType, UndecryptableMessage,
+    BatchOrigin, ChatPresenceUpdate, ConnectFailureReason, Connected, DecryptFailMode,
+    Disconnected, InboundMessage, LazyHistorySync, LoggedOut, MessageBatch, OfflineSyncCompleted,
+    OfflineSyncInterrupted, OfflineSyncPreview, PairError, PairSuccess, PairingCode,
+    PairingCodeRefresh, PairingQrCode, PresenceUpdate, Receipt, ServerAck, TempBanReason,
+    TemporaryBan, UnavailableType, UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -1005,108 +1004,7 @@ fn maps_offline_sync_interrupted_with_both_counts() {
     }
 }
 
-fn mapped_app_state(event: &Event) -> pb::AppStateUpdate {
-    match map_one(event) {
-        Some(PbEvent::AppState(s)) => s,
-        other => panic!("expected app-state update, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_archive_update_to_typed_app_state() {
-    let s = mapped_app_state(&Event::ArchiveUpdate(
-        ArchiveUpdate::builder()
-            .jid(jid_of(CHAT_JID))
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .action(Box::default())
-            .from_full_sync(false)
-            .build(),
-    ));
-    assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind(), pb::AppStateKind::Archive);
-    // raw is the verbatim serde_json of the lib struct: the edge decodes it.
-    // Jid serializes structurally (user/server/...), so we assert the user part
-    // rather than a flat jid string.
-    assert!(!s.raw.is_empty());
-    let json: serde_json::Value = serde_json::from_slice(&s.raw).unwrap();
-    assert_eq!(json["jid"]["user"], "120363041234567890");
-    assert_eq!(json["jid"]["server"], "g.us");
-}
-
-#[test]
-fn maps_pin_update_to_typed_app_state() {
-    let s = mapped_app_state(&Event::PinUpdate(
-        PinUpdate::builder()
-            .jid(jid_of(CHAT_JID))
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .action(Box::default())
-            .from_full_sync(false)
-            .build(),
-    ));
-    assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind(), pb::AppStateKind::Pin);
-}
-
-#[test]
-fn maps_mute_update_to_typed_app_state() {
-    let s = mapped_app_state(&Event::MuteUpdate(
-        MuteUpdate::builder()
-            .jid(jid_of(CHAT_JID))
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .action(Box::default())
-            .from_full_sync(false)
-            .build(),
-    ));
-    assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind(), pb::AppStateKind::Mute);
-}
-
-// StarUpdate names its chat `chat_jid` (it points at a message); the mapping
-// must read that field, not the missing `jid`.
-#[test]
-fn maps_star_update_reads_chat_jid() {
-    let s = mapped_app_state(&Event::StarUpdate(
-        StarUpdate::builder()
-            .chat_jid(jid_of(CHAT_JID))
-            .message_id("WAMID-STAR".to_string())
-            .from_me(false)
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .action(Box::default())
-            .from_full_sync(false)
-            .build(),
-    ));
-    assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind(), pb::AppStateKind::Star);
-}
-
-#[test]
-fn maps_mark_chat_as_read_update_to_typed_app_state() {
-    let s = mapped_app_state(&Event::MarkChatAsReadUpdate(
-        MarkChatAsReadUpdate::builder()
-            .jid(jid_of(CHAT_JID))
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .action(Box::default())
-            .from_full_sync(false)
-            .build(),
-    ));
-    assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind(), pb::AppStateKind::MarkRead);
-}
-
-#[test]
-fn maps_delete_chat_update_to_typed_app_state() {
-    let s = mapped_app_state(&Event::DeleteChatUpdate(
-        DeleteChatUpdate::builder()
-            .jid(jid_of(CHAT_JID))
-            .delete_media(false)
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .action(Box::default())
-            .from_full_sync(false)
-            .build(),
-    ));
-    assert_eq!(s.chat, wire(CHAT_JID));
-    assert_eq!(s.kind(), pb::AppStateKind::DeleteChat);
-}
+// The app-state updates are tested in `app_state_update_tests.rs` (#134).
 
 #[test]
 fn maps_incoming_call_offer_to_typed_call_event() {
