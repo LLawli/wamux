@@ -4,9 +4,11 @@
 pub mod bot_factory;
 pub mod business_profile;
 pub mod chat_actions;
+pub mod contact_update;
 pub mod contacts;
 pub mod event_mapping;
 pub mod group_metadata;
+pub mod group_update;
 pub mod groups;
 pub mod interactive_reply;
 pub mod isolate;
@@ -19,5 +21,7 @@ pub mod polls;
 pub mod send_rich;
 pub mod status;
 pub(crate) mod sticker_packs;
+#[cfg(test)]
+pub(crate) mod test_xml;
 pub(crate) mod wire_defaults;
 pub(crate) mod wire_time;

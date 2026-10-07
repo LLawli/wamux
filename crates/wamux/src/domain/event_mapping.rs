@@ -17,6 +17,8 @@ use whatsapp_rust::Jid;
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
+use crate::domain::contact_update::contact_update_of;
+use crate::domain::group_update::group_update_of;
 use crate::domain::sticker_packs;
 use crate::proto::v1 as pb;
 
@@ -96,20 +98,13 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             chat: lib_jid(&c.source.chat),
         })),
 
-        Event::GroupUpdate(g) => one(Pb::Group(pb::GroupUpdate {
-            group: lib_jid(&g.group_jid),
-            kind: "group_update".to_string(),
-            raw: serde_json::to_vec(g).unwrap_or_default(),
-        })),
+        // #133: typed, one oneof case per library action.
+        Event::GroupUpdate(g) => one(Pb::Group(group_update_of(g))),
         // main retired `Event::PushNameUpdate` (upstream #1310, #30): it never
         // fired, and 0.7.0 never constructed it either, so the wire never
         // carried one. `pb::PushNameUpdate` stays in the proto so the contract
         // does not break; nothing emits it, exactly as before the bump.
-        Event::ContactUpdate(c) => one(Pb::Contact(pb::ContactUpdate {
-            jid: lib_jid(&c.jid),
-            kind: "contact_update".to_string(),
-            raw: serde_json::to_vec(c).unwrap_or_default(),
-        })),
+        Event::ContactUpdate(c) => one(Pb::Contact(contact_update_of(c))),
 
         // Backfill: only ever dispatched when the account connected with history
         // enabled (or via FetchMessageHistory). Relayed verbatim — the edge

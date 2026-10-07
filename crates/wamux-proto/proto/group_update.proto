@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+import "group_metadata.proto";
+
+// #133 (part 2 of #74): the payloads of `GroupUpdate.action` and of
+// `ContactUpdate.action`, which used to cross as the library's JSON in `raw`.
+// The rules of group_metadata.proto hold here: absent is unset, a point in
+// time is int64 milliseconds, a value of unverified unit crosses verbatim.
+
+// A member as a group notification names them. Not `GroupParticipant`: the
+// notification carries a different set (a server-rendered `display_name`,
+// `join_time` and the history state at the top level, no label).
+message GroupNotificationParticipant {
+  Jid jid = 1;
+  Jid phone_number = 2;
+  // The server's label, e.g. "+55∙∙∙∙∙∙∙∙∙79" when the member is not in the
+  // contacts of whoever caused the notification.
+  optional string display_name = 3;
+  // The server's `participant` is GROUP_PARTICIPANT_TYPE_MEMBER: the same role
+  // GroupMetadata names `member`. The library reads a missing or unknown type
+  // as `participant`; UNSPECIFIED only on a join request's entries
+  // (`created_membership_requests`), which carry no type at all.
+  GroupParticipantType type = 4;
+  Jid lid = 5;
+  optional string username = 6;
+  optional int64 join_time = 7;  // ms
+  GroupHistorySentState group_history_sent_state = 8;
+}
+
+// add, remove, promote, demote, modify, linked_group_promote and
+// linked_group_demote. `reason` only ever comes with add and remove.
+message GroupParticipantsChange {
+  repeated GroupNotificationParticipant participants = 1;
+  optional string reason = 2;
+}
+
+// The group was renamed. In a LID-addressed group `subject_owner` is a `@lid`
+// and the phone alias is `subject_owner_pn`.
+message GroupSubjectChange {
+  string subject = 1;
+  Jid subject_owner = 2;
+  Jid subject_owner_pn = 3;
+  optional string subject_owner_username = 4;
+  optional int64 subject_time = 5;  // ms
+}
+
+message GroupDescriptionChange {
+  string id = 1;
+  // The new text; unset when the description was deleted.
+  optional string description = 2;
+}
+
+// Only admins may edit the group info now.
+message GroupLockedChange {
+  optional string threshold = 1;
+}
+
+message GroupMembershipApprovalMode {
+  bool enabled = 1;
+}
+
+// Someone asked to join. The requester is `GroupUpdate.participant`.
+message GroupMembershipApprovalRequest {
+  MembershipRequestMethod request_method = 1;
+  Jid parent_group = 2;  // the library's `parent_group_jid`
+}
+
+// Admin side: new join requests appeared.
+message GroupCreatedMembershipRequests {
+  MembershipRequestMethod request_method = 1;
+  Jid parent_group = 2;
+  repeated GroupNotificationParticipant requests = 3;
+}
+
+// Requests rejected by an admin or cancelled by the requester.
+message GroupRevokedMembershipRequests {
+  repeated Jid participants = 1;
+}
+
+message GroupMemberAddModeChange {
+  // Parsed with the library's own exact match. UNSPECIFIED when the node had
+  // no content.
+  GroupMemberAddMode mode = 1;
+  // The server's token, only when `mode` is UNKNOWN.
+  string mode_raw = 2;
+}
+
+// Someone joined through an invite link.
+message GroupInviteJoin {
+  string code = 1;
+}
+
+// The group as the `<create>` notification carries it, parsed by the library's
+// group parser (the same one GetGroupMetadata uses). A member who is re-added
+// receives a `create` too. Unset when the node holds no `<group>` the parser
+// accepts.
+message GroupCreated {
+  GroupMetadata metadata = 1;
+}
+
+message GroupDeleted {
+  optional string reason = 1;
+}
+
+// A subgroup was linked to a community. The library keeps the rest of the node
+// unparsed, so only the type crosses.
+message GroupLinked {
+  string link_type = 1;
+}
+
+message GroupUnlinked {
+  string unlink_type = 1;
+  optional string unlink_reason = 2;
+}
+
+message GroupLimitSharing {
+  optional uint32 trigger = 1;
+}
+
+// The owner of subgroup suggestions moved to a new number. The old owner is
+// `GroupUpdate.participant`.
+message GroupChangeNumber {
+  Jid new_owner = 1;
+  repeated Jid sub_group_suggestions = 2;
+}
+
+// A child tag the library does not name, kept so the edge never loses one.
+message GroupUnknownAction {
+  string tag = 1;
+}
+
+// How a join request was made. A closed library set (it reads an unknown
+// token as INVITE_LINK), so UNKNOWN is never emitted.
+enum MembershipRequestMethod {
+  MEMBERSHIP_REQUEST_METHOD_UNSPECIFIED = 0;
+  MEMBERSHIP_REQUEST_METHOD_UNKNOWN = 1;            // not emitted today: the set is closed
+  MEMBERSHIP_REQUEST_METHOD_INVITE_LINK = 2;        // "invite_link"
+  MEMBERSHIP_REQUEST_METHOD_LINKED_GROUP_JOIN = 3;  // "linked_group_join"
+  MEMBERSHIP_REQUEST_METHOD_NON_ADMIN_ADD = 4;      // "non_admin_add"
+}
+
+// Whether a new member got the group's history. A closed library set.
+enum GroupHistorySentState {
+  GROUP_HISTORY_SENT_STATE_UNSPECIFIED = 0;
+  GROUP_HISTORY_SENT_STATE_UNKNOWN = 1;           // not emitted today: the set is closed
+  GROUP_HISTORY_SENT_STATE_HISTORY_NOT_SENT = 2;  // "HISTORY_NOT_SENT"
+  GROUP_HISTORY_SENT_STATE_HISTORY_SENT = 3;      // "HISTORY_SENT"
+  GROUP_HISTORY_SENT_STATE_NOTICE_SENT = 4;       // "NOTICE_SENT"
+}
+
+// A contact edited on a linked device: the fields of the library's
+// `wa.SyncActionValue.ContactAction`, each unset when the mutation left it out.
+message ContactAction {
+  optional string full_name = 1;
+  optional string first_name = 2;
+  Jid lid = 3;  // the action's `lidJid`, verbatim
+  optional bool save_on_primary_addressbook = 4;
+  Jid pn = 5;   // the action's `pnJid`, verbatim
+  optional string username = 6;
+}

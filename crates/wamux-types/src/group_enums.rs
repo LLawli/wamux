@@ -8,6 +8,9 @@ use wacore::iq::groups::{
     AddressingMode, GroupAppealStatus, MemberAddMode, MemberLinkMode, MemberShareHistoryMode,
     ParticipantType,
 };
+use wacore::stanza::groups::{
+    GroupHistorySentState, GroupParticipantType, MembershipRequestMethod,
+};
 use wamux_proto::v1 as pb;
 
 pub fn addressing_mode_of(mode: AddressingMode) -> pb::GroupAddressingMode {
@@ -54,5 +57,49 @@ pub fn appeal_status_of(status: GroupAppealStatus) -> pb::GroupAppealStatus {
         GroupAppealStatus::InReview => pb::GroupAppealStatus::InReview,
         GroupAppealStatus::NoAppeal => pb::GroupAppealStatus::NoAppeal,
         GroupAppealStatus::Rejected => pb::GroupAppealStatus::Rejected,
+    }
+}
+
+/// The role a group NOTIFICATION gives a member (#133). The server spells the
+/// plain member `participant` there and `member` in the metadata answer; both
+/// are the same role, so both are GROUP_PARTICIPANT_TYPE_MEMBER.
+pub fn notification_participant_type_of(
+    participant_type: &GroupParticipantType,
+) -> pb::GroupParticipantType {
+    match participant_type {
+        GroupParticipantType::Participant => pb::GroupParticipantType::Member,
+        GroupParticipantType::Admin => pb::GroupParticipantType::Admin,
+        GroupParticipantType::SuperAdmin => pb::GroupParticipantType::Superadmin,
+    }
+}
+
+pub fn membership_request_method_of(
+    method: &MembershipRequestMethod,
+) -> pb::MembershipRequestMethod {
+    match method {
+        MembershipRequestMethod::InviteLink => pb::MembershipRequestMethod::InviteLink,
+        MembershipRequestMethod::LinkedGroupJoin => pb::MembershipRequestMethod::LinkedGroupJoin,
+        MembershipRequestMethod::NonAdminAdd => pb::MembershipRequestMethod::NonAdminAdd,
+    }
+}
+
+pub fn history_sent_state_of(state: GroupHistorySentState) -> pb::GroupHistorySentState {
+    match state {
+        GroupHistorySentState::HistoryNotSent => pb::GroupHistorySentState::HistoryNotSent,
+        GroupHistorySentState::HistorySent => pb::GroupHistorySentState::HistorySent,
+        GroupHistorySentState::NoticeSent => pb::GroupHistorySentState::NoticeSent,
+    }
+}
+
+/// A `<member_add_mode>` notification's content, which the library hands over
+/// as the raw string: parsed with the library's own exact match, UNKNOWN plus
+/// the token when it names no mode, UNSPECIFIED when the node was empty.
+pub fn member_add_mode_token_of(token: &str) -> (pb::GroupMemberAddMode, String) {
+    if token.is_empty() {
+        return (pb::GroupMemberAddMode::Unspecified, String::new());
+    }
+    match MemberAddMode::try_from(token) {
+        Ok(mode) => (member_add_mode_of(mode), String::new()),
+        Err(_) => (pb::GroupMemberAddMode::Unknown, token.to_string()),
     }
 }

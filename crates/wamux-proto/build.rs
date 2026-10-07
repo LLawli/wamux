@@ -11,6 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "proto/messaging.proto",
         "proto/media.proto",
         "proto/group_metadata.proto",
+        "proto/group_update.proto",
         "proto/groups.proto",
         "proto/contacts.proto",
         "proto/newsletter_tallies.proto",

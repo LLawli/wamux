@@ -1,8 +1,9 @@
 //! Upstream #1562 (#86): each chat-action update carries `action_timestamp`,
 //! the instant the mutation itself held, next to `timestamp`, which falls back
-//! to the epoch or the dispatch time when the mutation held none. The core
-//! relays the library struct as JSON in `raw`, so the new key reaches the edge
-//! with no mapping change: these tests pin that it does, both ways.
+//! to the epoch or the dispatch time when the mutation held none. App-state
+//! updates still relay the library struct as JSON in `raw` (typed in #134);
+//! a contact update carries it as a typed field since #133. These tests pin
+//! that the edge gets it, both ways.
 
 use super::*;
 use wacore::types::events::{ArchiveUpdate, ContactUpdate};
@@ -15,8 +16,7 @@ const MUTATION_SECS: i64 = 1_717_932_000;
 fn raw_json_of(event: &Event) -> serde_json::Value {
     let raw = match map_event(event).into_iter().next() {
         Some(PbEvent::AppState(s)) => s.raw,
-        Some(PbEvent::Contact(c)) => c.raw,
-        other => panic!("expected an app-state or contact update, got {other:?}"),
+        other => panic!("expected an app-state update, got {other:?}"),
     };
     serde_json::from_slice(&raw).unwrap()
 }
@@ -52,9 +52,9 @@ fn app_state_raw_says_null_when_the_mutation_had_no_timestamp() {
 }
 
 #[test]
-fn contact_raw_carries_the_mutations_own_timestamp() {
+fn contact_update_carries_the_mutations_own_timestamp() {
     let at = wacore::time::from_secs(MUTATION_SECS).unwrap();
-    let json = raw_json_of(&Event::ContactUpdate(
+    let mapped = map_event(&Event::ContactUpdate(
         ContactUpdate::builder()
             .jid("559980000001@s.whatsapp.net".parse().unwrap())
             .timestamp(at)
@@ -63,5 +63,11 @@ fn contact_raw_carries_the_mutations_own_timestamp() {
             .from_full_sync(false)
             .build(),
     ));
-    assert!(json["action_timestamp"].is_string(), "{json}");
+    match mapped.into_iter().next() {
+        Some(PbEvent::Contact(c)) => {
+            assert_eq!(c.action_timestamp, Some(MUTATION_SECS * 1000));
+            assert_eq!(c.timestamp, MUTATION_SECS * 1000);
+        }
+        other => panic!("expected a contact update, got {other:?}"),
+    }
 }

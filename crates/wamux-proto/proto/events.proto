@@ -4,6 +4,8 @@ package wamux.v1;
 
 import "common.proto";
 import "account.proto";
+import "group_metadata.proto";
+import "group_update.proto";
 import "newsletter_tallies.proto";
 
 message SubscribeRequest {
@@ -333,12 +335,77 @@ enum ChatState {
   CHAT_STATE_PAUSED = 4;     // was "paused"
 }
 
+// One action of a `<notification type="w:gp2">`; a notification with several
+// actions arrives as several GroupUpdates, numbered by `action_index`.
 message GroupUpdate {
   reserved 1;
   reserved "group_jid";  // #122: was `string group_jid`
   Jid group = 4;
-  string kind = 2;
-  bytes raw = 3;
+  reserved 2, 3;
+  reserved "kind", "raw";  // #133: a constant, and the library's JSON
+  optional string notification_id = 5;
+  optional string notify = 6;   // push name of whoever caused it
+  optional string offline = 7;  // the server's offline-delivery marker, verbatim
+  uint32 action_index = 8;      // zero-based, within the notification
+  // Who caused the change. In a LID-addressed group a `@lid`, with the phone
+  // alias in `participant_pn`. Unset on a change the server made itself.
+  Jid participant = 9;
+  Jid participant_pn = 10;
+  optional string participant_username = 11;
+  optional string participant_country_code = 12;
+  int64 timestamp = 13;  // ms
+  bool is_lid_addressing_mode = 14;
+  bool has_incomplete_participant_information = 15;
+  // One field per library action, named by its wire tag (group_update.proto).
+  // The library match has no wildcard arm, so a new action breaks the build.
+  oneof action {
+    GroupParticipantsChange add = 20;
+    GroupParticipantsChange remove = 21;
+    GroupParticipantsChange promote = 22;
+    GroupParticipantsChange demote = 23;
+    GroupParticipantsChange modify = 24;  // a member changed number
+    GroupSubjectChange subject = 25;
+    GroupDescriptionChange description = 26;
+    GroupLockedChange locked = 27;
+    Empty unlocked = 28;
+    Empty announcement = 29;
+    Empty not_announcement = 30;
+    // `not_ephemeral` arrives as expiration_seconds 0, as the library reads it.
+    GroupEphemeralSettings ephemeral = 31;
+    GroupMembershipApprovalMode membership_approval_mode = 32;
+    GroupMembershipApprovalRequest membership_approval_request = 33;
+    GroupCreatedMembershipRequests created_membership_requests = 34;
+    GroupRevokedMembershipRequests revoked_membership_requests = 35;
+    GroupMemberAddModeChange member_add_mode = 36;
+    Empty no_frequently_forwarded = 37;
+    Empty frequently_forwarded_ok = 38;
+    GroupInviteJoin invite = 39;
+    Empty revoke = 40;  // the invite link was revoked
+    GrowthLockInfo growth_locked = 41;
+    Empty growth_unlocked = 42;
+    GroupCreated create = 43;
+    GroupDeleted delete = 44;
+    GroupLinked link = 45;
+    GroupUnlinked unlink = 46;
+    GroupParticipantsChange linked_group_promote = 47;
+    GroupParticipantsChange linked_group_demote = 48;
+    Empty suspended = 49;
+    Empty unsuspended = 50;
+    Empty auto_add_disabled = 51;
+    Empty is_capi_hosted_group = 52;
+    Empty group_safety_check = 53;
+    GroupLimitSharing limit_sharing_enabled = 54;
+    Empty allow_admin_reports = 55;
+    Empty not_allow_admin_reports = 56;
+    Empty reports = 57;
+    Empty allow_non_admin_sub_group_creation = 58;
+    Empty not_allow_non_admin_sub_group_creation = 59;
+    // The library keeps these two nodes unparsed, so only the fact crosses.
+    Empty created_sub_group_suggestion = 60;
+    Empty revoked_sub_group_suggestions = 61;
+    GroupChangeNumber change_number = 62;
+    GroupUnknownAction unknown = 63;
+  }
 }
 
 message PushNameUpdate {
@@ -347,11 +414,20 @@ message PushNameUpdate {
   string push_name = 2;
 }
 
+// A contact edited on a linked device (the `contact` sync action).
 message ContactUpdate {
   reserved 1;  // #122: was `string jid`
   Jid jid = 4;
-  string kind = 2;
-  bytes raw = 3;
+  reserved 2, 3;
+  reserved "kind", "raw";  // #133: a constant, and the library's JSON
+  // When the mutation was made (ms). Falls back to the epoch or the dispatch
+  // time when the mutation carried none: `action_timestamp` tells them apart.
+  int64 timestamp = 5;
+  // The instant the mutation itself carried (ms); unset when it carried none
+  // (upstream #1562).
+  optional int64 action_timestamp = 6;
+  bool from_full_sync = 7;  // replayed by a full app-state sync
+  ContactAction action = 8;
 }
 
 // History-sync chunk, only emitted when the account connected with backfill

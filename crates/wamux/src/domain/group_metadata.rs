@@ -183,7 +183,7 @@ pub fn membership_request_of(request: &MembershipRequest) -> pb::MembershipReque
 }
 
 /// A lib jid as the wire message, verbatim (#122).
-fn lib_jid(jid: &Jid) -> Option<pb::Jid> {
+pub(crate) fn lib_jid(jid: &Jid) -> Option<pb::Jid> {
     relay_jid(jid.to_string())
 }
 

@@ -496,6 +496,27 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: the group and contact update events are typed, not JSON**
+  (issue #133, part 2 of #74). `GroupUpdate` and `ContactUpdate` lose `raw`
+  (the library's JSON) and `kind` (a constant), both `reserved`. JSON key to
+  field: `docs/BREAKING-CHANGES-2026-10-05.md`, section 3b.
+  - `GroupUpdate` carries the notification's header (id, push name, offline
+    marker, action index, who caused it with the phone and username beside a
+    `@lid`, the time in ms, the addressing mode) and the action as a `oneof`
+    with one case per library action (44), named by its wire tag: `add`,
+    `remove`, `promote`, `subject`, `announcement`, `ephemeral`, `create`, ...
+    An action the library does not name arrives as `unknown` with its tag.
+  - The JSON spelled every jid as the library's struct
+    (`{"user":..,"server":"lid",..}`); each one is a `Jid` now.
+  - `create` carries the new group as the `GroupMetadata` GetGroupMetadata
+    answers with (#132), parsed by the library's own group parser. A member
+    who is re-added receives a `create` too.
+  - A notification participant's `participant` role is
+    `GROUP_PARTICIPANT_TYPE_MEMBER`, the same value GroupMetadata uses.
+  - `ContactUpdate` carries `timestamp` and `action_timestamp` in ms (unset
+    when the mutation had none, upstream #1562), `from_full_sync`, and the
+    contact action's names, username, and its `lid` and `pn` as `Jid`s.
+
 - **BREAKING: group metadata, membership requests and the business profile
   are typed messages, not JSON** (issue #132, part 1 of #74).
   `GroupJidResponse.metadata`, `GroupMetadataResponse.metadata` and

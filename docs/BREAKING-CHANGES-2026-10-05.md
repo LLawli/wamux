@@ -496,3 +496,71 @@ key is the field of the same name.
 - Read the times as milliseconds.
 - Read a membership request's jid from `.jid.value`, not from a `user`/`server`
   object.
+
+### 3b. Group and contact update events (#133)
+
+| Message | Before | After |
+|---|---|---|
+| `GroupUpdate` | `string kind = 2` (always `"group_update"`), `bytes raw = 3` | both `reserved`; header fields 5 to 15 and `oneof action` (20 to 63) |
+| `ContactUpdate` | `string kind = 2` (always `"contact_update"`), `bytes raw = 3` | both `reserved`; `timestamp = 5`, `action_timestamp = 6`, `from_full_sync = 7`, `ContactAction action = 8` |
+
+The payload messages live in the new `group_update.proto`.
+
+**Group update, JSON key to field.**
+
+| JSON (`raw`) | `GroupUpdate` |
+|---|---|
+| `group_jid` (jid struct) | `group` (already a `Jid` since #122) |
+| `notification_id`, `notify`, `offline` | same names, `optional string` |
+| `action_index` | `action_index` |
+| `participant`, `participant_pn` (jid structs) | `participant`, `participant_pn` (`Jid`, unset on a change the server made itself) |
+| `participant_username`, `participant_country_code` | same names, `optional string` |
+| `timestamp` (RFC 3339 string) | `timestamp` (ms) |
+| `is_lid_addressing_mode`, `has_incomplete_participant_information` | same names |
+| `action.type` (`"add"`, `"subject"`, ...) | the `oneof action` case of the same name |
+| `action` fields | the fields of that case's message |
+
+The action cases, by payload:
+
+- **`GroupParticipantsChange { participants, reason }`:** `add`, `remove`
+  (with `reason`), `promote`, `demote`, `modify`, `linked_group_promote`,
+  `linked_group_demote`. Each participant is a `GroupNotificationParticipant`:
+  `jid`, `phone_number`, `display_name`, `type` (`participant` is
+  `GROUP_PARTICIPANT_TYPE_MEMBER`), `lid`, `username`, `join_time` (ms) and
+  `group_history_sent_state`.
+- **`Empty`:** `unlocked`, `announcement`, `not_announcement`,
+  `no_frequently_forwarded`, `frequently_forwarded_ok`, `revoke`,
+  `growth_unlocked`, `suspended`, `unsuspended`, `auto_add_disabled`,
+  `is_capi_hosted_group`, `group_safety_check`, `allow_admin_reports`,
+  `not_allow_admin_reports`, `reports`, `allow_non_admin_sub_group_creation`,
+  `not_allow_non_admin_sub_group_creation`, `created_sub_group_suggestion`,
+  `revoked_sub_group_suggestions`.
+- **Their own message:** `subject` (`subject_time` in ms), `description`
+  (unset `description` = deleted), `locked`, `ephemeral`
+  (`expiration_seconds`; `not_ephemeral` is 0), `membership_approval_mode`,
+  `membership_approval_request` and `created_membership_requests`
+  (`MembershipRequestMethod`, `parent_group`), `revoked_membership_requests`,
+  `member_add_mode` (`GroupMemberAddMode`, `mode_raw` on `UNKNOWN`), `invite`,
+  `growth_locked` (`GrowthLockInfo`, expiration verbatim), `delete`, `link`,
+  `unlink`, `limit_sharing_enabled`, `change_number`, `unknown` (`tag`).
+- **`create`:** `GroupCreated { metadata }`, the `GroupMetadata` of section 3a.
+  The JSON had no payload for it.
+
+**Contact update, JSON key to field.**
+
+| JSON (`raw`) | `ContactUpdate` |
+|---|---|
+| `jid` | `jid` (already a `Jid` since #122) |
+| `timestamp` (RFC 3339) | `timestamp` (ms) |
+| `action_timestamp` (RFC 3339 or `null`) | `action_timestamp` (ms, unset when the mutation had none) |
+| `from_full_sync` | `from_full_sync` |
+| `action.full_name`, `action.first_name`, `action.username` | the same names |
+| `action.lid_jid`, `action.pn_jid` (strings) | `action.lid`, `action.pn` (`Jid`) |
+| `action.save_on_primary_addressbook` | the same name |
+
+**What the edge has to do:**
+
+- Switch on the `oneof action` case where it read `action.type` from the JSON,
+  and stop reading `kind`.
+- Read jids as `.value` instead of rebuilding them from `user` and `server`.
+- Read the times as milliseconds.
