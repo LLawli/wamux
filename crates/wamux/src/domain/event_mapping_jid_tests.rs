@@ -42,8 +42,8 @@ fn group_update_names_the_group_as_a_jid() {
     );
     match mapped(&event) {
         PbEvent::Group(g) => {
+            // #133 dropped the constant `kind`; the oneof case names the action.
             assert_eq!(g.group, wire(GROUP_JID));
-            assert_eq!(g.kind, "group_update");
         }
         other => panic!("expected group update, got {other:?}"),
     }
@@ -63,7 +63,6 @@ fn contact_update_names_the_contact_as_a_jid() {
     match mapped(&event) {
         PbEvent::Contact(c) => {
             assert_eq!(c.jid, wire(LID_JID));
-            assert_eq!(c.kind, "contact_update");
         }
         other => panic!("expected contact update, got {other:?}"),
     }
