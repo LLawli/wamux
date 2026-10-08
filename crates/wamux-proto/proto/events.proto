@@ -443,7 +443,21 @@ message ContactUpdate {
   // (upstream #1562).
   optional int64 action_timestamp = 6;
   bool from_full_sync = 7;  // replayed by a full app-state sync
+  // Unset when `removed` is true: a removal carries no action.
   ContactAction action = 8;
+  // #153: true when the contact was deleted on a linked device (the syncd
+  // `Remove` of the same `contact` mutation). It reached the socket as the
+  // `ContactRemoved` RawEvent.
+  bool removed = 9;
+}
+
+// This account's own push name changed (#153), from an app-state
+// `setting_pushName` mutation, a history sync or an account_sync notification.
+// It reached the socket as the `SelfPushNameUpdated` RawEvent. Not the retired
+// `PushNameUpdate`, which named a contact and is never emitted.
+message SelfPushNameUpdate {
+  string old_name = 1;  // empty when the account had none yet (first sync after pairing)
+  string new_name = 2;
 }
 
 // History-sync chunk, only emitted when the account connected with backfill
@@ -770,6 +784,8 @@ message EventEnvelope {
     LabelUpdate label = 29;                     // #149
     QuickReplyUpdate quick_reply = 30;          // #149
     AccountSettingUpdate account_setting = 31;  // #149
+    SelfPushNameUpdate self_push_name = 32;     // #153
+    CallLogUpdate call_log = 33;                // #153
     RawEvent raw = 99;
   }
 }

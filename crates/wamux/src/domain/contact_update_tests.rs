@@ -62,6 +62,7 @@ fn contact_update_maps_every_field() {
             }),
             username: Some("fulano".to_string()),
         }),
+        removed: false,
     };
     assert_eq!(contact_update_of(&update), expected);
 }
@@ -85,6 +86,7 @@ fn contact_update_absent_fields_stay_unset() {
         action_timestamp: None,
         from_full_sync: false,
         action: Some(pb::ContactAction::default()),
+        removed: false,
     };
     assert_eq!(contact_update_of(&update), expected);
 }
