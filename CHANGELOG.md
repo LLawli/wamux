@@ -14,6 +14,30 @@ has to follow them.
 
 ### Added
 
+- **The own push name, a removed contact and the call log are typed instead
+  of RawEvent** (issue #153, part 2b of #141). Two new events:
+  `EventEnvelope.self_push_name = 32` (`SelfPushNameUpdate`: this account's
+  own push name, old and new) and `call_log = 33` (`CallLogUpdate`: one entry
+  of the primary device's call log). A contact deleted on a linked device
+  arrives as `ContactUpdate` with the new `removed = 9` set and `action`
+  unset. Additive: an edge that matched `RawEvent.kind` on
+  `SelfPushNameUpdated`, `ContactRemoved` or `CallLogSync` stops seeing those
+  kinds. `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
+  - The call log is the only channel that shows a call placed on the phone:
+    such a call puts no signalling on the socket, so `CallEvent` never sees
+    it. Measured on 2026-10-08, only the companion of the account that placed
+    the call received one.
+  - Read `from_me` for the direction. The record's `isIncoming` is left out:
+    the library documents it as inverted in mutations WA Web wrote. So are the
+    record's copies of `call_id` and the creator.
+  - `start_time` crosses in ms (the server sends seconds); `duration_seconds`
+    crosses as sent, in seconds, as measured. `CallLogResult`,
+    `CallLogSilenceReason` and `CallLogType` are closed in the library: absent
+    or unknown crosses as UNSPECIFIED, and there is no code.
+  - `SelfPushNameUpdate` drops the library's `from_server`, which is always
+    true. The retired `PushNameUpdate` (`push_name = 17`) stays in the
+    contract and is still never emitted.
+
 - **Labels, quick replies and two account settings are typed instead of
   RawEvent** (issue #149, part 2 of #141). Three new events:
   `EventEnvelope.label = 29` (`LabelUpdate`: a label edited, or put on or

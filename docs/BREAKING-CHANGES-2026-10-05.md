@@ -727,6 +727,9 @@ that matched `RawEvent.kind` on it stops seeing that kind.
 | `QuickReplyUpdate` | `QuickReplyUpdate`, `EventEnvelope.quick_reply = 30` | #149 |
 | `DisableLinkPreviewsUpdate` | `AccountSettingUpdate.link_previews` (`LinkPreviewsSetting`), `EventEnvelope.account_setting = 31` | #149 |
 | `StatusPrivacyUpdate` | `AccountSettingUpdate.status_privacy` (`StatusPrivacySetting`) | #149 |
+| `SelfPushNameUpdated` | `SelfPushNameUpdate`, `EventEnvelope.self_push_name = 32` | #153 |
+| `ContactRemoved` | `ContactUpdate` with `removed` true and no `action` | #153 |
+| `CallLogSync` | `CallLogUpdate`, `EventEnvelope.call_log = 33` | #153 |
 
 **JSON key to field (#148).**
 
@@ -774,3 +777,26 @@ CUSTOM, and deleting one sends `deleted` true with an empty name and
 `mode` DENY_LIST with the excluded users and `modes` [DENY_LIST]; going back
 sends CONTACTS with no users. The app no longer labels messages, so the
 message label is covered by tests only.
+
+**JSON key to field (#153).**
+
+| JSON (`payload`) | Field |
+|---|---|
+| `old_name`, `new_name` (own push name) | `SelfPushNameUpdate.old_name`, `new_name` |
+| `from_server` | dropped: always true |
+| `jid`, `timestamp`, `action_timestamp`, `from_full_sync` (contact removed) | the same names on `ContactUpdate` (times in ms), with `removed` true |
+| `call_creator_jid`, `call_id`, `from_me`, `timestamp`, `from_full_sync` (call log) | `CallLogUpdate.call_creator` (`Jid`), `call_id`, `from_me`, `timestamp` (ms), `from_full_sync` |
+| `record.call_result`, `silence_reason`, `call_type` (names) | `result` (`CallLogResult`), `silence_reason` (`CallLogSilenceReason`), `call_type` (`CallLogType`); absent is UNSPECIFIED |
+| `record.duration` | `duration_seconds`, as sent |
+| `record.start_time` (seconds) | `start_time` (ms) |
+| `record.is_dnd_mode`, `is_video`, `is_call_link`, `call_link_token`, `scheduled_call_id` | the same names on `CallLogUpdate` |
+| `record.group_jid` (string) | `group` (`Jid`) |
+| `record.participants[].user_jid`, `call_result` | `participants[].user` (`Jid`; an entry with none is skipped), `result` |
+| `record.is_incoming`, `record.call_id`, `record.call_creator_jid` | dropped: read `from_me`, `call_id` and `call_creator` |
+
+Measured on 2026-10-08 with a call placed from one paired account to the
+other: an answered call of 30 to 31 s on the phones carried `duration` 31 and
+a `start_time` in seconds, equal to the second the offer arrived; a
+rejected one carried REJECTED and `duration` 0. Only the companion of the
+caller received the call log. A removed contact carried its
+`action_timestamp` (equal to `timestamp`).

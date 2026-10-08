@@ -208,3 +208,85 @@ message WaitingRoomUser {
   Jid pn = 2;      // unset when absent
   string state = 3;
 }
+
+// #153 (part 2b of #141): one entry of the primary device's call log, synced
+// through app state (`wa.SyncActionValue.CallLogAction`). The only channel
+// that shows a call placed on the phone: such a call puts no signalling on this
+// socket, so CallEvent never sees it. It reached the socket as the
+// `CallLogSync` RawEvent. Measured on 2026-10-08: only the companion of the
+// account that placed the call received one.
+//
+// Left out on purpose: the record's `isIncoming`, which the library documents
+// as inverted in mutations WA Web wrote and literal in ones the phone wrote
+// (read `from_me`), and the record's `callId` / `callCreatorJid`, which repeat
+// the mutation's index below.
+message CallLogUpdate {
+  Jid call_creator = 1;     // who started the call, from the mutation's index
+  string call_id = 2;       // from the mutation's index
+  bool from_me = 3;         // this account placed the call (creator compared to this account)
+  // When the mutation was written (ms), not when the call happened: that is
+  // `start_time`.
+  int64 timestamp = 4;
+  bool from_full_sync = 5;  // replayed by a full app-state sync
+  CallLogResult result = 6;
+  optional bool is_dnd_mode = 7;
+  CallLogSilenceReason silence_reason = 8;
+  // Seconds, verbatim (measured: 31 for a call the phone showed as 30-31 s).
+  optional int64 duration_seconds = 9;
+  optional int64 start_time = 10;  // ms; the server sends seconds
+  optional bool is_video = 11;
+  optional bool is_call_link = 12;
+  optional string call_link_token = 13;
+  optional string scheduled_call_id = 14;
+  Jid group = 15;                  // set on a group call
+  repeated CallLogParticipant participants = 16;
+  CallLogType call_type = 17;
+}
+
+// One other party of the call and how the call ended for them. An entry with
+// no jid is skipped.
+message CallLogParticipant {
+  Jid user = 1;
+  CallLogResult result = 2;
+}
+
+// The three enums below are closed in the library (whatsapp.proto is proto2
+// and waproto/build.rs does not open them): a number it does not know is
+// dropped as absent. So they cross as UNSPECIFIED when absent, never emit
+// UNKNOWN and carry no `*_code` (#149 rule, MediaType #127 precedent).
+
+// `wa.CallLogRecord.CallResult`.
+enum CallLogResult {
+  CALL_LOG_RESULT_UNSPECIFIED = 0;
+  CALL_LOG_RESULT_UNKNOWN = 1;  // never emitted (closed in the library)
+  CALL_LOG_RESULT_CONNECTED = 2;
+  CALL_LOG_RESULT_REJECTED = 3;
+  CALL_LOG_RESULT_CANCELLED = 4;
+  CALL_LOG_RESULT_ACCEPTED_ELSEWHERE = 5;
+  CALL_LOG_RESULT_MISSED = 6;
+  CALL_LOG_RESULT_INVALID = 7;
+  CALL_LOG_RESULT_UNAVAILABLE = 8;
+  CALL_LOG_RESULT_UPCOMING = 9;
+  CALL_LOG_RESULT_FAILED = 10;
+  CALL_LOG_RESULT_ABANDONED = 11;
+  CALL_LOG_RESULT_ONGOING = 12;
+}
+
+// `wa.CallLogRecord.SilenceReason`.
+enum CallLogSilenceReason {
+  CALL_LOG_SILENCE_REASON_UNSPECIFIED = 0;
+  CALL_LOG_SILENCE_REASON_UNKNOWN = 1;  // never emitted (closed in the library)
+  CALL_LOG_SILENCE_REASON_NONE = 2;
+  CALL_LOG_SILENCE_REASON_SCHEDULED = 3;
+  CALL_LOG_SILENCE_REASON_PRIVACY = 4;
+  CALL_LOG_SILENCE_REASON_LIGHTWEIGHT = 5;
+}
+
+// `wa.CallLogRecord.CallType`.
+enum CallLogType {
+  CALL_LOG_TYPE_UNSPECIFIED = 0;
+  CALL_LOG_TYPE_UNKNOWN = 1;  // never emitted (closed in the library)
+  CALL_LOG_TYPE_REGULAR = 2;
+  CALL_LOG_TYPE_SCHEDULED_CALL = 3;
+  CALL_LOG_TYPE_VOICE_CHAT = 4;
+}

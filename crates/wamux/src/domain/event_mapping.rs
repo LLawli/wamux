@@ -20,12 +20,14 @@ use crate::domain::app_state_update::{
     pin_update_of, star_update_of, user_status_mute_update_of,
 };
 use crate::domain::call_event::call_event_of;
-use crate::domain::contact_update::contact_update_of;
+use crate::domain::call_log_update::call_log_update_of;
+use crate::domain::contact_update::{contact_removed_of, contact_update_of};
 use crate::domain::group_update::group_update_of;
 use crate::domain::label_update::{
     label_association_update_of, label_edit_update_of, message_label_association_update_of,
 };
 use crate::domain::quick_reply_update::quick_reply_update_of;
+use crate::domain::self_push_name_update::self_push_name_update_of;
 use crate::domain::stanza_node::stanza_node_of;
 use crate::domain::sticker_packs;
 use crate::domain::sticker_update::{favorite_sticker_update_of, remove_recent_sticker_update_of};
@@ -110,6 +112,10 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // carried one. `pb::PushNameUpdate` stays in the proto so the contract
         // does not break; nothing emits it, exactly as before the bump.
         Event::ContactUpdate(c) => one(Pb::Contact(contact_update_of(c))),
+        // #153 (part 2b of #141): these three used to fall into RawEvent.
+        Event::ContactRemoved(c) => one(Pb::Contact(contact_removed_of(c))),
+        Event::SelfPushNameUpdated(u) => one(Pb::SelfPushName(self_push_name_update_of(u))),
+        Event::CallLogSync(c) => one(Pb::CallLog(call_log_update_of(c))),
 
         // Backfill: only ever dispatched when the account connected with history
         // enabled (or via FetchMessageHistory). Relayed verbatim — the edge
