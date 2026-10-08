@@ -510,6 +510,15 @@ has to follow them.
 
 ### Changed
 
+- **One helper turns a library jid into a wire jid** (issue #142, found in
+  #135's review). `lib_jid` and `optional_lib_jid` were copied in the event
+  mapping and the group metadata mapping, ten more sites wrote
+  `relay_jid(jid.to_string())` by hand, fourteen spelled the optional form
+  out, and three built the `Jid` message literally. All of them go through
+  `wamux_types::relay_lib_jid` and `relay_optional_lib_jid` now, beside
+  `relay_jid`, under the same rule (#120). Nothing changes on the wire: a
+  library jid always prints as text, never as an empty value.
+
 - **BREAKING: call events are typed, not JSON** (issue #135, part 4 of #74,
   which it closes). `CallEvent` loses `raw` (the library's JSON), `action`
   (the #126 enum, now redundant) and `action_raw`, all `reserved`, and the

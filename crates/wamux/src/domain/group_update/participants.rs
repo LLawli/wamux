@@ -4,9 +4,9 @@
 use wacore::stanza::groups::GroupParticipantInfo;
 use wamux_types::group_enums::{history_sent_state_of, notification_participant_type_of};
 
-use crate::domain::group_metadata::lib_jid;
 use crate::domain::wire_time::millis_from_seconds;
 use crate::proto::v1 as pb;
+use wamux_types::{relay_lib_jid, relay_optional_lib_jid};
 
 /// add, remove, promote, demote, modify and the two linked-group variants.
 /// `reason` is only ever set by add and remove.
@@ -30,8 +30,8 @@ pub(super) fn notification_participants(
 /// join request's `<requested_user>` entries carry neither.
 fn notification_participant(info: &GroupParticipantInfo) -> pb::GroupNotificationParticipant {
     pb::GroupNotificationParticipant {
-        jid: lib_jid(&info.jid),
-        phone_number: info.phone_number.as_ref().and_then(lib_jid),
+        jid: relay_lib_jid(&info.jid),
+        phone_number: relay_optional_lib_jid(info.phone_number.as_ref()),
         display_name: info.display_name.clone(),
         r#type: info
             .r#type
@@ -39,7 +39,7 @@ fn notification_participant(info: &GroupParticipantInfo) -> pb::GroupNotificatio
             .map_or(pb::GroupParticipantType::Unspecified, |kind| {
                 notification_participant_type_of(kind)
             }) as i32,
-        lid: info.lid.as_ref().and_then(lib_jid),
+        lid: relay_optional_lib_jid(info.lid.as_ref()),
         username: info.username.clone(),
         join_time: info.join_time.map(millis_from_seconds),
         group_history_sent_state: info.group_history_sent_state.map_or(

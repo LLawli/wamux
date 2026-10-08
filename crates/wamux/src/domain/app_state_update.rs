@@ -12,8 +12,8 @@ use whatsapp_rust::waproto::whatsapp::sync_action_value::{
 };
 
 use crate::domain::event_mapping::wa_key_to_proto;
-use crate::domain::group_metadata::lib_jid;
 use crate::domain::wire_time::millis_from_signed_seconds;
+use wamux_types::{relay_lib_jid, relay_optional_lib_jid};
 
 use crate::proto::v1 as pb;
 use pb::app_state_update::Action;
@@ -29,7 +29,7 @@ fn app_state_of(
     action: Action,
 ) -> pb::AppStateUpdate {
     pb::AppStateUpdate {
-        chat: lib_jid(chat),
+        chat: relay_lib_jid(chat),
         timestamp: timestamp_ms,
         action_timestamp: action_timestamp_ms,
         from_full_sync,
@@ -106,7 +106,7 @@ pub fn mute_update_of(update: &MuteUpdate) -> pb::AppStateUpdate {
 
 pub fn star_update_of(update: &StarUpdate) -> pb::AppStateUpdate {
     let action = Action::Star(pb::StarChange {
-        participant: update.participant_jid.as_ref().and_then(lib_jid),
+        participant: relay_optional_lib_jid(update.participant_jid.as_ref()),
         message_id: update.message_id.clone(),
         from_me: update.from_me,
         starred: update.action.starred,

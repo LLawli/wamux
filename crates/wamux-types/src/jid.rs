@@ -119,6 +119,18 @@ pub fn relay_jid(value: impl Into<String>) -> Option<pb::Jid> {
     (!value.is_empty()).then_some(pb::Jid { value })
 }
 
+/// A library jid the core relays out (#142): its `Display`, verbatim, under the
+/// same rule as `relay_jid`. The one conversion every mapping uses, so the rule
+/// lives in one place instead of a copy per module.
+pub fn relay_lib_jid(jid: &wacore_binary::Jid) -> Option<pb::Jid> {
+    relay_jid(jid.to_string())
+}
+
+/// An optional library jid: absent is an unset field, never an empty value (#122).
+pub fn relay_optional_lib_jid(jid: Option<&wacore_binary::Jid>) -> Option<pb::Jid> {
+    jid.and_then(relay_lib_jid)
+}
+
 impl From<Jid> for pb::Jid {
     fn from(jid: Jid) -> Self {
         Self {

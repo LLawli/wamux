@@ -9,8 +9,7 @@ use wacore::types::message::MessageInfo;
 use wamux_types::event_enums::{
     ban_reason_of, chat_state_of, logout_reason_of, receipt_type_of, unavailable_reason_of,
 };
-use wamux_types::{MediaKind, relay_jid};
-use whatsapp_rust::Jid;
+use wamux_types::{MediaKind, relay_jid, relay_lib_jid, relay_optional_lib_jid};
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
@@ -47,13 +46,9 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // hands over (code-review 2026-06-11: it used to masquerade as
         // push_name, empty for every personal account).
         Event::PairSuccess(p) => one(pairing(pb::pairing_update::Event::Paired(pb::PairedInfo {
-            jid: Some(pb::Jid {
-                value: p.id.to_string(),
-            }),
+            jid: relay_lib_jid(&p.id),
             business_name: p.business_name.clone(),
-            lid: Some(pb::Jid {
-                value: p.lid.to_string(),
-            }),
+            lid: relay_lib_jid(&p.lid),
             platform: p.platform.clone(),
         }))),
         Event::PairError(p) => one(pairing(pb::pairing_update::Event::Error(
@@ -72,8 +67,8 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             .collect(),
         Event::Receipt(r) => one(Pb::Receipt(receipt_event(r))),
         Event::UndecryptableMessage(u) => one(Pb::Undecryptable(pb::UndecryptableEvent {
-            chat: lib_jid(&u.info.source.chat),
-            sender: lib_jid(&u.info.source.sender),
+            chat: relay_lib_jid(&u.info.source.chat),
+            sender: relay_lib_jid(&u.info.source.sender),
             reason: unavailable_reason_of(u.unavailable_type) as i32,
         })),
 
@@ -82,7 +77,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // the other half empty instead of inventing one (issue #24) — `online`
         // used to be a hardcoded true on every chat state.
         Event::Presence(p) => one(Pb::Presence(pb::PresenceUpdate {
-            jid: lib_jid(&p.from),
+            jid: relay_lib_jid(&p.from),
             online: Some(!p.unavailable),
             last_seen: p.last_seen.map(|t| t.timestamp()).unwrap_or(0),
             chat_state: pb::ChatState::Unspecified as i32,
@@ -93,11 +88,11 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // carry the same sender, so dropping it left the edge unable to draw the
         // indicator in the conversation it belongs to (issue #24).
         Event::ChatPresence(c) => one(Pb::Presence(pb::PresenceUpdate {
-            jid: lib_jid(&c.source.sender),
+            jid: relay_lib_jid(&c.source.sender),
             online: None,
             last_seen: 0,
             chat_state: chat_state_of(c.state, c.media) as i32,
-            chat: lib_jid(&c.source.chat),
+            chat: relay_lib_jid(&c.source.chat),
         })),
 
         // #133: typed, one oneof case per library action.
@@ -140,7 +135,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::ServerAck(a) => one(Pb::ServerAck(pb::ServerAckEvent {
             id: a.id.clone(),
             class: a.class.clone().unwrap_or_default(),
-            from: optional_lib_jid(a.from.as_ref()),
+            from: relay_optional_lib_jid(a.from.as_ref()),
             timestamp: a.timestamp.map(|t| t.timestamp_millis()).unwrap_or(0),
             error: a.error.clone().unwrap_or_default(),
         })),
@@ -244,7 +239,7 @@ fn newsletter_live_update(
     update: &wacore::types::events::NewsletterLiveUpdate,
 ) -> pb::NewsletterLiveUpdate {
     pb::NewsletterLiveUpdate {
-        newsletter: lib_jid(&update.newsletter_jid),
+        newsletter: relay_lib_jid(&update.newsletter_jid),
         messages: update.messages.iter().map(live_update_message).collect(),
     }
 }
@@ -326,8 +321,8 @@ fn temporary_ban(ban: &TemporaryBan) -> pb::event_envelope::Event {
 fn receipt_event(r: &Receipt) -> pb::ReceiptEvent {
     let (receipt_type, type_raw) = receipt_type_of(&r.r#type);
     pb::ReceiptEvent {
-        chat: lib_jid(&r.source.chat),
-        sender: lib_jid(&r.source.sender),
+        chat: relay_lib_jid(&r.source.chat),
+        sender: relay_lib_jid(&r.source.sender),
         message_ids: r.message_ids.iter().map(|m| m.to_string()).collect(),
         r#type: receipt_type as i32,
         type_raw,
@@ -365,8 +360,8 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         // relaying them is verbatim, no lookup and no guess.
         // Unset when the stanza carried no alt jid, instead of an empty string
         // a consumer would have to know to ignore (#122).
-        sender_alt: optional_lib_jid(info.source.sender_alt.as_ref()),
-        recipient_alt: optional_lib_jid(info.source.recipient_alt.as_ref()),
+        sender_alt: relay_optional_lib_jid(info.source.sender_alt.as_ref()),
+        recipient_alt: relay_optional_lib_jid(info.source.recipient_alt.as_ref()),
         raw_message: msg.encode_to_vec(),
         ..Default::default()
     };
@@ -482,16 +477,6 @@ pub fn map_sent(
     };
     project_content(&mut out, msg, chat);
     out
-}
-
-/// A lib jid as the wire message, verbatim (#122).
-fn lib_jid(jid: &Jid) -> Option<pb::Jid> {
-    relay_jid(jid.to_string())
-}
-
-/// An optional lib jid: absent is an unset field, never an empty value (#122).
-fn optional_lib_jid(jid: Option<&Jid>) -> Option<pb::Jid> {
-    jid.and_then(lib_jid)
 }
 
 /// Project a wa `MessageKey` into the proto one (proto3 empty == lib `None`).

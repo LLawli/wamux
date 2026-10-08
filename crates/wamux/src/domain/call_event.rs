@@ -12,22 +12,22 @@ use wacore::types::group_call::{
 };
 use wamux_types::call_enums::{call_link_media_of, screen_share_state_of, video_state_of};
 
-use crate::domain::group_metadata::{lib_jid, optional_lib_jid};
 use crate::proto::v1 as pb;
 use crate::proto::v1::call_event::Action;
+use wamux_types::{relay_lib_jid, relay_optional_lib_jid};
 
 /// The typed event for one inbound call stanza.
 pub fn call_event_of(call: &IncomingCall) -> pb::CallEvent {
     pb::CallEvent {
-        from: lib_jid(&call.from),
+        from: relay_lib_jid(&call.from),
         call_id: call.action.call_id().to_string(),
-        call_creator: lib_jid(call.action.call_creator()),
+        call_creator: relay_lib_jid(call.action.call_creator()),
         stanza_id: call.stanza_id.clone(),
         notify: call.notify.clone(),
         platform: call.platform.clone(),
         version: call.version.clone(),
-        participant: optional_lib_jid(call.participant.as_ref()),
-        recipient: optional_lib_jid(call.recipient.as_ref()),
+        participant: relay_optional_lib_jid(call.participant.as_ref()),
+        recipient: relay_optional_lib_jid(call.recipient.as_ref()),
         // The stanza's `t` is unix seconds; the contract's instants are ms.
         timestamp: call.timestamp.timestamp_millis(),
         offline: call.offline,
@@ -64,13 +64,13 @@ fn action_of(action: &CallAction) -> Action {
             group_jid,
             ..
         } => Action::Offer(pb::CallOffer {
-            caller_pn: optional_lib_jid(caller_pn.as_ref()),
+            caller_pn: relay_optional_lib_jid(caller_pn.as_ref()),
             caller_country_code: caller_country_code.clone(),
             device_class: device_class.clone(),
             joinable: *joinable,
             is_video: *is_video,
             audio: codecs(audio),
-            group_jid: optional_lib_jid(group_jid.as_ref()),
+            group_jid: relay_optional_lib_jid(group_jid.as_ref()),
         }),
         CallAction::OfferNotice {
             is_video, is_group, ..
@@ -173,8 +173,8 @@ fn screen_share_payload(share: &ScreenShare) -> pb::CallScreenShare {
 fn group_update(update: &GroupCallUpdate) -> pb::GroupCallUpdate {
     pb::GroupCallUpdate {
         call_id: update.call_id.clone(),
-        call_creator: lib_jid(&update.call_creator),
-        group_jid: optional_lib_jid(update.group_jid.as_ref()),
+        call_creator: relay_lib_jid(&update.call_creator),
+        group_jid: relay_optional_lib_jid(update.group_jid.as_ref()),
         transaction_id: update.transaction_id,
         media: update.media.clone(),
         connected_limit: update.connected_limit,
@@ -188,9 +188,9 @@ fn group_update(update: &GroupCallUpdate) -> pb::GroupCallUpdate {
 
 fn participant(participant: &GroupCallParticipant) -> pb::GroupCallParticipant {
     pb::GroupCallParticipant {
-        jid: lib_jid(&participant.jid),
+        jid: relay_lib_jid(&participant.jid),
         // The library keeps `pn` out of its JSON; the contract does not.
-        pn: optional_lib_jid(participant.pn.as_ref()),
+        pn: relay_optional_lib_jid(participant.pn.as_ref()),
         state: participant.state.clone(),
         participant_type: participant.participant_type.clone(),
         devices: participant.devices.iter().map(device).collect(),
@@ -199,7 +199,7 @@ fn participant(participant: &GroupCallParticipant) -> pb::GroupCallParticipant {
 
 fn device(device: &GroupCallDevice) -> pb::GroupCallDevice {
     pb::GroupCallDevice {
-        jid: lib_jid(&device.jid),
+        jid: relay_lib_jid(&device.jid),
         platform: device.platform.clone(),
         pid: device.pid,
         capability_version: device.capability_version,
@@ -239,7 +239,7 @@ fn relay_endpoint(endpoint: &GroupCallRelayEndpoint) -> pb::GroupCallRelayEndpoi
 fn enc_rekey(rekey: &GroupCallEncRekey) -> pb::GroupCallEncRekey {
     pb::GroupCallEncRekey {
         call_id: rekey.call_id.clone(),
-        call_creator: lib_jid(&rekey.call_creator),
+        call_creator: relay_lib_jid(&rekey.call_creator),
         transaction_id: rekey.transaction_id,
         key_generation: rekey.key_generation,
         encryption_type: rekey.encryption_type.clone(),
@@ -251,7 +251,7 @@ fn enc_rekey(rekey: &GroupCallEncRekey) -> pb::GroupCallEncRekey {
 fn waiting_room(room: &WaitingRoom) -> pb::CallWaitingRoom {
     pb::CallWaitingRoom {
         call_id: room.call_id.clone(),
-        call_creator: lib_jid(&room.call_creator),
+        call_creator: relay_lib_jid(&room.call_creator),
         link_token: room.link_token.clone(),
         media: call_link_media_of(room.media) as i32,
         enabled: room.enabled,
@@ -263,8 +263,8 @@ fn waiting_room(room: &WaitingRoom) -> pb::CallWaitingRoom {
 
 fn waiting_room_user(user: &WaitingRoomUser) -> pb::WaitingRoomUser {
     pb::WaitingRoomUser {
-        jid: lib_jid(&user.jid),
-        pn: optional_lib_jid(user.pn.as_ref()),
+        jid: relay_lib_jid(&user.jid),
+        pn: relay_optional_lib_jid(user.pn.as_ref()),
         state: user.state.clone(),
     }
 }
