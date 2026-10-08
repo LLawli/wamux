@@ -137,6 +137,9 @@ fn event_kind(envelope: &pb::EventEnvelope) -> &'static str {
         Some(Event::FavoritesChanged(_)) => "favorites_changed",
         Some(Event::NewsletterLiveUpdate(_)) => "newsletter_live_update",
         Some(Event::Sticker(_)) => "sticker",
+        Some(Event::Label(_)) => "label",
+        Some(Event::QuickReply(_)) => "quick_reply",
+        Some(Event::AccountSetting(_)) => "account_setting",
         Some(Event::Raw(raw)) => raw_kind(raw),
         None => "empty",
     }

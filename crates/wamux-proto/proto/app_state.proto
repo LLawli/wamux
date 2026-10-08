@@ -131,6 +131,116 @@ message RemoveRecentStickerChange {
   optional int64 last_sticker_sent_ts = 1;
 }
 
+// #149 (part 2 of #141): labels, quick replies and account settings. They
+// reached the socket as RawEvent with the library's JSON. The library decodes
+// most of its enums closed (proto2): a number it does not know is dropped, so
+// `LabelListType` sees it as absent, crosses it as UNSPECIFIED, never emits
+// UNKNOWN and has no `*_code`, as with MediaType (#127). It opens
+// `StatusDistributionMode` on purpose (waproto/build.rs, `open_enums_in`), so
+// `StatusAudience` follows #73: UNKNOWN plus the server's number.
+
+// A label was created, edited or deleted. In the consumer app a label is a
+// chat list ("Lists"), measured live 2026-10-08 as `list_type` CUSTOM.
+// Deleting sends `deleted` true with an empty name and `is_active` false.
+message LabelEdit {
+  optional string name = 1;
+  optional int32 color = 2;          // the app's palette index, verbatim
+  optional int32 predefined_id = 3;  // set on the app's ready-made lists
+  optional bool deleted = 4;
+  optional int32 order_index = 5;
+  optional bool is_active = 6;
+  LabelListType list_type = 7;
+  optional bool is_immutable = 8;
+  optional int64 mute_end_time_ms = 9;  // ms, as its name says (always 0 when measured)
+}
+
+// A label was put on (`labeled` true) or taken off a chat.
+message LabelChatAssociation {
+  Jid chat = 1;
+  optional bool labeled = 2;
+  optional string model_meta_data = 3;
+}
+
+// A label was put on or taken off one message. Not measured: the app no
+// longer labels messages.
+message LabelMessageAssociation {
+  Jid chat = 1;
+  string message_id = 2;
+  optional bool labeled = 3;
+  optional string model_meta_data = 4;
+}
+
+// `wa.SyncActionValue.LabelEditAction.ListType`.
+enum LabelListType {
+  LABEL_LIST_TYPE_UNSPECIFIED = 0;
+  LABEL_LIST_TYPE_UNKNOWN = 1;  // never emitted (closed in the library)
+  LABEL_LIST_TYPE_NONE = 2;
+  LABEL_LIST_TYPE_UNREAD = 3;
+  LABEL_LIST_TYPE_GROUPS = 4;
+  LABEL_LIST_TYPE_FAVORITES = 5;
+  LABEL_LIST_TYPE_PREDEFINED = 6;
+  LABEL_LIST_TYPE_CUSTOM = 7;
+  LABEL_LIST_TYPE_COMMUNITY = 8;
+  LABEL_LIST_TYPE_SERVER_ASSIGNED = 9;
+  LABEL_LIST_TYPE_DRAFTED = 10;
+  LABEL_LIST_TYPE_AI_HANDOFF = 11;
+  LABEL_LIST_TYPE_CHANNELS = 12;
+  LABEL_LIST_TYPE_AI_RESPONDING = 13;
+  LABEL_LIST_TYPE_ARCHIVED = 14;
+  LABEL_LIST_TYPE_LOCKED = 15;
+  LABEL_LIST_TYPE_INVITES = 16;
+  LABEL_LIST_TYPE_THIRD_PARTY = 17;
+  LABEL_LIST_TYPE_LEAD = 18;
+  LABEL_LIST_TYPE_MENTIONS_AND_REPLIES = 19;
+}
+
+// The "disable link previews" privacy setting.
+message LinkPreviewsSetting {
+  optional bool previews_disabled = 1;
+}
+
+// One status audience mode. The library keeps this enum open, so a number it
+// does not know crosses as UNKNOWN with the number in `mode_code` (0 otherwise).
+message StatusAudience {
+  StatusAudienceMode mode = 1;
+  int32 mode_code = 2;
+}
+
+// A custom status audience list.
+message StatusCustomList {
+  optional string list_id = 1;
+  optional string name = 2;
+  optional string emoji = 3;
+  optional bool is_selected = 4;
+  repeated Jid users = 5;  // an empty entry is skipped
+}
+
+// The account's status audience (`status_privacy`). Measured live 2026-10-08:
+// "my contacts except..." sends `mode` DENY_LIST with the excluded users and
+// `modes` [DENY_LIST]; back to "my contacts" sends CONTACTS and no users. An
+// UNKNOWN mode is not "all contacts".
+message StatusPrivacySetting {
+  StatusAudience mode = 1;  // unset when the mutation had none
+  // The allow or deny list, as the mutation lists it; an empty entry is
+  // skipped, as in FavoritesChanged.
+  repeated Jid users = 2;
+  optional bool share_to_fb = 3;
+  optional bool share_to_ig = 4;
+  repeated StatusCustomList custom_lists = 5;
+  repeated StatusAudience modes = 6;
+}
+
+// `wa.SyncActionValue.StatusPrivacyAction.StatusDistributionMode`.
+enum StatusAudienceMode {
+  STATUS_AUDIENCE_MODE_UNSPECIFIED = 0;
+  STATUS_AUDIENCE_MODE_UNKNOWN = 1;  // with the server's number in `mode_code`
+  STATUS_AUDIENCE_MODE_ALLOW_LIST = 2;
+  STATUS_AUDIENCE_MODE_DENY_LIST = 3;
+  STATUS_AUDIENCE_MODE_CONTACTS = 4;
+  STATUS_AUDIENCE_MODE_CLOSE_FRIENDS = 5;
+  STATUS_AUDIENCE_MODE_CUSTOM_LIST = 6;
+}
+
 // Localized text the server wants shown on a forced logout (`<failure>`'s
 // logout_message_header / _subtext). WA Web shows it only when `locale`
 // equals the client's own, and falls back to generic copy otherwise; the

@@ -13,6 +13,7 @@ use wamux_types::{MediaKind, relay_jid, relay_lib_jid, relay_optional_lib_jid};
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
+use crate::domain::account_setting_update::{link_previews_update_of, status_privacy_update_of};
 use crate::domain::app_state_update::{
     archive_update_of, clear_chat_update_of, delete_chat_update_of,
     delete_message_for_me_update_of, lock_chat_update_of, mark_read_update_of, mute_update_of,
@@ -21,6 +22,10 @@ use crate::domain::app_state_update::{
 use crate::domain::call_event::call_event_of;
 use crate::domain::contact_update::contact_update_of;
 use crate::domain::group_update::group_update_of;
+use crate::domain::label_update::{
+    label_association_update_of, label_edit_update_of, message_label_association_update_of,
+};
+use crate::domain::quick_reply_update::quick_reply_update_of;
 use crate::domain::stanza_node::stanza_node_of;
 use crate::domain::sticker_packs;
 use crate::domain::sticker_update::{favorite_sticker_update_of, remove_recent_sticker_update_of};
@@ -126,6 +131,15 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::UserStatusMuteUpdate(s) => one(Pb::AppState(user_status_mute_update_of(s))),
         Event::FavoriteStickerUpdate(s) => one(Pb::Sticker(favorite_sticker_update_of(s))),
         Event::RemoveRecentStickerUpdate(s) => one(Pb::Sticker(remove_recent_sticker_update_of(s))),
+        // #149 (part 2 of #141): these six used to fall into RawEvent.
+        Event::LabelEditUpdate(u) => one(Pb::Label(label_edit_update_of(u))),
+        Event::LabelAssociationUpdate(u) => one(Pb::Label(label_association_update_of(u))),
+        Event::MessageLabelAssociationUpdate(u) => {
+            one(Pb::Label(message_label_association_update_of(u)))
+        }
+        Event::QuickReplyUpdate(u) => one(Pb::QuickReply(quick_reply_update_of(u))),
+        Event::DisableLinkPreviewsUpdate(u) => one(Pb::AccountSetting(link_previews_update_of(u))),
+        Event::StatusPrivacyUpdate(u) => one(Pb::AccountSetting(status_privacy_update_of(u))),
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),

@@ -526,6 +526,47 @@ message FavoritesChanged {
   bytes raw = 4;            // the serialized `wa.SyncActionValue.FavoritesAction`
 }
 
+// A label (a chat list, in the consumer app) changed on a linked device
+// (#149). The three library events reached the socket as RawEvent. The label
+// belongs to the account, so it is not an AppStateUpdate.
+message LabelUpdate {
+  string label_id = 1;      // the mutation's index key, not a jid
+  int64 timestamp = 2;      // mutation time (ms)
+  bool from_full_sync = 3;  // true when replayed by a full app-state sync
+  oneof action {
+    LabelEdit edit = 10;
+    LabelChatAssociation chat = 11;
+    LabelMessageAssociation message = 12;
+  }
+}
+
+// A quick reply was created, edited or deleted on a linked device (#149).
+// Deleting is the same mutation with `deleted` true and empty texts, not a
+// removal, so check the flag. It reached the socket as RawEvent.
+message QuickReplyUpdate {
+  string id = 1;            // the mutation's index key
+  int64 timestamp = 2;      // mutation time (ms)
+  bool from_full_sync = 3;
+  optional string shortcut = 4;
+  optional string message = 5;
+  repeated string keywords = 6;
+  optional int32 count = 7;
+  optional bool deleted = 8;
+  repeated string associated_label_ids = 9;
+}
+
+// An account-wide setting changed on a linked device (#149). One event for
+// every setting, each its own case. They reached the socket as RawEvent.
+message AccountSettingUpdate {
+  int64 timestamp = 1;                    // mutation time (ms)
+  optional int64 action_timestamp = 2;    // the mutation's own time (ms); unset when it carried none
+  bool from_full_sync = 3;
+  oneof setting {
+    LinkPreviewsSetting link_previews = 10;
+    StatusPrivacySetting status_privacy = 11;
+  }
+}
+
 // A channel's tallies, pushed while this account is subscribed to it
 // (NewsletterService.SubscribeNewsletterLiveUpdates, upstream #1554). Issue
 // #26: it reached the socket as an untyped RawEvent carrying only reactions.
@@ -726,6 +767,9 @@ message EventEnvelope {
     FavoritesChanged favorites_changed = 26;
     NewsletterLiveUpdate newsletter_live_update = 27;
     StickerUpdate sticker = 28;  // #148
+    LabelUpdate label = 29;                     // #149
+    QuickReplyUpdate quick_reply = 30;          // #149
+    AccountSettingUpdate account_setting = 31;  // #149
     RawEvent raw = 99;
   }
 }
