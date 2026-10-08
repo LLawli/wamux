@@ -396,6 +396,20 @@ has to follow them.
 
 ### Fixed
 
+- **CI: the store-defaults check no longer fails a PR's first hosted run**
+  (issue #140). `scripts/check-store-defaults.py` found wacore through
+  `cargo metadata --offline` with no platform filter, which wants the sources
+  of every target's packages (wasm, windows, redox). On a cold runner cache
+  only the build stages had downloaded anything, all of it for the host, so
+  cargo exited 101 (`failed to download atomic v0.6.1`, reproduced locally
+  with a cache holding only what the clippy stages fetch). A rerun passed
+  because the failed job saved its cache after a later script test had
+  downloaded the rest.
+  - The check asks for the host's packages only
+    (`--filter-platform host-tuple`), which a host build has already fetched.
+  - A cargo failure now prints cargo's own error, not just the exit code.
+  - It still fails when wacore cannot be resolved.
+
 - **The Postgres engine no longer runs out of pool connections** (issue
   #107). After a `CheckOnWhatsApp`, `GetAbout` or `ListParticipating`, the
   daemon could spend minutes failing every store call with `pool timed out

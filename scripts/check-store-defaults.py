@@ -3,7 +3,7 @@
 
 Usage: scripts/check-store-defaults.py [--root DIR] [--traits PATH] [--families A,B]
        (DIR defaults to the repo; PATH defaults to wacore's traits.rs, resolved
-       through `cargo metadata --offline`; the families to FAMILIES)
+       through `cargo metadata --offline`, filtered to the host platform; the families to FAMILIES)
 
 Why: wacore gives some store trait methods a default body, and a backend that
 says nothing silently inherits it. Four of those methods were wrong for a
@@ -130,11 +130,17 @@ def read_text(path: Path) -> str:
 
 def resolve_traits_path(root: Path) -> Path:
     """wacore's traits.rs, found through the manifest of the pinned `wacore` package."""
-    cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--offline"]
+    # #140: the host filter asks only for packages a host build already downloaded.
+    # Unfiltered, cargo wants the sources of every target (wasm, windows, redox) and a
+    # cold CI cache, which holds only what the clippy stages fetched, exits 101.
+    # `host-tuple` is the spelling the pinned cargo accepts; `host` is rejected.
+    cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", "host-tuple"]
     try:
         done = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
         if done.returncode != 0:
-            raise CheckError(f"cannot resolve wacore: cargo metadata exited {done.returncode}")
+            # Carry cargo's own reason: a bare exit code hid the real cause of #140.
+            reason = " / ".join(line.strip() for line in done.stderr.splitlines() if line.strip())
+            raise CheckError(f"cannot resolve wacore: cargo metadata exited {done.returncode}: {reason}")
         packages = json.loads(done.stdout)["packages"]
     except (OSError, ValueError, KeyError) as err:
         raise CheckError(f"cannot resolve wacore: {err}") from err
