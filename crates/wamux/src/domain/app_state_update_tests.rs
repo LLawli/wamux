@@ -418,6 +418,11 @@ fn every_app_state_event_maps_to_its_case() {
                 Action::Star(_) => "star",
                 Action::MarkRead(_) => "mark_read",
                 Action::DeleteChat(_) => "delete_chat",
+                // #148: their own events, asserted in app_state_update_chat_tests.rs.
+                Action::Lock(_) => "lock",
+                Action::ClearChat(_) => "clear_chat",
+                Action::DeleteMessageForMe(_) => "delete_message_for_me",
+                Action::UserStatusMute(_) => "user_status_mute",
             },
             other => panic!("expected an app-state update, got {other:?}"),
         })

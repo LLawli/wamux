@@ -483,6 +483,26 @@ message AppStateUpdate {
     StarChange star = 13;
     MarkReadChange mark_read = 14;
     DeleteChatChange delete_chat = 15;
+    LockChange lock = 16;                                   // #148
+    ClearChatChange clear_chat = 17;                        // #148
+    DeleteMessageForMeChange delete_message_for_me = 18;    // #148
+    UserStatusMuteChange user_status_mute = 19;             // #148
+  }
+}
+
+// A sticker mutation on a linked device (#148): favorited, unfavorited, or
+// removed from the recent list. It reached the socket as RawEvent.
+//
+// Not an AppStateUpdate: stickers belong to the account, not to a chat, and
+// the mutation carries no time of its own beside `timestamp`.
+message StickerUpdate {
+  // WA Web's sticker key: the base64 SHA-256 of the decrypted file, verbatim.
+  string filehash = 1;
+  int64 timestamp = 2;      // mutation time (ms)
+  bool from_full_sync = 3;  // true when replayed by a full app-state sync
+  oneof action {
+    FavoriteStickerChange favorite = 10;
+    RemoveRecentStickerChange remove_recent = 11;
   }
 }
 
@@ -705,6 +725,7 @@ message EventEnvelope {
     OfflineSyncInterrupted offline_sync_interrupted = 25;
     FavoritesChanged favorites_changed = 26;
     NewsletterLiveUpdate newsletter_live_update = 27;
+    StickerUpdate sticker = 28;  // #148
     RawEvent raw = 99;
   }
 }

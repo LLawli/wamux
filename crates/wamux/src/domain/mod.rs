@@ -24,6 +24,7 @@ pub mod send_rich;
 pub(crate) mod stanza_node;
 pub mod status;
 pub(crate) mod sticker_packs;
+pub mod sticker_update;
 #[cfg(test)]
 pub(crate) mod test_xml;
 pub(crate) mod wire_defaults;

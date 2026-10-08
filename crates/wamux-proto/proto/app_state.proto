@@ -66,6 +66,71 @@ message DeleteChatChange {
   SyncMessageRange message_range = 2;
 }
 
+// #148 (part 1 of #141): four more chat mutations and the account's sticker
+// mutations. They reached the socket as RawEvent with the library's JSON.
+// Units were measured live on 2026-10-08.
+
+// The chat was locked or unlocked (the "locked chats" folder on the phone).
+message LockChange {
+  optional bool locked = 1;
+}
+
+// The chat's messages were cleared, the chat itself kept.
+message ClearChatChange {
+  bool delete_starred = 1;  // from the mutation's index, not its action
+  bool delete_media = 2;    // from the mutation's index, not its action
+  // The messages the clear covers (seconds on the wire, as measured, so ms here).
+  SyncMessageRange message_range = 3;
+}
+
+// One message was deleted for this account only. `AppStateUpdate.chat` is
+// the chat that holds it.
+message DeleteMessageForMeChange {
+  // The sender, for someone else's message in a group; unset for your own
+  // message or in a direct chat.
+  Jid participant = 1;
+  string message_id = 2;
+  bool from_me = 3;
+  optional bool delete_media = 4;
+  // When the deleted message was sent, in ms. The server sends seconds
+  // (measured: the message's own time, seconds before the mutation).
+  optional int64 message_timestamp = 5;
+}
+
+// A contact's status updates were hidden from, or shown again in, the status
+// list. `AppStateUpdate.chat` is the contact. Measured: hiding sends
+// `muted` true; showing again sent nothing in two tries.
+message UserStatusMuteChange {
+  optional bool muted = 1;
+}
+
+// A sticker was favorited (`is_favorite` true) or unfavorited (false).
+message FavoriteStickerChange {
+  optional bool is_favorite = 1;
+  // What DownloadMedia takes, with `media_type` STICKER. `file_sha256` is
+  // `StickerUpdate.filehash` decoded: the library checks the decrypted bytes
+  // against it, and the mutation carries it nowhere else (measured: empty, the
+  // download is refused; decoded, it succeeds). Empty when the filehash is not
+  // a base64 SHA-256. Unset when the mutation has no `direct_path`.
+  // `file_length` crosses as sent (measured: 0 on one, 1244 on another).
+  MediaDescriptor media = 2;
+  optional string url = 3;
+  optional uint32 width = 4;
+  optional uint32 height = 5;
+  optional bool is_lottie = 6;
+  optional bool is_avatar_sticker = 7;
+  optional string image_hash = 8;
+  optional uint32 device_id_hint = 9;
+}
+
+// A sticker was removed from the recent-stickers list.
+message RemoveRecentStickerChange {
+  // When the sticker was last sent, in ms as the server sends it (measured).
+  // WA Web drops its recent entry only when that entry is not newer than
+  // this, and unconditionally when it is unset.
+  optional int64 last_sticker_sent_ts = 1;
+}
+
 // Localized text the server wants shown on a forced logout (`<failure>`'s
 // logout_message_header / _subtext). WA Web shows it only when `locale`
 // equals the client's own, and falls back to generic copy otherwise; the
