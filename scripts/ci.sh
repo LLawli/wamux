@@ -124,7 +124,7 @@ scripts/check-store-coverage.py
 
 # #93: a wacore trait default nobody classified is behavior the engines inherit
 # unseen. A whatsapp-rust bump that adds one fails here until it is classified in
-# the store defaults doc. Needs cargo (metadata, offline), not the database.
+# the store defaults doc. Needs cargo (metadata, offline, host-filtered #140), not the database.
 stage "store trait defaults"
 scripts/check-store-defaults.py
 
