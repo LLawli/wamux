@@ -1004,7 +1004,8 @@ fn maps_offline_sync_interrupted_with_both_counts() {
     }
 }
 
-// The app-state updates are tested in `app_state_update_tests.rs` (#134).
+// The app-state updates are tested in `app_state_update_tests.rs` (#134), and
+// every field of a call in `call_event_tests.rs` (#135).
 
 #[test]
 fn maps_incoming_call_offer_to_typed_call_event() {
@@ -1032,11 +1033,9 @@ fn maps_incoming_call_offer_to_typed_call_event() {
             assert_eq!(c.from, wire(SENDER_JID));
             // call_id is the CallAction id, NOT the stanza id.
             assert_eq!(c.call_id, "CALL-ID-1");
-            assert_eq!(c.action(), pb::CallActionKind::Offer);
-            assert_eq!(c.action_raw, "");
-            assert!(!c.raw.is_empty());
-            let json: serde_json::Value = serde_json::from_slice(&c.raw).unwrap();
-            assert_eq!(json["stanza_id"], "STANZA-CALL-1");
+            // #135: the stanza id is its own field, not a key of a JSON blob.
+            assert_eq!(c.stanza_id, "STANZA-CALL-1");
+            assert!(matches!(c.action, Some(pb::call_event::Action::Offer(_))));
         }
         other => panic!("expected call event, got {other:?}"),
     }
@@ -1063,8 +1062,11 @@ fn maps_incoming_call_terminate_action_token() {
     match map_one(&event) {
         Some(PbEvent::Call(c)) => {
             assert_eq!(c.call_id, "CALL-ID-2");
-            // #126: the enum, never Debug casing or a free token.
-            assert_eq!(c.action(), pb::CallActionKind::Terminate);
+            // #135: the oneof case names the action (#126 had an enum for it).
+            assert!(matches!(
+                c.action,
+                Some(pb::call_event::Action::Terminate(_))
+            ));
         }
         other => panic!("expected call event, got {other:?}"),
     }

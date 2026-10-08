@@ -7,6 +7,7 @@ import "account.proto";
 import "group_metadata.proto";
 import "group_update.proto";
 import "app_state.proto";
+import "call.proto";
 import "newsletter_tallies.proto";
 
 message SubscribeRequest {
@@ -525,38 +526,49 @@ message NewsletterLiveUpdateMessage {
 
 // Inbound `<call>` signaling stanza (lib `IncomingCall`). The core relays the
 // primitive; the edge composes any ring/answer policy. `call_id` is the
-// CallAction's id (distinct from the stanza id, which lives in `raw`).
+// CallAction's id, distinct from `stanza_id`. #135: every field of the
+// library's struct, and the action as a oneof (payloads in call.proto); `raw`
+// was the library's JSON and `action` the #126 enum the oneof case now names.
 message CallEvent {
   reserved 1;  // #122: was `string from`
+  reserved 3, 4, 6, 7;
+  reserved "action_raw", "raw";  // #135: the oneof case names the action; raw was the JSON
   Jid from = 5;
   string call_id = 2;
-  reserved 3;  // #126: was `string action`
-  CallActionKind action = 6;
-  // The library's wire tag for the action, only when `action` is UNKNOWN (a
-  // call action added upstream that the core does not name yet).
-  string action_raw = 7;
-  bytes raw = 4;
-}
-
-// Every call action the library names. Six were tokens before #126; the other
-// eight reached the edge as the library's wire tag.
-enum CallActionKind {
-  CALL_ACTION_KIND_UNSPECIFIED = 0;
-  CALL_ACTION_KIND_UNKNOWN = 1;
-  CALL_ACTION_KIND_OFFER = 2;                // was "offer"
-  CALL_ACTION_KIND_OFFER_NOTICE = 3;         // was "offer_notice"
-  CALL_ACTION_KIND_PRE_ACCEPT = 4;           // was "pre_accept"
-  CALL_ACTION_KIND_ACCEPT = 5;               // was "accept"
-  CALL_ACTION_KIND_REJECT = 6;               // was "reject"
-  CALL_ACTION_KIND_TERMINATE = 7;            // was "terminate"
-  CALL_ACTION_KIND_TRANSPORT = 8;            // was "transport"
-  CALL_ACTION_KIND_RELAY_LATENCY = 9;        // was "relaylatency"
-  CALL_ACTION_KIND_VIDEO_STATE = 10;         // was "video"
-  CALL_ACTION_KIND_GROUP_UPDATE = 11;        // was "group_update"
-  CALL_ACTION_KIND_ENC_REKEY = 12;           // was "enc_rekey"
-  CALL_ACTION_KIND_WAITING_ROOM_UPDATE = 13; // was "waiting_room_update"
-  CALL_ACTION_KIND_RAISE_HAND = 14;          // was "user_action"
-  CALL_ACTION_KIND_SCREEN_SHARE = 15;        // was "screen_share"
+  Jid call_creator = 8;
+  string stanza_id = 9;
+  optional string notify = 10;
+  optional string platform = 11;
+  optional string version = 12;
+  // Companion-routing metadata copied from the `<call>` wrapper; unset when absent.
+  Jid participant = 13;
+  Jid recipient = 14;
+  int64 timestamp = 15;  // ms (the stanza's `t`, unix seconds)
+  // An offline-queue replay. The library surfaces a replayed offer as a
+  // MissedCall instead, so here it marks the other actions.
+  bool offline = 16;
+  optional string caller_username = 17;  // an offer's `username`
+  // Camera rotation (quarter turns, 0..3) an offer or an accept announced.
+  optional uint32 video_orientation = 18;
+  GroupCallUpdate group = 19;  // the group snapshot an offer carried
+  oneof action {
+    CallOffer offer = 20;
+    CallOfferNotice offer_notice = 21;
+    CallAcceptance pre_accept = 22;
+    CallAcceptance accept = 23;
+    CallRejection reject = 24;
+    CallTermination terminate = 25;
+    CallTransport transport = 26;
+    Empty relay_latency = 27;
+    CallVideoState video_state = 28;
+    GroupCallUpdate group_update = 29;
+    GroupCallEncRekey enc_rekey = 30;
+    CallWaitingRoom waiting_room_update = 31;
+    CallRaiseHand raise_hand = 32;  // wire tag "user_action"
+    CallScreenShare screen_share = 33;
+    // The wire tag of a call action the library added after this core.
+    string unknown_action = 34;
+  }
 }
 
 // Catch-all so the edge never silently loses an event type or a broadcast gap.

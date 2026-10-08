@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "proto/group_metadata.proto",
         "proto/group_update.proto",
         "proto/app_state.proto",
+        "proto/call.proto",
         "proto/groups.proto",
         "proto/contacts.proto",
         "proto/newsletter_tallies.proto",

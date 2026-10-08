@@ -1,0 +1,210 @@
+syntax = "proto3";
+
+package wamux.v1;
+
+import "common.proto";
+
+// #135 (part 4 of #74): the payloads of `CallEvent.action` and the group-call
+// state, every public field of whatsapp-rust's `CallAction` variants and of
+// `wacore::types::group_call`. They used to cross as the library's JSON in
+// `CallEvent.raw`. The rules of group_metadata.proto hold: absent is unset,
+// a point in time is int64 milliseconds, a value of unverified unit crosses
+// verbatim and its comment says so. A string the library keeps as a string
+// (it names no values) crosses as a string.
+
+// One audio codec a device offers or accepts.
+message CallAudioCodec {
+  string enc = 1;    // "opus" in every capture
+  uint32 rate = 2;   // Hz
+}
+
+// `<offer>`: a call ringing this account.
+message CallOffer {
+  Jid caller_pn = 1;                     // unset when the offer carried none
+  optional string caller_country_code = 2;
+  optional string device_class = 3;
+  bool joinable = 4;
+  bool is_video = 5;
+  repeated CallAudioCodec audio = 6;
+  Jid group_jid = 7;                     // set on a group call
+}
+
+// `<offer_notice>`: a group call announced to its members.
+message CallOfferNotice {
+  bool is_video = 1;
+  bool is_group = 2;
+}
+
+// `<preaccept>` and `<accept>`: the same shape, so one message (#133 rule).
+message CallAcceptance {
+  repeated CallAudioCodec audio = 1;
+}
+
+// `<reject>`. `reason` absent is the user declining; "busy" and "enc" speak
+// for one device only (the library's note), the others keep ringing.
+message CallRejection {
+  optional string reason = 1;
+}
+
+// `<terminate>`. `reason` as the server sent it ("accepted_elsewhere",
+// "rejected_elsewhere", "timeout", ...). The durations cross verbatim: their
+// unit is not verified (a linked device is dismissed before the call ends, so
+// no live capture carries one, and the library does not document it).
+message CallTermination {
+  optional string reason = 1;
+  optional uint32 duration = 2;
+  optional uint32 audio_duration = 3;
+}
+
+// `<transport>`: ICE/relay candidate exchange.
+message CallTransport {
+  optional string p2p_cand_round = 1;
+  optional string transport_message_type = 2;
+}
+
+// `<video state=N>`: the audio/video upgrade handshake.
+message CallVideoState {
+  CallVideoStateKind state = 1;
+  // The server's number, only when `state` is UNKNOWN (#126 rule).
+  int32 state_code = 2;
+  optional uint32 orientation = 3;  // quarter turns, 0..3
+  optional string dec = 4;          // codecs the sender decodes, e.g. "H264,AV1"
+}
+
+enum CallVideoStateKind {
+  CALL_VIDEO_STATE_KIND_UNSPECIFIED = 0;
+  CALL_VIDEO_STATE_KIND_UNKNOWN = 1;
+  CALL_VIDEO_STATE_KIND_DISABLED = 2;                     // 0
+  CALL_VIDEO_STATE_KIND_ENABLED = 3;                      // 1
+  CALL_VIDEO_STATE_KIND_PAUSED = 4;                       // 2
+  CALL_VIDEO_STATE_KIND_UPGRADE_REQUEST = 5;              // 3
+  CALL_VIDEO_STATE_KIND_UPGRADE_ACCEPT = 6;               // 4
+  CALL_VIDEO_STATE_KIND_UPGRADE_REJECT = 7;               // 5
+  CALL_VIDEO_STATE_KIND_STOPPED = 8;                      // 6
+  CALL_VIDEO_STATE_KIND_UPGRADE_REJECT_BY_TIMEOUT = 9;    // 7
+  CALL_VIDEO_STATE_KIND_UPGRADE_CANCEL = 10;              // 8
+  CALL_VIDEO_STATE_KIND_UPGRADE_CANCEL_BY_TIMEOUT = 11;   // 9
+  CALL_VIDEO_STATE_KIND_UNKNOWN_PEER = 12;                // 10
+  CALL_VIDEO_STATE_KIND_UPGRADE_REQUEST_V2 = 13;          // 11
+  CALL_VIDEO_STATE_KIND_ERROR = 14;                       // 20
+}
+
+// `<user_action>`: one participant raised or lowered a hand.
+message CallRaiseHand {
+  bool raised = 1;
+}
+
+// `<screen_share>`: one participant's screen-share state.
+message CallScreenShare {
+  ScreenShareState state = 1;
+  uint32 version = 2;
+  optional uint32 screen_share_id = 3;
+}
+
+enum ScreenShareState {
+  SCREEN_SHARE_STATE_UNSPECIFIED = 0;
+  SCREEN_SHARE_STATE_UNKNOWN = 1;   // not emitted today: the set is closed
+  SCREEN_SHARE_STATE_STARTED = 2;
+  SCREEN_SHARE_STATE_STOPPED = 3;
+}
+
+// One device in a group-call roster. `capability` is the raw bitmask blob the
+// device announced; the library keeps it out of its JSON, the contract does not.
+message GroupCallDevice {
+  Jid jid = 1;
+  optional string platform = 2;
+  optional uint32 pid = 3;
+  optional uint32 capability_version = 4;
+  bytes capability = 5;
+}
+
+// One user in a group-call roster. `pn` is the phone-number alias the server
+// paired with the jid; the library keeps it out of its JSON, the contract does
+// not (filtering is the edge's).
+message GroupCallParticipant {
+  Jid jid = 1;
+  Jid pn = 2;
+  optional string state = 3;             // "connected" for the active roster
+  optional string participant_type = 4;
+  repeated GroupCallDevice devices = 5;
+}
+
+// One address of the shared group relay. The raw address bytes are private to
+// the library.
+message GroupCallRelayEndpoint {
+  uint32 relay_id = 1;
+  uint32 token_id = 2;
+  uint32 auth_token_id = 3;
+  string relay_name = 4;
+  optional string domain_name = 5;
+  optional uint32 rtt_ms = 6;
+  bool is_fna = 7;
+  optional string ipv4 = 8;
+  optional uint32 port = 9;
+}
+
+// The shared relay of a group snapshot. Its keys and tokens are private to the
+// library (not reachable from wamux).
+message GroupCallRelay {
+  optional uint32 transaction_id = 1;
+  optional uint32 self_pid = 2;
+  string uuid = 3;
+  string participant_uuid = 4;
+  bool attribute_padding = 5;
+  optional uint32 warp_mi_tag_len = 6;
+  repeated GroupCallRelayEndpoint endpoints = 7;
+}
+
+// A transaction-ordered group-call snapshot: the `group_update` action, and
+// the snapshot an offer can carry (`CallEvent.group`).
+message GroupCallUpdate {
+  string call_id = 1;
+  Jid call_creator = 2;
+  Jid group_jid = 3;
+  uint32 transaction_id = 4;
+  string media = 5;
+  uint32 connected_limit = 6;
+  bool joinable = 7;
+  bool av_upgradable = 8;
+  bool rekey_requested = 9;
+  repeated GroupCallParticipant participants = 10;
+  GroupCallRelay relay = 11;
+}
+
+// `<enc_rekey>`: one keygen-v2 epoch. `ciphertext` opens only with this
+// device's Signal session, which never leaves the core; it crosses anyway,
+// because the relay does not pick.
+message GroupCallEncRekey {
+  string call_id = 1;
+  Jid call_creator = 2;
+  uint32 transaction_id = 3;
+  uint32 key_generation = 4;
+  string encryption_type = 5;
+  uint32 encryption_version = 6;
+  bytes ciphertext = 7;
+}
+
+enum CallLinkMedia {
+  CALL_LINK_MEDIA_UNSPECIFIED = 0;
+  CALL_LINK_MEDIA_UNKNOWN = 1;   // not emitted today: the set is closed
+  CALL_LINK_MEDIA_AUDIO = 2;
+  CALL_LINK_MEDIA_VIDEO = 3;
+}
+
+// `<waiting_room_update>`: admission state of a call-link call.
+message CallWaitingRoom {
+  string call_id = 1;
+  Jid call_creator = 2;
+  string link_token = 3;
+  CallLinkMedia media = 4;
+  bool enabled = 5;
+  bool is_admin = 6;
+  optional uint32 transaction_id = 7;
+  repeated WaitingRoomUser users = 8;
+}
+
+message WaitingRoomUser {
+  Jid jid = 1;
+  Jid pn = 2;      // unset when absent
+  string state = 3;
+}

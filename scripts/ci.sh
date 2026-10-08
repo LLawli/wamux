@@ -154,6 +154,12 @@ scripts/check-proto-jids.py
 stage "no Debug output in the event mapping"
 scripts/check-wire-debug.py
 
+# #74 / #135: no JSON on the wire. Every event is a typed message; the one
+# serializer left is raw_event_of, the RawEvent catch-all for a library event
+# wamux does not know. Pure text check.
+stage "no JSON on the wire outside the catch-all"
+scripts/check-wire-json.py
+
 # #114: the named types and the error mapping. No database, so both modes run it.
 stage "tests (wamux-types)"
 must_run_pkg_tests wamux-types

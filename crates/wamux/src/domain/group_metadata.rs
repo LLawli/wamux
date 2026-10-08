@@ -188,7 +188,7 @@ pub(crate) fn lib_jid(jid: &Jid) -> Option<pb::Jid> {
 }
 
 /// An absent jid is an unset field, never an empty value (#122).
-fn optional_lib_jid(jid: Option<&Jid>) -> Option<pb::Jid> {
+pub(crate) fn optional_lib_jid(jid: Option<&Jid>) -> Option<pb::Jid> {
     jid.and_then(lib_jid)
 }
 

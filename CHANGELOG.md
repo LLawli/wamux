@@ -496,6 +496,28 @@ has to follow them.
 
 ### Changed
 
+- **BREAKING: call events are typed, not JSON** (issue #135, part 4 of #74,
+  which it closes). `CallEvent` loses `raw` (the library's JSON), `action`
+  (the #126 enum, now redundant) and `action_raw`, all `reserved`, and the
+  `CallActionKind` enum is gone. JSON key to field:
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3d.
+  - `CallEvent` carries every field of the `<call>` stanza: `call_creator`,
+    `stanza_id`, `notify`, `platform`, `version`, `participant`, `recipient`,
+    the time in ms, `offline`, `caller_username`, `video_orientation` and the
+    group snapshot an offer carries.
+  - The action is a `oneof` with one case per library action (14), each with
+    its own fields: the offer's caller phone, country, codecs and video flag,
+    a reject's or terminate's `reason`, the video handshake state, and the
+    group-call snapshot, rekey, waiting room, raised hand and screen share. An
+    action the library adds later arrives as `unknown_action` with its tag.
+  - A group-call participant's phone number, a device's capability bitmask and
+    a rekey's ciphertext cross too; the library's JSON left them out.
+  - A terminate's `duration` and `audio_duration` cross verbatim: no capture
+    carries one (a linked device is dismissed before the call ends) and the
+    unit is not documented.
+  - `scripts/check-wire-json.py` (in `ci.sh`) keeps JSON off the wire: only
+    the `RawEvent` catch-all and the store's own rows may serialize it.
+
 - **BREAKING: app-state updates are typed, and a forced logout carries the
   server's copy** (issue #134, part 3 of #74). `AppStateUpdate` loses `raw`
   (the library's JSON) and `kind` (the #126 enum, now redundant), both
