@@ -3,7 +3,7 @@
 The `wamux.v1` package keeps its name and breaks in 0.2.0, as the CHANGELOG
 allows while the version is `0.x`. This document collects every Phase D change
 to the contract (#72 split into #120, #121 and #122, #73 into #126, #127 and
-#128, #74 into #132, #133, #134 and #135, then #138, #96, #99 and #101); each issue adds its section here as it merges. Until the last one
+#128, #74 into #132, #133, #134 and #135, then #138, #141 split into #148, #149, #150 and #151, then #96, #99 and #101); each issue adds its section here as it merges. Until the last one
 lands, the contract is mid-migration: build the edge against a released
 `0.2.0`, not against `main`.
 
@@ -706,3 +706,42 @@ Additive: an edge that ignores the field keeps working. `StanzaNode` and
 - Depth: a prost client decodes at most 100 nested messages, and each stanza
   level costs two. The core relays the stanza uncut; logout and ban stanzas
   are two or three levels deep.
+
+### 3f. RawEvent kinds that became typed (#141)
+
+Additive. Each library event below reached the socket as `RawEvent`, with
+the library's JSON in `payload`. It now has a case of its own, so an edge
+that matched `RawEvent.kind` on it stops seeing that kind.
+
+| `RawEvent.kind` | Now | Issue |
+|---|---|---|
+| `LockChatUpdate` | `AppStateUpdate.lock` (`LockChange`) | #148 |
+| `ClearChatUpdate` | `AppStateUpdate.clear_chat` (`ClearChatChange`) | #148 |
+| `DeleteMessageForMeUpdate` | `AppStateUpdate.delete_message_for_me` (`DeleteMessageForMeChange`) | #148 |
+| `UserStatusMuteUpdate` | `AppStateUpdate.user_status_mute` (`UserStatusMuteChange`) | #148 |
+| `FavoriteStickerUpdate` | `StickerUpdate.favorite` (`FavoriteStickerChange`), `EventEnvelope.sticker = 28` | #148 |
+| `RemoveRecentStickerUpdate` | `StickerUpdate.remove_recent` (`RemoveRecentStickerChange`) | #148 |
+
+**JSON key to field (#148).**
+
+| JSON (`payload`) | Field |
+|---|---|
+| `jid` / `chat_jid` | `AppStateUpdate.chat` |
+| `timestamp`, `action_timestamp` (RFC 3339) | `timestamp`, `action_timestamp` (ms) |
+| `action.locked` (lock) | `lock.locked` |
+| `delete_starred`, `delete_media`, `action.message_range` (clear) | `clear_chat.*`, the range in ms (it was seconds) |
+| `participant_jid`, `message_id`, `from_me` (delete for me) | `delete_message_for_me.participant` (`Jid`), `message_id`, `from_me` |
+| `action.delete_media`, `action.message_timestamp` (unix s) | `delete_message_for_me.delete_media`, `message_timestamp` (ms) |
+| `action.muted` (status mute; the top-level `muted` read an absent flag as false) | `user_status_mute.muted`, unset when absent |
+| `filehash` (stickers) | `StickerUpdate.filehash` |
+| `action.direct_path`, `media_key`, `file_enc_sha256`, `file_length`, `mimetype` | `favorite.media` (`MediaDescriptor`, `media_type` STICKER, `file_sha256` = `filehash` decoded), unset without a path |
+| `action.is_favorite`, `url`, `width`, `height`, `is_lottie`, `is_avatar_sticker`, `image_hash`, `device_id_hint` | `favorite.*` |
+| `action.last_sticker_sent_ts` (ms) | `remove_recent.last_sticker_sent_ts` (ms, unchanged) |
+
+`favorite.media` goes to DownloadMedia as is. Its `file_sha256` is the
+`filehash` decoded, because the library checks the decrypted bytes against
+it: with it empty the download is refused (measured live). It is empty only
+when the filehash is not a base64 SHA-256.
+
+On the user's phone, hiding a contact from the status list is what sends
+`user_status_mute` (`muted` true); showing it again sent nothing in two tries.

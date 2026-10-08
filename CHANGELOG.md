@@ -14,6 +14,24 @@ has to follow them.
 
 ### Added
 
+- **Six more app-state mutations are typed instead of RawEvent** (issue #148,
+  part 1 of #141). A chat locked or unlocked, cleared, a message deleted for
+  this account only, and a contact hidden from the status list become
+  `AppStateUpdate` cases (`lock`, `clear_chat`, `delete_message_for_me`,
+  `user_status_mute`). A sticker favorited, unfavorited or removed from the
+  recent list is the new `StickerUpdate` event (`EventEnvelope.sticker = 28`),
+  since stickers belong to the account, not to a chat. Additive: an edge that
+  matched `RawEvent.kind` on `LockChatUpdate`, `ClearChatUpdate`,
+  `DeleteMessageForMeUpdate`, `UserStatusMuteUpdate`, `FavoriteStickerUpdate`
+  or `RemoveRecentStickerUpdate` stops seeing those kinds.
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
+  - A favorited sticker carries a `MediaDescriptor` (`media_type` STICKER)
+    that DownloadMedia takes as is, downloaded live. Its `file_sha256` is the
+    `filehash` decoded: the library checks the decrypted bytes against it.
+  - Units measured live: a deleted message's time and a cleared range are
+    seconds on the wire and cross in ms; a recent sticker's last-sent time is
+    already ms and crosses as sent.
+
 - **A forced logout and a ban carry the server's whole stanza** (issue #138,
   found in #134). `LoggedOutInfo.stanza` and `TemporaryBanInfo.stanza` relay
   the `<failure>` or `<stream:error>` the library kept, as the new generic
