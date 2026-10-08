@@ -7,7 +7,7 @@ use wacore::iq::groups::{
     GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupParticipatingIq,
     GroupSubject, ParticipantChangeResponse,
 };
-use wamux_types::{Jid, relay_jid};
+use wamux_types::{Jid, relay_jid, relay_lib_jid, relay_optional_lib_jid};
 use whatsapp_rust::Client;
 use whatsapp_rust::features::PreviousDescription;
 
@@ -41,7 +41,7 @@ pub async fn create_group(
         .await
         .map_err(client_err)?;
     Ok(pb::GroupJidResponse {
-        group: relay_jid(result.metadata.id.to_string()),
+        group: relay_lib_jid(&result.metadata.id),
         metadata: Some(group_metadata_of(&result.metadata)),
     })
 }
@@ -59,14 +59,12 @@ fn participant_changes(changes: Vec<ParticipantChangeResponse>) -> pb::Participa
 
 fn participant_change(c: ParticipantChangeResponse) -> pb::ParticipantChange {
     pb::ParticipantChange {
-        jid: relay_jid(c.jid.to_string()),
+        jid: relay_lib_jid(&c.jid),
         // Absent server attrs relay as the proto3 default (empty string), the
         // same rule the rest of the crate uses for "not set".
         status: c.status.unwrap_or_default(),
         error: c.error.unwrap_or_default(),
-        phone_number: c
-            .phone_number
-            .and_then(|phone| relay_jid(phone.to_string())),
+        phone_number: relay_optional_lib_jid(c.phone_number.as_ref()),
         username: c.username.unwrap_or_default(),
         add_request: c.add_request.map(|a| pb::AddRequestInfo {
             code: a.code,
@@ -265,7 +263,7 @@ pub fn group_summaries(groups: Vec<whatsapp_rust::GroupMetadata>) -> Vec<pb::Gro
     let mut summaries: Vec<pb::GroupSummary> = groups
         .iter()
         .map(|m| pb::GroupSummary {
-            jid: relay_jid(m.id.to_string()),
+            jid: relay_lib_jid(&m.id),
             subject: m.subject.clone().unwrap_or_default(),
             participants: m.participants.len() as u32,
             metadata: Some(group_metadata_of(m)),

@@ -5,6 +5,7 @@
 use super::*;
 use wacore::stanza::groups::GroupNotificationAction;
 use wacore::types::events::{ContactUpdate, GroupUpdate};
+use whatsapp_rust::Jid;
 
 use crate::proto::v1::event_envelope::Event as PbEvent;
 

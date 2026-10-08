@@ -13,21 +13,22 @@ use whatsapp_rust::GroupMetadata;
 use whatsapp_rust::wacore_binary::Node;
 
 use self::participants::{notification_participants, participants_change};
-use crate::domain::group_metadata::{group_metadata_of, lib_jid};
+use crate::domain::group_metadata::group_metadata_of;
 use crate::domain::wire_time::millis_from_seconds;
 use crate::proto::v1 as pb;
 use crate::proto::v1::group_update::Action;
+use wamux_types::{relay_lib_jid, relay_optional_lib_jid};
 
 /// The notification fields and the action, one oneof case per library variant.
 pub fn group_update_of(update: &GroupUpdate) -> pb::GroupUpdate {
     pb::GroupUpdate {
-        group: lib_jid(&update.group_jid),
+        group: relay_lib_jid(&update.group_jid),
         notification_id: update.notification_id.clone(),
         notify: update.notify.clone(),
         offline: update.offline.clone(),
         action_index: update.action_index,
-        participant: update.participant.as_ref().and_then(lib_jid),
-        participant_pn: update.participant_pn.as_ref().and_then(lib_jid),
+        participant: relay_optional_lib_jid(update.participant.as_ref()),
+        participant_pn: relay_optional_lib_jid(update.participant_pn.as_ref()),
         participant_username: update.participant_username.clone(),
         participant_country_code: update.participant_country_code.clone(),
         timestamp: update.timestamp.timestamp_millis(),
@@ -61,8 +62,8 @@ fn action_of(action: &Lib) -> Action {
             subject_time,
         } => Action::Subject(pb::GroupSubjectChange {
             subject: subject.clone(),
-            subject_owner: subject_owner.as_ref().and_then(lib_jid),
-            subject_owner_pn: subject_owner_pn.as_ref().and_then(lib_jid),
+            subject_owner: relay_optional_lib_jid(subject_owner.as_ref()),
+            subject_owner_pn: relay_optional_lib_jid(subject_owner_pn.as_ref()),
             subject_owner_username: subject_owner_username.clone(),
             subject_time: subject_time.map(millis_from_seconds),
         }),
@@ -91,7 +92,7 @@ fn action_of(action: &Lib) -> Action {
             parent_group_jid,
         } => Action::MembershipApprovalRequest(pb::GroupMembershipApprovalRequest {
             request_method: membership_request_method_of(request_method) as i32,
-            parent_group: parent_group_jid.as_ref().and_then(lib_jid),
+            parent_group: relay_optional_lib_jid(parent_group_jid.as_ref()),
         }),
         Lib::CreatedMembershipRequests {
             request_method,
@@ -99,12 +100,12 @@ fn action_of(action: &Lib) -> Action {
             requests,
         } => Action::CreatedMembershipRequests(pb::GroupCreatedMembershipRequests {
             request_method: membership_request_method_of(request_method) as i32,
-            parent_group: parent_group_jid.as_ref().and_then(lib_jid),
+            parent_group: relay_optional_lib_jid(parent_group_jid.as_ref()),
             requests: notification_participants(requests),
         }),
         Lib::RevokedMembershipRequests { participants } => {
             Action::RevokedMembershipRequests(pb::GroupRevokedMembershipRequests {
-                participants: participants.iter().filter_map(lib_jid).collect(),
+                participants: participants.iter().filter_map(relay_lib_jid).collect(),
             })
         }
         Lib::MemberAddMode { mode } => Action::MemberAddMode(member_add_mode_change(mode)),
@@ -165,8 +166,11 @@ fn action_of(action: &Lib) -> Action {
             new_owner,
             sub_group_suggestions,
         } => Action::ChangeNumber(pb::GroupChangeNumber {
-            new_owner: new_owner.as_ref().and_then(lib_jid),
-            sub_group_suggestions: sub_group_suggestions.iter().filter_map(lib_jid).collect(),
+            new_owner: relay_optional_lib_jid(new_owner.as_ref()),
+            sub_group_suggestions: sub_group_suggestions
+                .iter()
+                .filter_map(relay_lib_jid)
+                .collect(),
         }),
         Lib::Unknown { tag } => Action::Unknown(pb::GroupUnknownAction { tag: tag.clone() }),
     }

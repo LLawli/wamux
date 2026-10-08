@@ -12,9 +12,9 @@ use wamux_types::group_enums::{
     addressing_mode_of, appeal_status_of, member_add_mode_of, member_link_mode_of,
     member_share_history_mode_of, participant_type_of,
 };
-use wamux_types::relay_jid;
+use wamux_types::{relay_lib_jid, relay_optional_lib_jid};
+use whatsapp_rust::GroupMetadata;
 use whatsapp_rust::features::{GroupParticipant, MembershipRequest};
-use whatsapp_rust::{GroupMetadata, Jid};
 
 use crate::domain::wire_time::millis_from_seconds;
 use crate::proto::v1 as pb;
@@ -25,7 +25,7 @@ use crate::proto::v1 as pb;
 /// tests, which compare the whole message.
 pub fn group_metadata_of(metadata: &GroupMetadata) -> pb::GroupMetadata {
     pb::GroupMetadata {
-        id: lib_jid(&metadata.id),
+        id: relay_lib_jid(&metadata.id),
         subject: metadata.subject.clone(),
         notify: metadata.notify.clone(),
         participants: metadata.participants.iter().map(participant_of).collect(),
@@ -36,8 +36,8 @@ pub fn group_metadata_of(metadata: &GroupMetadata) -> pb::GroupMetadata {
 
 fn creator_part(md: &GroupMetadata) -> pb::GroupMetadata {
     pb::GroupMetadata {
-        creator: optional_lib_jid(md.creator.as_ref()),
-        creator_pn: optional_lib_jid(md.creator_pn.as_ref()),
+        creator: relay_optional_lib_jid(md.creator.as_ref()),
+        creator_pn: relay_optional_lib_jid(md.creator_pn.as_ref()),
         creator_username: md.creator_username.clone(),
         creator_country_code: md.creator_country_code.clone(),
         creation_time: md.creation_time.map(millis_from_seconds),
@@ -52,13 +52,13 @@ fn creator_part(md: &GroupMetadata) -> pb::GroupMetadata {
 fn subject_part(md: &GroupMetadata) -> pb::GroupMetadata {
     pb::GroupMetadata {
         subject_time: md.subject_time.map(millis_from_seconds),
-        subject_owner: optional_lib_jid(md.subject_owner.as_ref()),
-        subject_owner_pn: optional_lib_jid(md.subject_owner_pn.as_ref()),
+        subject_owner: relay_optional_lib_jid(md.subject_owner.as_ref()),
+        subject_owner_pn: relay_optional_lib_jid(md.subject_owner_pn.as_ref()),
         subject_owner_username: md.subject_owner_username.clone(),
         description: md.description.clone(),
         description_id: md.description_id.clone(),
-        description_owner: optional_lib_jid(md.description_owner.as_ref()),
-        description_owner_pn: optional_lib_jid(md.description_owner_pn.as_ref()),
+        description_owner: relay_optional_lib_jid(md.description_owner.as_ref()),
+        description_owner_pn: relay_optional_lib_jid(md.description_owner_pn.as_ref()),
         description_owner_username: md.description_owner_username.clone(),
         description_time: md.description_time.map(millis_from_seconds),
         ..settings_part(md)
@@ -93,7 +93,7 @@ fn community_part(md: &GroupMetadata) -> pb::GroupMetadata {
     pb::GroupMetadata {
         is_parent_group: md.is_parent_group,
         parent_membership_approval_required: md.parent_membership_approval_required,
-        parent_group: optional_lib_jid(md.parent_group_jid.as_ref()),
+        parent_group: relay_optional_lib_jid(md.parent_group_jid.as_ref()),
         is_default_sub_group: md.is_default_sub_group,
         is_general_chat: md.is_general_chat,
         allow_non_admin_sub_group_creation: md.allow_non_admin_sub_group_creation,
@@ -136,9 +136,9 @@ fn flags_part(md: &GroupMetadata) -> pb::GroupMetadata {
 
 fn participant_of(participant: &GroupParticipant) -> pb::GroupParticipant {
     pb::GroupParticipant {
-        jid: lib_jid(&participant.jid),
-        phone_number: optional_lib_jid(participant.phone_number.as_ref()),
-        lid: optional_lib_jid(participant.lid.as_ref()),
+        jid: relay_lib_jid(&participant.jid),
+        phone_number: relay_optional_lib_jid(participant.phone_number.as_ref()),
+        lid: relay_optional_lib_jid(participant.lid.as_ref()),
         username: participant.username.as_ref().map(ToString::to_string),
         r#type: participant_type_of(participant.participant_type) as i32,
         details: participant.details.as_deref().map(details_of),
@@ -177,19 +177,9 @@ fn growth_lock_of(lock: &GrowthLockInfo) -> pb::GrowthLockInfo {
 /// the library's struct, #96) and the request time in milliseconds.
 pub fn membership_request_of(request: &MembershipRequest) -> pb::MembershipRequest {
     pb::MembershipRequest {
-        jid: lib_jid(&request.jid),
+        jid: relay_lib_jid(&request.jid),
         request_time: request.request_time.map(millis_from_seconds),
     }
-}
-
-/// A lib jid as the wire message, verbatim (#122).
-pub(crate) fn lib_jid(jid: &Jid) -> Option<pb::Jid> {
-    relay_jid(jid.to_string())
-}
-
-/// An absent jid is an unset field, never an empty value (#122).
-pub(crate) fn optional_lib_jid(jid: Option<&Jid>) -> Option<pb::Jid> {
-    jid.and_then(lib_jid)
 }
 
 #[cfg(test)]

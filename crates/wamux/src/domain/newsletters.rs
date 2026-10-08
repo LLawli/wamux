@@ -8,7 +8,7 @@
 //! library already asks, the core just relays the answer.
 
 use wamux_types::newsletter_enums::{edit_attribute_of, poll_type_of};
-use wamux_types::{Jid, NewsletterHistoryQuery, relay_jid};
+use wamux_types::{Jid, NewsletterHistoryQuery, relay_jid, relay_lib_jid};
 use whatsapp_rust::Client;
 use whatsapp_rust::features::{NewsletterError, NewsletterMessage, NewsletterMetadata};
 
@@ -92,7 +92,7 @@ fn metadata_to_proto(meta: &NewsletterMetadata) -> pb::Newsletter {
     let (verification, verification_raw) = newsletter_verification_of(&meta.verification);
     let (state, state_raw) = newsletter_state_of(&meta.state);
     pb::Newsletter {
-        jid: relay_jid(meta.jid.to_string()),
+        jid: relay_lib_jid(&meta.jid),
         name: meta.name.clone(),
         description: meta.description.clone().unwrap_or_default(),
         subscriber_count: meta.subscriber_count,

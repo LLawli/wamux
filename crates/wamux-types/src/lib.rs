@@ -21,7 +21,7 @@ mod request_enum;
 
 pub use account::{AccountId, AccountRef, ExternalRef};
 pub use error::WamuxError;
-pub use jid::{GroupJid, Jid, NewsletterJid, relay_jid};
+pub use jid::{GroupJid, Jid, NewsletterJid, relay_jid, relay_lib_jid, relay_optional_lib_jid};
 pub use lid::LidPnQuery;
 pub use media_kind::MediaKind;
 pub use message_id::MessageId;
@@ -47,6 +47,8 @@ mod error_tests;
 mod event_enums_tests;
 #[cfg(test)]
 mod group_enums_tests;
+#[cfg(test)]
+mod jid_relay_tests;
 #[cfg(test)]
 mod jid_tests;
 #[cfg(test)]

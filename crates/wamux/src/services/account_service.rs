@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use wamux_types::AccountRef;
+use wamux_types::{AccountRef, relay_lib_jid};
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use super::account_to_proto;
@@ -28,9 +28,7 @@ async fn load_jid(registry: &AccountRegistry, handle: &AccountHandle) -> Option<
     let backend = registry.storage().device_backend(handle.device_id);
     let device = backend.load().await.ok().flatten()?;
     let jid = device.pn.or(device.lid)?;
-    Some(pb::Jid {
-        value: jid.to_string(),
-    })
+    relay_lib_jid(&jid)
 }
 
 fn status_of(handle: &AccountHandle, jid: Option<pb::Jid>) -> pb::AccountStatus {

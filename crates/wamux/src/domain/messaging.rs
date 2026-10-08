@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use wacore::send::RecipientFanout;
 use wamux_types::{
-    Jid, LinkPreview, MessageTarget, OutgoingContext, OutgoingText, PresenceState, relay_jid,
+    Jid, LinkPreview, MessageTarget, OutgoingContext, OutgoingText, PresenceState, relay_lib_jid,
 };
 use whatsapp_rust::buffa::{Enumeration, MessageField};
 use whatsapp_rust::waproto::whatsapp as wa;
@@ -300,7 +300,7 @@ pub fn recipient_fanout_to_proto(fanout: RecipientFanout) -> pb::RecipientFanout
 /// and the one its echo carries, so the two can never disagree.
 pub fn sent_message_key(message_id: String, to: &LibJid) -> pb::MessageKey {
     pb::MessageKey {
-        chat: relay_jid(to.to_string()),
+        chat: relay_lib_jid(to),
         id: message_id,
         from_me: true,
         participant: None,

@@ -4,17 +4,14 @@
 
 use wacore::iq::business::{BusinessCategory, BusinessHours, BusinessHoursConfig, BusinessProfile};
 use wamux_types::business_enums::{business_hour_mode_of, day_of_week_of};
-use wamux_types::relay_jid;
+use wamux_types::relay_optional_lib_jid;
 
 use crate::proto::v1 as pb;
 
 /// Every field the library parses; the hours' day and mode as enums plus raw.
 pub fn business_profile_of(profile: &BusinessProfile) -> pb::BusinessProfile {
     pb::BusinessProfile {
-        wid: profile
-            .wid
-            .as_ref()
-            .and_then(|jid| relay_jid(jid.to_string())),
+        wid: relay_optional_lib_jid(profile.wid.as_ref()),
         description: profile.description.clone(),
         email: profile.email.clone(),
         website: profile.website.clone(),
