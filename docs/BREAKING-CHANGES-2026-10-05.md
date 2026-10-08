@@ -721,6 +721,12 @@ that matched `RawEvent.kind` on it stops seeing that kind.
 | `UserStatusMuteUpdate` | `AppStateUpdate.user_status_mute` (`UserStatusMuteChange`) | #148 |
 | `FavoriteStickerUpdate` | `StickerUpdate.favorite` (`FavoriteStickerChange`), `EventEnvelope.sticker = 28` | #148 |
 | `RemoveRecentStickerUpdate` | `StickerUpdate.remove_recent` (`RemoveRecentStickerChange`) | #148 |
+| `LabelEditUpdate` | `LabelUpdate.edit` (`LabelEdit`), `EventEnvelope.label = 29` | #149 |
+| `LabelAssociationUpdate` | `LabelUpdate.chat` (`LabelChatAssociation`) | #149 |
+| `MessageLabelAssociationUpdate` | `LabelUpdate.message` (`LabelMessageAssociation`) | #149 |
+| `QuickReplyUpdate` | `QuickReplyUpdate`, `EventEnvelope.quick_reply = 30` | #149 |
+| `DisableLinkPreviewsUpdate` | `AccountSettingUpdate.link_previews` (`LinkPreviewsSetting`), `EventEnvelope.account_setting = 31` | #149 |
+| `StatusPrivacyUpdate` | `AccountSettingUpdate.status_privacy` (`StatusPrivacySetting`) | #149 |
 
 **JSON key to field (#148).**
 
@@ -745,3 +751,26 @@ when the filehash is not a base64 SHA-256.
 
 On the user's phone, hiding a contact from the status list is what sends
 `user_status_mute` (`muted` true); showing it again sent nothing in two tries.
+
+**JSON key to field (#149).**
+
+| JSON (`payload`) | Field |
+|---|---|
+| `label_id`, `timestamp` (RFC 3339), `from_full_sync` (labels) | `LabelUpdate.label_id`, `timestamp` (ms), `from_full_sync` |
+| `action.name`, `color`, `predefined_id`, `deleted`, `order_index`, `is_active`, `is_immutable`, `mute_end_time_ms` | `edit.*`, as sent |
+| `action.type` (a name, e.g. `"CUSTOM"`) | `edit.list_type` (`LabelListType`); absent or unknown to the library is UNSPECIFIED |
+| `chat_jid`, `action.labeled`, `action.model_meta_data` (chat label) | `chat.chat` (`Jid`), `chat.labeled`, `chat.model_meta_data` |
+| `chat_jid`, `message_id`, `action.*` (message label) | `message.chat`, `message.message_id`, `message.labeled`, `message.model_meta_data` |
+| `id`, `action.shortcut`, `message`, `keywords`, `count`, `deleted`, `associated_label_ids` (quick reply) | the same names on `QuickReplyUpdate` |
+| `action.is_previews_disabled` (the top-level `previews_disabled` is derived) | `link_previews.previews_disabled` |
+| `action_timestamp` (status privacy) | `AccountSettingUpdate.action_timestamp` (ms) |
+| `action.mode`, `action.modes` | `status_privacy.mode`, `modes` (`StatusAudience`: the case, and `mode_code` on UNKNOWN) |
+| `action.user_jid`, `custom_lists[].user_jid` (strings) | `status_privacy.users`, `custom_lists[].users` (`Jid`) |
+| `action.share_to_fb`, `share_to_ig`, `custom_lists[]` | the same names on `StatusPrivacySetting` |
+
+Measured on 2026-10-08: the consumer app's chat lists are labels of type
+CUSTOM, and deleting one sends `deleted` true with an empty name and
+`is_active` false. "My contacts except..." sends the status audience as
+`mode` DENY_LIST with the excluded users and `modes` [DENY_LIST]; going back
+sends CONTACTS with no users. The app no longer labels messages, so the
+message label is covered by tests only.

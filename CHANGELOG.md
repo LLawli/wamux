@@ -14,6 +14,23 @@ has to follow them.
 
 ### Added
 
+- **Labels, quick replies and two account settings are typed instead of
+  RawEvent** (issue #149, part 2 of #141). Three new events:
+  `EventEnvelope.label = 29` (`LabelUpdate`: a label edited, or put on or
+  taken off a chat or a message; in the consumer app a label is a chat list),
+  `quick_reply = 30` (`QuickReplyUpdate`), and `account_setting = 31`
+  (`AccountSettingUpdate`: the link-preview setting and the status audience).
+  Additive: an edge that matched `RawEvent.kind` on `LabelEditUpdate`,
+  `LabelAssociationUpdate`, `MessageLabelAssociationUpdate`,
+  `QuickReplyUpdate`, `DisableLinkPreviewsUpdate` or `StatusPrivacyUpdate`
+  stops seeing those kinds. `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
+  - `LabelListType` is closed in the library, which drops an unknown number
+    when it decodes: it crosses as UNSPECIFIED, and there is no code. The
+    status audience is open there on purpose, so an unknown mode crosses as
+    UNKNOWN with the server's number in `mode_code` (#73's rule).
+  - A deleted list or quick reply is the same mutation with `deleted` true
+    and empty texts, as measured; check the flag.
+
 - **Six more app-state mutations are typed instead of RawEvent** (issue #148,
   part 1 of #141). A chat locked or unlocked, cleared, a message deleted for
   this account only, and a contact hidden from the status list become
