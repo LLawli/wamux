@@ -14,14 +14,16 @@ use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::domain::app_state_update::{
-    archive_update_of, delete_chat_update_of, mark_read_update_of, mute_update_of, pin_update_of,
-    star_update_of,
+    archive_update_of, clear_chat_update_of, delete_chat_update_of,
+    delete_message_for_me_update_of, lock_chat_update_of, mark_read_update_of, mute_update_of,
+    pin_update_of, star_update_of, user_status_mute_update_of,
 };
 use crate::domain::call_event::call_event_of;
 use crate::domain::contact_update::contact_update_of;
 use crate::domain::group_update::group_update_of;
 use crate::domain::stanza_node::stanza_node_of;
 use crate::domain::sticker_packs;
+use crate::domain::sticker_update::{favorite_sticker_update_of, remove_recent_sticker_update_of};
 use crate::proto::v1 as pb;
 
 /// Map an event to zero or more oneof payloads.
@@ -117,6 +119,13 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::StarUpdate(s) => one(Pb::AppState(star_update_of(s))),
         Event::MarkChatAsReadUpdate(s) => one(Pb::AppState(mark_read_update_of(s))),
         Event::DeleteChatUpdate(s) => one(Pb::AppState(delete_chat_update_of(s))),
+        // #148 (part 1 of #141): these six used to fall into RawEvent.
+        Event::LockChatUpdate(s) => one(Pb::AppState(lock_chat_update_of(s))),
+        Event::ClearChatUpdate(s) => one(Pb::AppState(clear_chat_update_of(s))),
+        Event::DeleteMessageForMeUpdate(s) => one(Pb::AppState(delete_message_for_me_update_of(s))),
+        Event::UserStatusMuteUpdate(s) => one(Pb::AppState(user_status_mute_update_of(s))),
+        Event::FavoriteStickerUpdate(s) => one(Pb::Sticker(favorite_sticker_update_of(s))),
+        Event::RemoveRecentStickerUpdate(s) => one(Pb::Sticker(remove_recent_sticker_update_of(s))),
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),

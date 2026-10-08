@@ -136,6 +136,7 @@ fn event_kind(envelope: &pb::EventEnvelope) -> &'static str {
         Some(Event::OfflineSyncInterrupted(_)) => "offline_sync_interrupted",
         Some(Event::FavoritesChanged(_)) => "favorites_changed",
         Some(Event::NewsletterLiveUpdate(_)) => "newsletter_live_update",
+        Some(Event::Sticker(_)) => "sticker",
         Some(Event::Raw(raw)) => raw_kind(raw),
         None => "empty",
     }

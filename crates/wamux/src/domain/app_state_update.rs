@@ -4,7 +4,8 @@
 //! struct now has its own concrete function.
 
 use wacore::types::events::{
-    ArchiveUpdate, DeleteChatUpdate, MarkChatAsReadUpdate, MuteUpdate, PinUpdate, StarUpdate,
+    ArchiveUpdate, ClearChatUpdate, DeleteChatUpdate, DeleteMessageForMeUpdate, LockChatUpdate,
+    MarkChatAsReadUpdate, MuteUpdate, PinUpdate, StarUpdate, UserStatusMuteUpdate,
 };
 use whatsapp_rust::Jid;
 use whatsapp_rust::waproto::whatsapp::sync_action_value::{
@@ -148,6 +149,76 @@ pub fn delete_chat_update_of(update: &DeleteChatUpdate) -> pb::AppStateUpdate {
     )
 }
 
+/// #148 (part 1 of #141): the chat lock, as the action carries it.
+pub fn lock_chat_update_of(update: &LockChatUpdate) -> pb::AppStateUpdate {
+    let action = Action::Lock(pb::LockChange {
+        locked: update.action.locked,
+    });
+    app_state_of(
+        &update.jid,
+        update.timestamp.timestamp_millis(),
+        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.from_full_sync,
+        action,
+    )
+}
+
+/// #148: the index flags and the covered range (seconds on the wire, measured).
+pub fn clear_chat_update_of(update: &ClearChatUpdate) -> pb::AppStateUpdate {
+    let action = Action::ClearChat(pb::ClearChatChange {
+        delete_starred: update.delete_starred,
+        delete_media: update.delete_media,
+        message_range: message_range_of(update.action.message_range.as_option()),
+    });
+    app_state_of(
+        &update.jid,
+        update.timestamp.timestamp_millis(),
+        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.from_full_sync,
+        action,
+    )
+}
+
+/// #148: the deleted message's key, and its send time (seconds on the wire,
+/// measured live 2026-10-08) in ms.
+pub fn delete_message_for_me_update_of(update: &DeleteMessageForMeUpdate) -> pb::AppStateUpdate {
+    let action = Action::DeleteMessageForMe(pb::DeleteMessageForMeChange {
+        participant: relay_optional_lib_jid(update.participant_jid.as_ref()),
+        message_id: update.message_id.clone(),
+        from_me: update.from_me,
+        delete_media: update.action.delete_media,
+        message_timestamp: update
+            .action
+            .message_timestamp
+            .map(millis_from_signed_seconds),
+    });
+    app_state_of(
+        &update.chat_jid,
+        update.timestamp.timestamp_millis(),
+        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.from_full_sync,
+        action,
+    )
+}
+
+/// #148: the action's own flag, not the library's derived `muted`, which
+/// reads an absent flag as false.
+pub fn user_status_mute_update_of(update: &UserStatusMuteUpdate) -> pb::AppStateUpdate {
+    let action = Action::UserStatusMute(pb::UserStatusMuteChange {
+        muted: update.action.muted,
+    });
+    app_state_of(
+        &update.jid,
+        update.timestamp.timestamp_millis(),
+        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.from_full_sync,
+        action,
+    )
+}
+
+#[cfg(test)]
+#[path = "app_state_update_chat_tests.rs"]
+mod chat_tests;
 #[cfg(test)]
 #[path = "app_state_update_tests.rs"]
 mod tests;

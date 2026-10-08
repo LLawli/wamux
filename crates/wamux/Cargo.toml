@@ -68,6 +68,8 @@ sqlx.workspace = true
 turso = { workspace = true, optional = true }
 
 thiserror = "2"
+# #148: decodes a sticker's base64 filehash into the SHA-256 DownloadMedia checks.
+base64 = "0.22"
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
