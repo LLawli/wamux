@@ -14,6 +14,19 @@ has to follow them.
 
 ### Added
 
+- **A forced logout and a ban carry the server's whole stanza** (issue #138,
+  found in #134). `LoggedOutInfo.stanza` and `TemporaryBanInfo.stanza` relay
+  the `<failure>` or `<stream:error>` the library kept, as the new generic
+  `StanzaNode` in `common.proto`: tag, attributes as text, and the content as
+  bytes, text or child elements. An account lock's one-time `appeal_token`,
+  `violation_reason` and `vt` reached the core and were dropped; reading them
+  is the edge's call, since `violation_reason` is not a closed set. Unset when
+  nothing was received (a local logout). Additive, no migration:
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3e.
+  - A jid-valued attribute crosses as its wire text.
+  - The core does not cut a deep stanza. A prost client decodes at most 100
+    nested messages, about 47 stanza levels; real ones have two or three.
+
 - **An experimental Turso storage engine, behind the `turso` cargo feature**
   (issue #106). `database_url = "turso://<path>"` opens the store through the
   native async `turso` crate (pinned `=0.8.1`, no default features), a second

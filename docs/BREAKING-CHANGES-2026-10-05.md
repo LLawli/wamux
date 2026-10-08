@@ -3,7 +3,7 @@
 The `wamux.v1` package keeps its name and breaks in 0.2.0, as the CHANGELOG
 allows while the version is `0.x`. This document collects every Phase D change
 to the contract (#72 split into #120, #121 and #122, #73 into #126, #127 and
-#128, #74 into #132, #133, #134 and #135, then #96, #99 and #101); each issue adds its section here as it merges. Until the last one
+#128, #74 into #132, #133, #134 and #135, then #138, #96, #99 and #101); each issue adds its section here as it merges. Until the last one
 lands, the contract is mid-migration: build the edge against a released
 `0.2.0`, not against `main`.
 
@@ -682,3 +682,27 @@ no JSON serializer in the daemon's sources except the `RawEvent` catch-all
 (`raw_event_of` in `domain/event_mapping.rs`) and the store's own rows. A
 library event wamux has not typed yet still arrives as `RawEvent` with a JSON
 `payload` (#141 types the ones that matter).
+
+### 3e. The raw logout and ban stanza (#138)
+
+| Message | Before | After |
+|---|---|---|
+| `LoggedOutInfo` | `reason` to `on_connect` (1 to 4) | plus `StanzaNode stanza = 5` |
+| `TemporaryBanInfo` | `reason` to `url` (1 to 5) | plus `StanzaNode stanza = 6` |
+
+Additive: an edge that ignores the field keeps working. `StanzaNode` and
+`StanzaNodeList` are new in `common.proto`.
+
+- `stanza` is the whole stanza behind the logout or the ban, as the library
+  received it: a `<failure>` when the server refused the connection
+  (`on_connect` true), a `<stream:error>` for a later logout, where the reason
+  is a child element such as `<conflict type="...">`. Unset for a local
+  logout.
+- An account lock puts a one-time `appeal_token`, `violation_reason` and `vt`
+  on it, which no other field carries. The core does not parse them;
+  `violation_reason` is not a closed set.
+- `attrs` holds every attribute as text, a jid as its wire form. `content` is
+  `bytes`, `text` or `children` (in order), unset when the element had none.
+- Depth: a prost client decodes at most 100 nested messages, and each stanza
+  level costs two. The core relays the stanza uncut; logout and ban stanzas
+  are two or three levels deep.
