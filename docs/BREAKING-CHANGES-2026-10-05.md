@@ -612,3 +612,73 @@ The `AppStateKind` enum is removed from the contract. Section 2a's
 - Switch on the `oneof action` case where it switched on `kind`.
 - Read the message range's times as milliseconds. They were seconds.
 - Read a range message's chat from `key.chat.value`.
+
+### 3d. Call events (#135, closes #74)
+
+| Message | Before | After |
+|---|---|---|
+| `CallEvent` | `CallActionKind action = 6`, `string action_raw = 7`, `bytes raw = 4` | all three `reserved`; `call_creator = 8`, `stanza_id = 9`, the stanza's fields (10 to 19), `oneof action` (20 to 34) |
+
+The `CallActionKind` enum (section 2a) is removed from the contract. Its values
+map to the `oneof action` cases: `OFFER` is `offer`, `OFFER_NOTICE` is
+`offer_notice`, `PRE_ACCEPT` is `pre_accept`, `ACCEPT` is `accept`, `REJECT` is
+`reject`, `TERMINATE` is `terminate`, `TRANSPORT` is `transport`,
+`RELAY_LATENCY` is `relay_latency`, `VIDEO_STATE` is `video_state`,
+`GROUP_UPDATE` is `group_update`, `ENC_REKEY` is `enc_rekey`,
+`WAITING_ROOM_UPDATE` is `waiting_room_update`, `RAISE_HAND` is `raise_hand`
+and `SCREEN_SHARE` is `screen_share`. `UNKNOWN` with `action_raw` is now
+`unknown_action`, which carries the wire tag of an action the library added
+after this core. The payload messages live in the new `call.proto`.
+
+**Call event, JSON key to field.**
+
+| JSON (`raw`) | `CallEvent` |
+|---|---|
+| `from` (the library's jid struct) | `from` (already a `Jid` since #122) |
+| `stanza_id` | `stanza_id` |
+| `action.call_id` | `call_id` (unchanged) |
+| `action.call_creator` | `call_creator` (`Jid`) |
+| `notify`, `platform`, `version`, `caller_username` | the same names, unset when absent |
+| `participant`, `recipient` | `participant`, `recipient` (`Jid`, unset when absent) |
+| `timestamp` (unix s) | `timestamp` (ms) |
+| `offline` | `offline` |
+| `video_orientation` | `video_orientation` |
+| `group` | `group` (`GroupCallUpdate`) |
+| `action.type` | the `oneof action` case |
+| `action.caller_pn`, `group_jid` (offer) | `offer.caller_pn`, `offer.group_jid` (`Jid`) |
+| `action.caller_country_code`, `device_class`, `joinable`, `is_video`, `audio[]` (offer) | `offer.*`, `audio[]` as `CallAudioCodec {enc, rate}` |
+| `action.is_video`, `is_group` (offer_notice) | `offer_notice.*` |
+| `action.audio[]` (preaccept, accept) | `pre_accept.audio[]`, `accept.audio[]` |
+| `action.reason` (reject) | `reject.reason` |
+| `action.reason`, `duration`, `audio_duration` (terminate) | `terminate.*`; the durations verbatim, unit not verified |
+| `action.p2p_cand_round`, `transport_message_type` | `transport.*` |
+| `action.state` (video, a number) | `video_state.state` (`CallVideoStateKind`), the number in `state_code` only on `UNKNOWN` |
+| `action.orientation`, `dec` (video) | `video_state.orientation`, `video_state.dec` |
+| `action.update` (group_update) | `group_update` (`GroupCallUpdate`) |
+| `action.rekey` (enc_rekey) | `enc_rekey` (`GroupCallEncRekey`) |
+| `action.room` (waiting_room_update) | `waiting_room_update` (`CallWaitingRoom`, `media` as `CallLinkMedia`) |
+| `action.raised` (user_action) | `raise_hand.raised` |
+| `action.screen_share` | `screen_share` (`state` as `ScreenShareState`, `version`, `screen_share_id`) |
+
+Three values the library kept out of its JSON cross now, because the relay
+does not pick: a group-call participant's phone number (`GroupCallParticipant.pn`),
+a device's capability bitmask (`GroupCallDevice.capability`) and a rekey's
+`ciphertext`.
+
+`duration` and `audio_duration` cross as the server sent them: a linked device
+is dismissed with `terminate reason="accepted_elsewhere"` as soon as another
+device answers, so no capture carries one, and the library does not document
+the unit.
+
+**What the edge has to do:**
+
+- Switch on the `oneof action` case where it switched on `action`.
+- Read the stanza id from `stanza_id`, and the time as milliseconds. It was
+  unix seconds inside the JSON.
+- Read `call_creator` from the top level, for every action.
+
+**The #74 rule from here on.** `scripts/check-wire-json.py` runs in `ci.sh`:
+no JSON serializer in the daemon's sources except the `RawEvent` catch-all
+(`raw_event_of` in `domain/event_mapping.rs`) and the store's own rows. A
+library event wamux has not typed yet still arrives as `RawEvent` with a JSON
+`payload` (#141 types the ones that matter).
