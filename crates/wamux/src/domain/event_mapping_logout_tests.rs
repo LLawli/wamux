@@ -41,6 +41,7 @@ fn logged_out_carries_the_logout_message_and_on_connect() {
             locale: Some("pt_BR".to_string()),
         }),
         on_connect: true,
+        stanza: None,
     };
     assert_eq!(logged_out_info(&event), expected);
 }

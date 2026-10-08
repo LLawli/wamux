@@ -263,6 +263,11 @@ message LoggedOutInfo {
   // True when the server refused the connection itself (a `<failure>`), false
   // for a logout that came later (a `<stream:error>`, or a local logout).
   bool on_connect = 4;
+  // The whole stanza that caused the logout (#138): a `<failure>` when
+  // `on_connect` is true, a `<stream:error>` otherwise. An account lock puts
+  // its one-time `appeal_token` here, which nothing else carries. Unset for a
+  // local logout, which received nothing.
+  StanzaNode stanza = 5;
 }
 
 message TemporaryBanInfo {
@@ -274,6 +279,9 @@ message TemporaryBanInfo {
   int64 expire_seconds = 3;
   string message = 4;  // the server's `message` attribute; empty when absent
   string url = 5;      // the support/appeal link; empty when absent
+  // The whole `<failure>` stanza the ban came in (#138), for anything the
+  // fields above do not carry. Unset when the library had none.
+  StanzaNode stanza = 6;
 }
 
 // The server's `<failure>` reason codes the library names (code in comment).

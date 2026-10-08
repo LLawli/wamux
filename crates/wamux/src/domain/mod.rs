@@ -21,6 +21,7 @@ pub mod newsletters;
 pub(crate) mod outgoing_context;
 pub mod polls;
 pub mod send_rich;
+pub(crate) mod stanza_node;
 pub mod status;
 pub(crate) mod sticker_packs;
 #[cfg(test)]

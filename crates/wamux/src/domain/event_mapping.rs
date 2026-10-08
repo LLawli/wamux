@@ -20,6 +20,7 @@ use crate::domain::app_state_update::{
 use crate::domain::call_event::call_event_of;
 use crate::domain::contact_update::contact_update_of;
 use crate::domain::group_update::group_update_of;
+use crate::domain::stanza_node::stanza_node_of;
 use crate::domain::sticker_packs;
 use crate::proto::v1 as pb;
 
@@ -285,7 +286,8 @@ fn connection_with(
 }
 
 /// The reason the server gave, as the enum plus its code when UNKNOWN (#126),
-/// the server's logout copy and whether it refused the connection (#134).
+/// the server's logout copy and whether it refused the connection (#134),
+/// plus the raw stanza whole (#138).
 fn logged_out(logout: &LoggedOut) -> pb::event_envelope::Event {
     let (reason, reason_code) = logout_reason_of(logout.reason);
     let info = pb::LoggedOutInfo {
@@ -300,12 +302,14 @@ fn logged_out(logout: &LoggedOut) -> pb::event_envelope::Event {
                 locale: message.locale.clone(),
             }),
         on_connect: logout.on_connect,
+        stanza: logout.raw.as_ref().map(stanza_node_of),
     };
     connection_with(pb::ConnectionState::LoggedOut, Some(info), None)
 }
 
 /// `expire` is a duration, not a deadline, relayed in whole seconds verbatim;
-/// `message` and `url` are empty when the server sent none (#126).
+/// `message` and `url` are empty when the server sent none (#126). The raw
+/// stanza rides along unparsed (#138).
 fn temporary_ban(ban: &TemporaryBan) -> pb::event_envelope::Event {
     let (reason, reason_code) = ban_reason_of(&ban.code);
     let info = pb::TemporaryBanInfo {
@@ -314,6 +318,7 @@ fn temporary_ban(ban: &TemporaryBan) -> pb::event_envelope::Event {
         expire_seconds: ban.expire.num_seconds(),
         message: ban.message.clone().unwrap_or_default(),
         url: ban.url.clone().unwrap_or_default(),
+        stanza: ban.raw.as_ref().map(stanza_node_of),
     };
     connection_with(pb::ConnectionState::Banned, None, Some(info))
 }
@@ -638,6 +643,9 @@ mod logout_tests;
 #[cfg(test)]
 #[path = "event_mapping_media_tests.rs"]
 mod media_tests;
+#[cfg(test)]
+#[path = "event_mapping_stanza_tests.rs"]
+mod stanza_tests;
 #[cfg(test)]
 #[path = "event_mapping_tests.rs"]
 mod tests;
