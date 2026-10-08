@@ -8,7 +8,6 @@
 //! library's set is closed, the match has no wildcard arm: a variant added
 //! upstream fails the build at the bump instead of reaching the edge unnamed.
 
-use wacore::types::call::CallAction;
 use wacore::types::events::{ConnectFailureReason, TempBanReason, UnavailableType};
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
 use wamux_proto::v1 as pb;
@@ -46,37 +45,6 @@ pub fn chat_state_of(state: ChatPresence, media: ChatPresenceMedia) -> pb::ChatS
         (ChatPresence::Composing, ChatPresenceMedia::Text) => pb::ChatState::Composing,
         (ChatPresence::Paused, _) => pb::ChatState::Paused,
     }
-}
-
-/// The call action, and the library's wire tag when it is UNKNOWN (empty
-/// otherwise).
-pub fn call_action_of(action: &CallAction) -> (pb::CallActionKind, String) {
-    match known_call_action(action) {
-        Some(known) => (known, String::new()),
-        // `#[non_exhaustive]`: a sub-type added upstream relays under its tag.
-        None => (pb::CallActionKind::Unknown, action.wire_tag().to_string()),
-    }
-}
-
-/// The call actions wamux names; `None` for one the library added since.
-fn known_call_action(action: &CallAction) -> Option<pb::CallActionKind> {
-    Some(match action {
-        CallAction::Offer { .. } => pb::CallActionKind::Offer,
-        CallAction::OfferNotice { .. } => pb::CallActionKind::OfferNotice,
-        CallAction::PreAccept { .. } => pb::CallActionKind::PreAccept,
-        CallAction::Accept { .. } => pb::CallActionKind::Accept,
-        CallAction::Reject { .. } => pb::CallActionKind::Reject,
-        CallAction::Terminate { .. } => pb::CallActionKind::Terminate,
-        CallAction::Transport { .. } => pb::CallActionKind::Transport,
-        CallAction::RelayLatency { .. } => pb::CallActionKind::RelayLatency,
-        CallAction::VideoState { .. } => pb::CallActionKind::VideoState,
-        CallAction::GroupUpdate { .. } => pb::CallActionKind::GroupUpdate,
-        CallAction::EncRekey { .. } => pb::CallActionKind::EncRekey,
-        CallAction::WaitingRoomUpdate { .. } => pb::CallActionKind::WaitingRoomUpdate,
-        CallAction::RaiseHand { .. } => pb::CallActionKind::RaiseHand,
-        CallAction::ScreenShare { .. } => pb::CallActionKind::ScreenShare,
-        _ => return None,
-    })
 }
 
 /// Why a message could not be decrypted. Closed set, no wildcard arm (#126).

@@ -4,12 +4,10 @@
 
 use std::sync::Arc;
 
-use wacore::types::call::IncomingCall;
 use wacore::types::events::{Event, LoggedOut, Receipt, TemporaryBan};
 use wacore::types::message::MessageInfo;
 use wamux_types::event_enums::{
-    ban_reason_of, call_action_of, chat_state_of, logout_reason_of, receipt_type_of,
-    unavailable_reason_of,
+    ban_reason_of, chat_state_of, logout_reason_of, receipt_type_of, unavailable_reason_of,
 };
 use wamux_types::{MediaKind, relay_jid};
 use whatsapp_rust::Jid;
@@ -20,6 +18,7 @@ use crate::domain::app_state_update::{
     archive_update_of, delete_chat_update_of, mark_read_update_of, mute_update_of, pin_update_of,
     star_update_of,
 };
+use crate::domain::call_event::call_event_of;
 use crate::domain::contact_update::contact_update_of;
 use crate::domain::group_update::group_update_of;
 use crate::domain::sticker_packs;
@@ -130,9 +129,8 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::NewsletterLiveUpdate(u) => one(Pb::NewsletterLiveUpdate(newsletter_live_update(u))),
 
         // Inbound call signaling. The core relays the primitive; ring/answer
-        // policy is the edge's. `call_id` is the CallAction id (the stanza id
-        // lives in `raw`).
-        Event::IncomingCall(c) => one(Pb::Call(map_call(c))),
+        // policy is the edge's. Typed since #135 (it was the library's JSON).
+        Event::IncomingCall(c) => one(Pb::Call(call_event_of(c))),
 
         // Issue #4: the server's own verdict on an outgoing stanza, new in
         // whatsapp-rust 0.7. `SendResult` only says the library accepted the
@@ -180,11 +178,18 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // made `Event` #[non_exhaustive], so this arm is now load-bearing for a
         // variant the lib adds in a minor release, not only for the ones we
         // chose not to type.
-        other => one(Pb::Raw(pb::RawEvent {
-            kind: variant_name(other),
-            payload: serde_json::to_vec(other).unwrap_or_default(),
-            note: String::new(),
-        })),
+        other => one(Pb::Raw(raw_event_of(other))),
+    }
+}
+
+/// The catch-all payload: the one place the daemon puts the library's JSON on
+/// the wire (#135, guarded by scripts/check-wire-json.py). Every event wamux
+/// types has its own message; only an unknown one falls back to this.
+fn raw_event_of(other: &Event) -> pb::RawEvent {
+    pb::RawEvent {
+        kind: variant_name(other),
+        payload: serde_json::to_vec(other).unwrap_or_default(),
+        note: String::new(),
     }
 }
 
@@ -265,21 +270,6 @@ fn live_update_message(
         reactions: reactions.collect(),
         votes: votes.collect(),
         forwards_count: message.forwards_count,
-    }
-}
-
-/// Map an inbound call to the typed `CallEvent`. `action` is the enum, with the
-/// library's wire tag in `action_raw` only when it is UNKNOWN (#126); `call_id`
-/// is the CallAction id (lib note: distinct from the stanza id, which the edge
-/// reads from `raw`).
-fn map_call(call: &IncomingCall) -> pb::CallEvent {
-    let (action, action_raw) = call_action_of(&call.action);
-    pb::CallEvent {
-        from: lib_jid(&call.from),
-        call_id: call.action.call_id().to_string(),
-        action: action as i32,
-        action_raw,
-        raw: serde_json::to_vec(call).unwrap_or_default(),
     }
 }
 

@@ -4,6 +4,7 @@
 pub mod app_state_update;
 pub mod bot_factory;
 pub mod business_profile;
+pub mod call_event;
 pub mod chat_actions;
 pub mod contact_update;
 pub mod contacts;

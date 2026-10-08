@@ -5,6 +5,7 @@
 
 pub mod account;
 pub mod business_enums;
+pub mod call_enums;
 pub mod error;
 pub mod event_enums;
 pub mod group_enums;
@@ -38,6 +39,8 @@ pub use presence_state::PresenceState;
 mod account_tests;
 #[cfg(test)]
 mod business_enums_tests;
+#[cfg(test)]
+mod call_enums_tests;
 #[cfg(test)]
 mod error_tests;
 #[cfg(test)]
