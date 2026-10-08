@@ -85,3 +85,38 @@ enum MediaType {
   MEDIA_TYPE_STICKER_PACK = 7;             // download only (#58)
   MEDIA_TYPE_STICKER_PACK_THUMBNAIL = 8;   // download only (#58)
 }
+
+// A server stanza as the library received it, relayed whole (#138): the core
+// does not parse it, so data the library leaves alone (an account lock's
+// one-time `appeal_token`, `violation_reason`, `vt`) still reaches the edge.
+// Reading it is edge policy.
+//
+// `attrs` holds every attribute as text; a jid-valued attribute carries its
+// wire form ("5511999999999@s.whatsapp.net"). The binary protocol does not
+// forbid a repeated key; if one ever arrives, the last value wins.
+//
+// `content` keeps the library's three shapes apart: `bytes` for binary
+// content, `text` for content the codec read as a string, `children` for
+// child elements in order (an empty list when the element had an empty child
+// list). Unset when the element had no content at all.
+//
+// Depth: each level costs two nested messages (StanzaNode, StanzaNodeList).
+// A prost client decodes at most 100 nested messages, so a stanza deeper than
+// about 47 levels cannot be decoded there. The core relays what the library
+// decoded (up to 128 levels) without cutting it; real logout and ban stanzas
+// are two or three levels deep.
+message StanzaNode {
+  string tag = 1;
+  map<string, string> attrs = 2;
+  oneof content {
+    bytes bytes = 3;
+    string text = 4;
+    StanzaNodeList children = 5;
+  }
+}
+
+// The child elements of a StanzaNode, in the order the server sent them. A
+// message of its own because a oneof cannot hold a repeated field.
+message StanzaNodeList {
+  repeated StanzaNode nodes = 1;
+}
