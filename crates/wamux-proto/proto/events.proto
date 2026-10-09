@@ -651,6 +651,9 @@ message CallEvent {
     CallScreenShare screen_share = 33;
     // The wire tag of a call action the library added after this core.
     string unknown_action = 34;
+    // #151: a call that must not ring, surfaced instead of an offer. Today an
+    // offer replayed from the offline queue (`offline` is then true).
+    CallMissed missed = 35;
   }
 }
 
@@ -817,6 +820,156 @@ message ClientBuildVersion {
   uint32 tertiary = 3;
 }
 
+// What the server says about a contact (#151, part 4 of #141): each from a
+// `<notification>` the library parsed. They reached the socket as RawEvent.
+// Times are ms; the server sends seconds.
+message ContactNotice {
+  oneof notice {
+    PictureChange picture = 10;
+    AboutChange about = 11;
+    ContactProfileChange profile = 12;
+    NumberChange number = 13;
+    ContactSyncRequest sync_requested = 14;
+    DisappearingModeChange disappearing_mode = 15;
+    BusinessStatusChange business = 16;
+  }
+}
+
+// A profile picture set or removed, a user's or a group's.
+message PictureChange {
+  Jid jid = 1;
+  Jid author = 2;      // the admin who changed a group's picture; unset for a person's
+  int64 timestamp = 3;
+  bool removed = 4;
+  optional string picture_id = 5;  // the server's id; absent on removals, and sometimes on sets
+}
+
+message AboutChange {
+  Jid jid = 1;
+  string about = 2;    // the new text (the library's `status`)
+  int64 timestamp = 3;
+}
+
+// A contact's profile changed (`<update>`): drop any cached presence and
+// picture for it. Not the app-state ContactUpdate (a contact saved on a
+// linked device).
+message ContactProfileChange {
+  Jid jid = 1;
+  int64 timestamp = 2;
+}
+
+// A contact changed their phone number (`<modify>`).
+message NumberChange {
+  Jid old_pn = 1;
+  Jid new_pn = 2;
+  Jid old_lid = 3;  // unset when the server sent none
+  Jid new_lid = 4;
+  int64 timestamp = 5;
+}
+
+// The server asks for a full contact re-sync (`<sync>`).
+message ContactSyncRequest {
+  optional int64 after = 1;
+  int64 timestamp = 2;
+}
+
+// A contact's default disappearing-messages timer changed. Apply it only when
+// `setting_timestamp` is newer than what you hold.
+message DisappearingModeChange {
+  Jid jid = 1;                   // the contact (the library's `from`)
+  uint32 duration_seconds = 2;   // 0 = off, 86400 = 24 h (measured)
+  int64 setting_timestamp = 3;
+}
+
+message BusinessStatusChange {
+  Jid jid = 1;
+  BusinessUpdateType update_type = 2;
+  int64 timestamp = 3;
+  Jid target = 4;
+  optional string hash = 5;
+  optional string verified_name = 6;
+  repeated string product_ids = 7;
+  repeated string collection_ids = 8;
+  repeated BusinessSubscriptionInfo subscriptions = 9;
+}
+
+message BusinessSubscriptionInfo {
+  string id = 1;
+  string status = 2;
+  optional int64 expiration_date = 3;  // ms (the stanza sends seconds)
+  optional int64 creation_time = 4;    // ms
+}
+
+// `wacore::types::events::BusinessUpdateType`. UNKNOWN is the library's own
+// `Unknown`: it does not keep the wire string, so there is no code.
+enum BusinessUpdateType {
+  BUSINESS_UPDATE_TYPE_UNSPECIFIED = 0;
+  BUSINESS_UPDATE_TYPE_UNKNOWN = 1;
+  BUSINESS_UPDATE_TYPE_REMOVED_AS_BUSINESS = 2;
+  BUSINESS_UPDATE_TYPE_VERIFIED_NAME_CHANGED = 3;
+  BUSINESS_UPDATE_TYPE_PROFILE_UPDATED = 4;
+  BUSINESS_UPDATE_TYPE_PRODUCTS_UPDATED = 5;
+  BUSINESS_UPDATE_TYPE_COLLECTIONS_UPDATED = 6;
+  BUSINESS_UPDATE_TYPE_SUBSCRIPTIONS_UPDATED = 7;
+}
+
+// Someone's devices or identity key changed (#151). The library has already
+// cleared the sessions and sender keys it had to; this is notice.
+message DeviceNotice {
+  oneof notice {
+    DeviceListChange device_list = 10;
+    IdentityChangeInfo identity = 11;
+  }
+}
+
+message DeviceListChange {
+  Jid user = 1;
+  Jid lid_user = 2;
+  DeviceListChangeType update_type = 3;
+  repeated DeviceKeyIndex devices = 4;
+  KeyIndexList key_index = 5;        // add and remove carry it
+  optional string contact_hash = 6;  // update carries it
+}
+
+message DeviceKeyIndex {
+  uint32 device_id = 1;
+  optional uint32 key_index = 2;
+}
+
+message KeyIndexList {
+  int64 timestamp = 1;              // ms (measured in seconds on the wire)
+  optional bytes signed_bytes = 2;  // the signed key index list, on add
+}
+
+// `wacore::types::events::DeviceListUpdateType`, closed in the library.
+enum DeviceListChangeType {
+  DEVICE_LIST_CHANGE_TYPE_UNSPECIFIED = 0;
+  DEVICE_LIST_CHANGE_TYPE_UNKNOWN = 1;  // never emitted (closed in the library)
+  DEVICE_LIST_CHANGE_TYPE_ADD = 2;
+  DEVICE_LIST_CHANGE_TYPE_REMOVE = 3;
+  DEVICE_LIST_CHANGE_TYPE_UPDATE = 4;
+}
+
+message IdentityChangeInfo {
+  Jid user = 1;
+  Jid lid_user = 2;
+  // True when the library noticed it while decrypting, false when the server
+  // sent `<identity/>`.
+  bool implicit = 3;
+}
+
+// `<notification type="mex">` (#151): a server GraphQL update, routed by
+// `op_name`. `payload_json` is the SERVER's JSON body, not the library's
+// shape: the library parses it and the core writes it back out, so keys come
+// sorted and the content is the same. Decode it by `op_name`.
+message MexNotification {
+  string op_name = 1;
+  Jid from = 2;
+  optional string stanza_id = 3;
+  optional string offline = 4;  // set on a backlog replay (often a timestamp, as the server sends it)
+  bytes payload_json = 5;
+}
+
 message EventEnvelope {
   // Stays a string (#122, decided 2026-10-05): it is not a jid, and no other
   // uuid in the contract is a message (`AccountRef.uuid`, `Account.uuid`), so a
@@ -850,6 +1003,9 @@ message EventEnvelope {
     SelfPushNameUpdate self_push_name = 32;     // #153
     CallLogUpdate call_log = 33;                // #153
     ConnectionNotice connection_notice = 34;    // #150
+    ContactNotice contact_notice = 35;          // #151
+    DeviceNotice device_notice = 36;            // #151
+    MexNotification mex = 37;                   // #151
     RawEvent raw = 99;
   }
 }
