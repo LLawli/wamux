@@ -290,3 +290,20 @@ enum CallLogType {
   CALL_LOG_TYPE_SCHEDULED_CALL = 3;
   CALL_LOG_TYPE_VOICE_CHAT = 4;
 }
+
+// #151: why a call surfaced as missed rather than ringing. It reached the
+// socket as the `MissedCall` RawEvent.
+message CallMissed {
+  MissedCallReason reason = 1;
+}
+
+// `wacore::types::call::MissedReason`, non_exhaustive in the library: a reason
+// it adds later crosses as UNKNOWN.
+enum MissedCallReason {
+  MISSED_CALL_REASON_UNSPECIFIED = 0;
+  MISSED_CALL_REASON_UNKNOWN = 1;
+  MISSED_CALL_REASON_OFFLINE = 2;  // an offer replayed from the offline queue
+  // A terminate for a call never answered. Needs the library's `voip-control`
+  // feature, which this build does not enable.
+  MISSED_CALL_REASON_REMOTE = 3;
+}

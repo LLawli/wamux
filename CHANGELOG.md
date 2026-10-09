@@ -14,6 +14,32 @@ has to follow them.
 
 ### Added
 
+- **Server notifications about contacts and devices, the mex notification
+  and the missed call are typed instead of RawEvent** (issue #151, part 4 of
+  #141, which this closes). Additive: an edge that matched `RawEvent.kind` on
+  these eleven stops seeing them. `docs/BREAKING-CHANGES-2026-10-05.md`,
+  section 3f. Every library event that can fire in this build is now typed;
+  `RawEvent` keeps only the nine that cannot, and any event a later library
+  adds.
+  - `EventEnvelope.contact_notice = 35` (`ContactNotice`): a picture set or
+    removed (a person's or a group's), an about text, a profile to refresh, a
+    phone number change (`old_pn`/`new_pn` and the LIDs), a full contact
+    re-sync request, a contact's default disappearing-messages timer
+    (`duration_seconds`) and a business status change.
+  - `EventEnvelope.device_notice = 36` (`DeviceNotice`): someone's device list
+    (add, remove, update, with the key index and its signed bytes) and an
+    identity key change.
+  - `EventEnvelope.mex = 37` (`MexNotification`): a server GraphQL update.
+    `payload_json` is the server's JSON body, which the library parses; the
+    core writes it back out, so keys come sorted and the content is the same.
+    `scripts/check-wire-json.py` allows this one serializer by name, next to
+    the catch-all.
+  - A call that must not ring (today an offer replayed from the offline queue)
+    is a `CallEvent` whose action is the new `missed` (`CallMissed`, with
+    `MissedCallReason`), with `from`, `call_id`, `timestamp` and `offline`.
+  - Every time is ms; the server sends seconds (measured for pictures, the
+    disappearing timer and the key index).
+
 - **The connection and pairing lifecycle is typed instead of RawEvent**
   (issue #150, part 3 of #141). Additive: an edge that matched
   `RawEvent.kind` on these nine stops seeing them.

@@ -740,6 +740,17 @@ that matched `RawEvent.kind` on it stops seeing that kind.
 | `PairingCodeError` | `PairingUpdate.code_error` (`PairingCodeErrorInfo`) | #150 |
 | `PairingQrCodesExhausted` | `PairingUpdate.qr_codes_exhausted` (`PairingQrCodesExhaustedInfo`) | #150 |
 | `DirtyState` | dropped, not relayed: the library already resyncs | #150 |
+| `PictureUpdate` | `ContactNotice.picture` (`PictureChange`), `EventEnvelope.contact_notice = 35` | #151 |
+| `UserAboutUpdate` | `ContactNotice.about` (`AboutChange`) | #151 |
+| `ContactUpdated` | `ContactNotice.profile` (`ContactProfileChange`) | #151 |
+| `ContactNumberChanged` | `ContactNotice.number` (`NumberChange`) | #151 |
+| `ContactSyncRequested` | `ContactNotice.sync_requested` (`ContactSyncRequest`) | #151 |
+| `DisappearingModeChanged` | `ContactNotice.disappearing_mode` (`DisappearingModeChange`) | #151 |
+| `BusinessStatusUpdate` | `ContactNotice.business` (`BusinessStatusChange`) | #151 |
+| `DeviceListUpdate` | `DeviceNotice.device_list` (`DeviceListChange`), `EventEnvelope.device_notice = 36` | #151 |
+| `IdentityChange` | `DeviceNotice.identity` (`IdentityChangeInfo`) | #151 |
+| `MexNotification` | `MexNotification`, `EventEnvelope.mex = 37` | #151 |
+| `MissedCall` | `CallEvent` with `action.missed` (`CallMissed`) | #151 |
 
 **JSON key to field (#148).**
 
@@ -832,3 +843,29 @@ PairWithQr and PairWithCode now end after `code_error`, `code_refresh`, or
 `qr_codes_exhausted` with `disconnected` true, as well as after `paired` and
 `error`. A client that read the stream until it ended keeps working; one that
 waited for `paired` or `error` alone no longer hangs on a refused code.
+
+**JSON key to field (#151).**
+
+| JSON (`payload`) | Field |
+|---|---|
+| `jid`, `author`, `timestamp`, `removed`, `picture_id` (picture) | `picture.*`, `timestamp` in ms |
+| `jid`, `status`, `timestamp` (about) | `about.jid`, `about.about`, `about.timestamp` (ms) |
+| `jid`, `timestamp` (contact updated) | `profile.*` (ms) |
+| `old_jid`, `new_jid`, `old_lid`, `new_lid`, `timestamp` | `number.old_pn`, `new_pn`, `old_lid`, `new_lid`, `timestamp` (ms) |
+| `after`, `timestamp` (sync requested) | `sync_requested.*` (ms) |
+| `from`, `duration`, `setting_timestamp` (seconds) | `disappearing_mode.jid`, `duration_seconds`, `setting_timestamp` (ms) |
+| `jid`, `update_type`, `timestamp` (seconds), `target_jid`, `hash`, `verified_name`, `product_ids`, `collection_ids` | `business.jid`, `update_type` (`BusinessUpdateType`), `timestamp` (ms), `target`, and the same names |
+| `subscriptions[].id`, `status`, `expiration_date`, `creation_time` (seconds) | `business.subscriptions[]` (`BusinessSubscriptionInfo`; times in ms) |
+| `user`, `lid_user`, `update_type`, `devices[].device_id`, `devices[].key_index`, `contact_hash` | `device_list.*` (`DeviceListChangeType`, `DeviceKeyIndex`) |
+| `key_index.timestamp` (seconds), `key_index.signed_bytes` (array of numbers) | `device_list.key_index.timestamp` (ms), `signed_bytes` (bytes) |
+| `user`, `lid_user`, `implicit` (identity) | `identity.*` |
+| `op_name`, `from`, `stanza_id`, `offline` | the same names on `MexNotification` |
+| `payload` (a JSON value) | `payload_json` (that value as JSON bytes, keys sorted) |
+| `from`, `call_id`, `timestamp` (seconds), `reason` (`"offline"`) | `CallEvent.from`, `call_id`, `timestamp` (ms), `offline` true, `action.missed.reason` OFFLINE |
+
+Measured on 2026-10-09: setting a profile picture on one account sent
+`PictureUpdate` to the other, naming the account that changed it, with a
+`picture_id`. The same subscription also carried `PictureUpdate`s naming the
+receiving account itself, with no `picture_id`; why is not verified. Turning the default disappearing timer on (24 h) and off
+reached both accounts, with `duration` 86400 and then 0. Changing the about
+text sent no notification to the other account.

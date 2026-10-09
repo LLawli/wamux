@@ -25,11 +25,18 @@ use crate::domain::connection_notice::{
     app_state_sync_failed_notice_of, client_expiration_notice_of, client_outdated_notice_of,
     connect_failure_notice_of, stream_error_notice_of, stream_replaced_notice_of,
 };
+use crate::domain::contact_notice::{
+    about_notice_of, business_notice_of, disappearing_mode_notice_of, number_notice_of,
+    picture_notice_of, profile_notice_of, sync_requested_notice_of,
+};
 use crate::domain::contact_update::{contact_removed_of, contact_update_of};
+use crate::domain::device_notice::{device_list_notice_of, identity_notice_of};
 use crate::domain::group_update::group_update_of;
 use crate::domain::label_update::{
     label_association_update_of, label_edit_update_of, message_label_association_update_of,
 };
+use crate::domain::mex_notification::mex_notification_of;
+use crate::domain::missed_call::missed_call_event_of;
 use crate::domain::pairing_update::{
     pairing_code_error_of, pairing_code_refresh_of, pairing_qr_codes_exhausted_of,
 };
@@ -167,6 +174,19 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // Inbound call signaling. The core relays the primitive; ring/answer
         // policy is the edge's. Typed since #135 (it was the library's JSON).
         Event::IncomingCall(c) => one(Pb::Call(call_event_of(c))),
+        // #151: an offer replayed from the offline queue, as a `missed` action.
+        Event::MissedCall(m) => one(Pb::Call(missed_call_event_of(m))),
+        // #151 (part 4 of #141): server notifications that used to fall into RawEvent.
+        Event::PictureUpdate(u) => one(Pb::ContactNotice(picture_notice_of(u))),
+        Event::UserAboutUpdate(u) => one(Pb::ContactNotice(about_notice_of(u))),
+        Event::ContactUpdated(u) => one(Pb::ContactNotice(profile_notice_of(u))),
+        Event::ContactNumberChanged(c) => one(Pb::ContactNotice(number_notice_of(c))),
+        Event::ContactSyncRequested(r) => one(Pb::ContactNotice(sync_requested_notice_of(r))),
+        Event::DisappearingModeChanged(c) => one(Pb::ContactNotice(disappearing_mode_notice_of(c))),
+        Event::BusinessStatusUpdate(u) => one(Pb::ContactNotice(business_notice_of(u))),
+        Event::DeviceListUpdate(u) => one(Pb::DeviceNotice(device_list_notice_of(u))),
+        Event::IdentityChange(c) => one(Pb::DeviceNotice(identity_notice_of(c))),
+        Event::MexNotification(n) => one(Pb::Mex(mex_notification_of(n))),
 
         // Issue #4: the server's own verdict on an outgoing stanza, new in
         // whatsapp-rust 0.7. `SendResult` only says the library accepted the
