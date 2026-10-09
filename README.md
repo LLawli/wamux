@@ -42,6 +42,8 @@ Signal/session/device state (in Postgres), never business message history.
 - **No in-process auth.** Authentication and authorization are the edge's
   responsibility. If you need to gate access locally, the daemon can read peer
   credentials (`SO_PEERCRED`) from the Unix stream.
+- **The store is a secret.** It holds every paired account's keys in
+  plaintext: see [The store is a secret](docs/DEPLOYMENT.md#the-store-is-a-secret).
 - Network exposure, if ever needed, is a separate front (a reverse proxy or a
   second binary), never a flag flipped here.
 

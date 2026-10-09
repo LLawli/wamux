@@ -14,6 +14,18 @@ has to follow them.
 
 ### Added
 
+- **The store file is created owner-only, and the docs say what it is** (issue
+  #75). The store holds every paired account's keys in plaintext, so a dump or a
+  copy of the file is a takeover of all of them. A new `sqlite://` or `turso://`
+  file is now created `0600` whatever the umask (its `-wal` and `-shm` inherit the
+  mode), and an existing file that group or others can read is reported with a
+  `WARN` naming the path, the mode and the `chmod 600` that fixes it. The daemon
+  does not change the mode or refuse to start. The Docker image now starts the
+  daemon through `sh -c 'umask 077 && exec wamux'` (the daemon is still PID 1 and
+  still gets SIGTERM); anyone who overrode the image's `ENTRYPOINT` is unaffected.
+  New "The store is a secret" section in `docs/DEPLOYMENT.md`, linked from the
+  README's security model. Encryption at rest is #76.
+
 - **MessagingService answers `InvalidArgument` for requests that can never
   work** (issue #101). A poll the library refuses (fewer than 2 or more than 12
   options, `selectable_count` outside `1..=options`, duplicate names) and a
