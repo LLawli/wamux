@@ -1,5 +1,7 @@
 # wamux
 
+[![CI](https://github.com/LLawli/wamux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LLawli/wamux/actions/workflows/ci.yml)
+
 **WhatsApp multiplexer core daemon: many accounts, one Unix socket, gRPC.**
 
 `wamux` is the core daemon of an unofficial WhatsApp system (in the style of
@@ -133,8 +135,12 @@ WAMUX_TEST_ENGINE=sqlite cargo test            # same suite, SQLite engine
 scripts/ci.sh                                  # every gate (--full adds scale tests)
 ```
 
-`scripts/ci.sh` is the pipeline — there is no hosted CI. Run it before declaring
-work done.
+`scripts/ci.sh` runs every gate in one command. Run it before declaring work
+done. Hosted CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every pull
+request and every push to `main`, in three jobs: `scripts/ci.sh` on Postgres,
+fmt + clippy + tests on SQLite, and `cargo audit`. It runs `ci.sh` without
+`--full`, so the scale tests stay a local step: run `scripts/ci.sh --full`
+before merging a change that could affect them.
 
 The `crates/wamux-proto/proto/` files are the **source of truth** for the API
 contract: change the proto, rebuild, then fix the Rust — never the other way around. Generated code is
