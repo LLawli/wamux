@@ -14,6 +14,16 @@ has to follow them.
 
 ### Added
 
+- **GroupService refuses a `group` that is not a group, and stops hiding three
+  refusals behind Unavailable** (issue #96). Every RPC that takes a group answers
+  `InvalidArgument` for a jid on another server before anything is sent; an
+  empty or unreadable invite code answers `InvalidArgument`; a `CreateGroup`
+  LID participant with no phone number in the store answers `FailedPrecondition`;
+  and the 409 on `SetGroupDescription` carries `wa-code=409` again (the library
+  rewrote it into an error with no code). New `GroupJidResponse.join_outcome`
+  (`JOINED` or `PENDING_APPROVAL`) tells a join from a request waiting for an
+  admin. `docs/BREAKING-CHANGES-2026-10-05.md`, section 3h.
+
 - **The raw element of group create, link, unlink and sub-group suggestions
   crosses as a `StanzaNode`** (issue #146). Additive: `GroupCreated.stanza = 2`,
   `GroupLinked.stanza = 2`, `GroupUnlinked.stanza = 3`, and the
