@@ -8,7 +8,7 @@
 //! library already asks, the core just relays the answer.
 
 use wamux_types::newsletter_enums::{edit_attribute_of, poll_type_of};
-use wamux_types::{Jid, NewsletterHistoryQuery, relay_jid, relay_lib_jid};
+use wamux_types::{Jid, NewsletterHistoryQuery, NewsletterJid, relay_jid, relay_lib_jid};
 use whatsapp_rust::Client;
 use whatsapp_rust::features::{NewsletterError, NewsletterMessage, NewsletterMetadata};
 
@@ -64,7 +64,10 @@ pub async fn list_subscribed(client: &Client) -> Result<pb::NewsletterList, Wamu
     })
 }
 
-pub async fn get_metadata(client: &Client, jid: &Jid) -> Result<pb::Newsletter, WamuxError> {
+pub async fn get_metadata(
+    client: &Client,
+    jid: &NewsletterJid,
+) -> Result<pb::Newsletter, WamuxError> {
     let found = client
         .newsletter()
         .get_metadata(jid.as_lib())
@@ -131,7 +134,7 @@ pub async fn get_messages(
     Ok(pb::NewsletterMessageList {
         messages: rows
             .iter()
-            .map(|row| row_to_proto(row, &query.jid))
+            .map(|row| row_to_proto(row, query.jid.as_jid()))
             .collect(),
     })
 }

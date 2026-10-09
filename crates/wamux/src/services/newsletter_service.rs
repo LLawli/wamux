@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
 use wamux_types::{
-    Jid, NewsletterAddOnsQuery, NewsletterHistoryQuery, NewsletterJid, NewsletterPollVote,
+    NewsletterAddOnsQuery, NewsletterHistoryQuery, NewsletterJid, NewsletterPollVote,
 };
 
 use super::client_of;
@@ -47,7 +47,8 @@ impl NewsletterService for NewsletterSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            newsletters::get_metadata(&client, &Jid::from_required_wire(req.jid)?).await?,
+            newsletters::get_metadata(&client, &NewsletterJid::from_required_wire(req.jid)?)
+                .await?,
         ))
     }
 

@@ -4,7 +4,7 @@
 use wamux_proto::v1 as pb;
 
 use crate::error::WamuxError;
-use crate::jid::{Jid, NewsletterJid};
+use crate::jid::NewsletterJid;
 
 /// WA Web's own ceiling (`REPEATED_CHILD(<vote>, 0, 1000)` in
 /// `WASmaxOutMessagePublishNewsletterPollVoteMixin`), which the library also
@@ -15,12 +15,12 @@ pub const MAX_NEWSLETTER_VOTE_OPTIONS: usize = 1000;
 
 /// A page of a channel's history, newest first.
 ///
-/// The jid is any `Jid`, not a `NewsletterJid`: whether this RPC refuses a jid
-/// that is not a channel is #99's to decide, and until then it goes to the
-/// server as it always did.
+/// The jid is a `NewsletterJid` (#99): measured live (2026-10-09), the server
+/// sent nothing back for a group or phone jid, so the call waited out the
+/// library's 75 s IQ timeout and came back as Unavailable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewsletterHistoryQuery {
-    pub jid: Jid,
+    pub jid: NewsletterJid,
     /// Never 0: a page size of 0 asks the server for nothing, and the empty
     /// answer would read as "this channel has no history".
     pub count: u32,
@@ -46,12 +46,12 @@ pub struct NewsletterAddOnsQuery {
     pub limit: u32,
 }
 
-/// The jid, then `"count must be at least 1, got 0"`.
+/// The jid (`NewsletterJid::from_required_wire`, #99), then `"count must be at least 1, got 0"`.
 impl TryFrom<pb::GetNewsletterMessagesRequest> for NewsletterHistoryQuery {
     type Error = WamuxError;
 
     fn try_from(request: pb::GetNewsletterMessagesRequest) -> Result<Self, WamuxError> {
-        let jid: Jid = Jid::from_required_wire(request.jid)?;
+        let jid: NewsletterJid = NewsletterJid::from_required_wire(request.jid)?;
         require_at_least_one("count", request.count)?;
         // 0 is proto3's "absent": start at the newest rather than before row zero.
         let before: Option<u64> = (request.before != 0).then_some(request.before);
@@ -63,8 +63,8 @@ impl TryFrom<pb::GetNewsletterMessagesRequest> for NewsletterHistoryQuery {
     }
 }
 
-/// The jid (`NewsletterJid::parse`), then `"server_id must name the poll, got
-/// 0"`, then the hashes: `"a poll vote names at most 1000 options, got <n>"`,
+/// The jid (`NewsletterJid::from_required_wire`), then `"server_id must name
+/// the poll, got 0"`, then the hashes: `"a poll vote names at most 1000 options, got <n>"`,
 /// `"option_hashes[<i>] must be 32 bytes (sha256 of the option name), got
 /// <n>"`, `"option_hashes[<i>] repeats an earlier option"`.
 impl TryFrom<pb::SendNewsletterPollVoteRequest> for NewsletterPollVote {
@@ -86,7 +86,7 @@ impl TryFrom<pb::SendNewsletterPollVoteRequest> for NewsletterPollVote {
     }
 }
 
-/// The jid (`NewsletterJid::parse`), then `"limit must be at least 1, got 0"`.
+/// The jid (`NewsletterJid::from_required_wire`), then `"limit must be at least 1, got 0"`.
 impl TryFrom<pb::GetMyNewsletterAddOnsRequest> for NewsletterAddOnsQuery {
     type Error = WamuxError;
 

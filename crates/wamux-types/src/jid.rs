@@ -175,6 +175,11 @@ impl GroupJid {
 }
 
 impl NewsletterJid {
+    /// The library's jid, which is what `client.newsletter()` takes.
+    pub fn as_lib(&self) -> &wacore_binary::Jid {
+        self.0.as_lib()
+    }
+
     /// A required channel field of a request (#121): unset, or set with an
     /// empty value, is `InvalidArgument("missing jid")`; a jid on another
     /// server is refused as `parse` refuses it.
