@@ -14,6 +14,19 @@ has to follow them.
 
 ### Added
 
+- **MessagingService answers `InvalidArgument` for requests that can never
+  work** (issue #101). A poll the library refuses (fewer than 2 or more than 12
+  options, `selectable_count` outside `1..=options`, duplicate names) and a
+  `MuteChat` with a deadline in the past used to come back as `Unavailable`; both
+  are now `InvalidArgument` with the library's reason, and the core validates
+  nothing itself. `PostStatusText` and `PostStatusMedia` with no recipients are
+  refused the way `RevokeStatus` already was, before anything is uploaded, and a
+  malformed `remote_jid` on a delete-for-me is refused before the account is
+  looked up. Not changed: a status recipient given by phone number whose LID the
+  client does not know is still dropped silently by the library, so an edge that
+  posts statuses should send LIDs. `docs/BREAKING-CHANGES-2026-10-05.md`,
+  section 3j.
+
 - **Channel metadata and history refuse a jid that is not a channel** (issue
   #99). `GetNewsletterMetadata` and `GetNewsletterMessages` answer
   `InvalidArgument` for a valid jid on another server before anything is sent,
