@@ -57,6 +57,7 @@ turso_storage_cases() {
   must_run_tests --features turso --test bincode_upgrade turso_
   must_run_tests --features turso --test store_parity turso_
   must_run_tests --features turso --test existing_store turso_
+  must_run_tests --features turso --test store_file_mode turso_
 }
 
 # wamux-tools (#64): the shared client, the env contract, the exit code, and
@@ -303,6 +304,11 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test newsletter_serv
 stage "stress tests (messaging service)"
 must_run_tests --features stress --test messaging_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test messaging_service
+
+# The store file is a secret (#75): the real daemon creates it 0600 under a
+# permissive umask and warns about a loose one. No database, no account.
+stage "store file mode"
+must_run_tests --test store_file_mode sqlite_
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"

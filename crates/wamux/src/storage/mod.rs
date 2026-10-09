@@ -12,6 +12,7 @@ pub mod bincode_upgrade;
 pub mod blob_codec;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod engine;
+pub(crate) mod file_mode;
 pub(crate) mod protocol_rows;
 pub mod sql;
 pub mod sqlx_error;

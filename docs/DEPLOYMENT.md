@@ -61,6 +61,28 @@ a replacement for either of the others. What to know before choosing it:
 - **Not stress-tested.** The store and service suites run on it; the stress
   harness does not. Prefer Postgres for many accounts.
 
+## The store is a secret
+
+The store holds, for every paired account, the private identity keys, the Signal
+sessions, the prekeys, the sender keys and the message secrets, in plaintext
+(`BYTEA` in Postgres, `BLOB` in SQLite and Turso). Whoever owns a dump, a
+backup or the database file can take over every paired account. Treat it like
+a private key.
+
+- **Modes.** The database file is `0600`, its directory `0700`, and both are
+  owned by the user the daemon runs as.
+- **What the daemon does.** It creates a new SQLite or `turso://` file `0600`
+  under any umask; the `-wal` and `-shm` files inherit that mode. At startup it
+  logs a warning for any existing file (or its `-wal`/`-shm`) readable by group
+  or others. It does not change the mode and does not refuse to start; fix it
+  with `chmod 600 <path>`.
+- **Postgres.** Give the daemon a role of its own, not a shared superuser, and
+  do not expose the server to open network access. The compose file's
+  `wamux-pgdata` volume holds the same secret.
+- **Backups.** Encrypt them, restrict who can read them, and choose retention
+  as you would for a private key.
+- **Encryption at rest** is future work (#76).
+
 ## Native (systemd)
 
 The simplest case: daemon and consumer are the same user on the same host, so

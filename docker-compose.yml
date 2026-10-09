@@ -9,6 +9,9 @@
 services:
   postgres:
     image: postgres:16
+    # The wamux-pgdata volume below holds the same secret as any wamux store
+    # (every account's keys, in plaintext, #75). The example password is for
+    # development only: change it, and do not publish the port, in production.
     environment:
       POSTGRES_USER: wamux
       POSTGRES_PASSWORD: wamux

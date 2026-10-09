@@ -77,6 +77,7 @@ impl TursoStore {
     /// conversion every engine runs. A failure anywhere drops the connection
     /// before returning, which frees the file.
     pub async fn open_path(path: &Path) -> StoreResult<Self> {
+        crate::storage::file_mode::secure_store_file(path)?;
         let conn = TursoConn::open(path).await?;
         migrations::apply_pending(&conn)
             .await
