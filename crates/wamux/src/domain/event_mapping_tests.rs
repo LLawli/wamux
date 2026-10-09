@@ -6,9 +6,9 @@ use wacore::types::call::{CallAction, IncomingCall};
 use wacore::types::events::{
     BatchOrigin, ChatPresenceUpdate, ConnectFailureReason, Connected, DecryptFailMode,
     Disconnected, InboundMessage, LazyHistorySync, LoggedOut, MessageBatch, OfflineSyncCompleted,
-    OfflineSyncInterrupted, OfflineSyncPreview, PairError, PairSuccess, PairingCode,
-    PairingCodeRefresh, PairingQrCode, PresenceUpdate, Receipt, ServerAck, TempBanReason,
-    TemporaryBan, UnavailableType, UndecryptableMessage,
+    OfflineSyncInterrupted, OfflineSyncPreview, PairError, PairSuccess, PairingCode, PairingQrCode,
+    PresenceUpdate, QrScannedWithoutMultidevice, Receipt, ServerAck, TempBanReason, TemporaryBan,
+    UnavailableType, UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
 use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
@@ -864,14 +864,16 @@ fn drops_notification_and_raw_node_events() {
 
 #[test]
 fn catch_all_maps_unmatched_variant_to_raw_event() {
-    // PairingCodeRefresh has no explicit arm: it must land in Raw, not vanish.
-    let event = Event::PairingCodeRefresh(PairingCodeRefresh::builder().force_manual(true).build());
+    // QrScannedWithoutMultidevice has no explicit arm: it must land in Raw, not
+    // vanish. One of the events kept in the catch-all on purpose (#141 triage);
+    // PairingCodeRefresh was the example until #150 typed it.
+    let event = Event::QrScannedWithoutMultidevice(QrScannedWithoutMultidevice::builder().build());
     match map_one(&event) {
         Some(PbEvent::Raw(raw)) => {
-            assert_eq!(raw.kind, "PairingCodeRefresh");
+            assert_eq!(raw.kind, "QrScannedWithoutMultidevice");
             assert_eq!(raw.payload, serde_json::to_vec(&event).unwrap());
             let json: serde_json::Value = serde_json::from_slice(&raw.payload).unwrap();
-            assert_eq!(json["PairingCodeRefresh"]["force_manual"], true);
+            assert!(json["QrScannedWithoutMultidevice"].is_object());
             assert!(raw.note.is_empty());
         }
         other => panic!("expected raw event, got {other:?}"),

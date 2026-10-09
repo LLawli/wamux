@@ -21,10 +21,17 @@ use crate::domain::app_state_update::{
 };
 use crate::domain::call_event::call_event_of;
 use crate::domain::call_log_update::call_log_update_of;
+use crate::domain::connection_notice::{
+    app_state_sync_failed_notice_of, client_expiration_notice_of, client_outdated_notice_of,
+    connect_failure_notice_of, stream_error_notice_of, stream_replaced_notice_of,
+};
 use crate::domain::contact_update::{contact_removed_of, contact_update_of};
 use crate::domain::group_update::group_update_of;
 use crate::domain::label_update::{
     label_association_update_of, label_edit_update_of, message_label_association_update_of,
+};
+use crate::domain::pairing_update::{
+    pairing_code_error_of, pairing_code_refresh_of, pairing_qr_codes_exhausted_of,
 };
 use crate::domain::quick_reply_update::quick_reply_update_of;
 use crate::domain::self_push_name_update::self_push_name_update_of;
@@ -66,6 +73,10 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
                 message: p.error.clone(),
             },
         ))),
+        // #150 (part 3 of #141): these three used to fall into RawEvent.
+        Event::PairingCodeRefresh(r) => one(pairing(pairing_code_refresh_of(r))),
+        Event::PairingCodeError(e) => one(pairing(pairing_code_error_of(e))),
+        Event::PairingQrCodesExhausted(x) => one(pairing(pairing_qr_codes_exhausted_of(x))),
 
         // Live traffic is a batch of one; an offline drain delivers one batch
         // per durable commit. Either way the edge keeps seeing one message per
@@ -189,6 +200,17 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::OfflineSyncCompleted(c) => one(Pb::OfflineSyncCompleted(pb::OfflineSyncCompleted {
             count: c.count,
         })),
+        // #150 (part 3 of #141): the connection's lifecycle, past its state.
+        Event::ConnectFailure(f) => one(Pb::ConnectionNotice(connect_failure_notice_of(f))),
+        Event::ClientOutdated(o) => one(Pb::ConnectionNotice(client_outdated_notice_of(o))),
+        Event::StreamError(e) => one(Pb::ConnectionNotice(stream_error_notice_of(e))),
+        Event::StreamReplaced(r) => one(Pb::ConnectionNotice(stream_replaced_notice_of(r))),
+        Event::AppStateSyncFailed(f) => {
+            one(Pb::ConnectionNotice(app_state_sync_failed_notice_of(f)))
+        }
+        Event::ClientExpirationChanged(c) => {
+            one(Pb::ConnectionNotice(client_expiration_notice_of(c)))
+        }
         Event::OfflineSyncInterrupted(i) => {
             one(Pb::OfflineSyncInterrupted(pb::OfflineSyncInterrupted {
                 total: i.total,
@@ -197,7 +219,9 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         }
 
         // Intentionally dropped (internal/noisy).
-        Event::Notification(_) | Event::RawNode(_) => Vec::new(),
+        // DirtyState too (#150, triage of #141): the library already runs the
+        // resync a dirty bit asks for, so the socket has nothing to add.
+        Event::Notification(_) | Event::RawNode(_) | Event::DirtyState(_) => Vec::new(),
 
         // Forward-compat catch-all: never silently lose an event type. 0.7 also
         // made `Event` #[non_exhaustive], so this arm is now load-bearing for a

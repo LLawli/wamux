@@ -115,6 +115,17 @@ async fn watch_pairing(
                 report.fail("Account.PairWithQr", err.message);
                 return None;
             }
+            // #150: the daemon ends the stream after these when nothing more
+            // can come, so the next read reports the end.
+            Some(pb::pairing_update::Event::CodeRefresh(info)) => {
+                println!("pair code withdrawn (force_manual={})", info.force_manual);
+            }
+            Some(pb::pairing_update::Event::CodeError(info)) => {
+                println!("pair code refused: {}", info.detail);
+            }
+            Some(pb::pairing_update::Event::QrCodesExhausted(info)) => {
+                println!("QR codes used up (disconnected={})", info.disconnected);
+            }
             None => {}
         }
     }

@@ -8,6 +8,7 @@ use wamux_types::{AccountRef, relay_lib_jid};
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use super::account_to_proto;
+use crate::domain::pairing_update::pairing_stream_ends;
 use crate::proto::v1 as pb;
 use crate::proto::v1::account_service_server::AccountService;
 use crate::state::{AccountHandle, AccountRegistry};
@@ -66,11 +67,7 @@ fn pairing_stream(
             match events.recv().await {
                 Ok(envelope) => {
                     if let Some(pb::event_envelope::Event::Pairing(update)) = envelope.event {
-                        let done = matches!(
-                            update.event,
-                            Some(pb::pairing_update::Event::Paired(_))
-                                | Some(pb::pairing_update::Event::Error(_))
-                        );
+                        let done = pairing_stream_ends(&update);
                         if tx.send(Ok(update)).await.is_err() {
                             break;
                         }
