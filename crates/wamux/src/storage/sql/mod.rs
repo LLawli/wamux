@@ -35,14 +35,17 @@ mod signal_store;
 mod tc_token_sql;
 mod transaction;
 
+use std::str::FromStr;
 use std::sync::Arc;
 
+use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{PgPool, SqlitePool};
 use uuid::Uuid;
 use wacore::store::error::{Result as StoreResult, StoreError};
 use wacore::store::traits::Backend;
 
 use crate::storage::engine::{AccountRow, StorageEngine};
+use crate::storage::file_mode;
 use crate::storage::statements::PING;
 
 pub use connect::{connect_postgres, connect_sqlite};
@@ -94,6 +97,7 @@ impl SqlStore {
 
     /// Open (creating if absent) the SQLite file and apply pending migrations.
     pub async fn open_sqlite(database_url: &str) -> StoreResult<Self> {
+        secure_sqlite_file(database_url)?;
         let pool = connect_sqlite(database_url)
             .await
             .map_err(|e| StoreError::Connection(Box::new(e)))?;
@@ -161,4 +165,15 @@ impl SqlBackend {
     pub fn device_id(&self) -> i32 {
         self.device_id
     }
+}
+
+/// Create the SQLite file 0600 before sqlx would create it with the umask's
+/// mode (#75). In-memory databases have no file.
+fn secure_sqlite_file(database_url: &str) -> StoreResult<()> {
+    let options = SqliteConnectOptions::from_str(database_url)
+        .map_err(|e| StoreError::Connection(Box::new(e)))?;
+    if database_url.contains(":memory:") || database_url.contains("mode=memory") {
+        return Ok(());
+    }
+    file_mode::secure_store_file(options.get_filename())
 }
