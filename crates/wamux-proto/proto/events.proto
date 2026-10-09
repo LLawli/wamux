@@ -417,8 +417,8 @@ message GroupUpdate {
     Empty allow_non_admin_sub_group_creation = 58;
     Empty not_allow_non_admin_sub_group_creation = 59;
     // The library keeps these two nodes unparsed, so only the fact crosses.
-    Empty created_sub_group_suggestion = 60;
-    Empty revoked_sub_group_suggestions = 61;
+    GroupSubGroupSuggestionCreated created_sub_group_suggestion = 60;
+    GroupSubGroupSuggestionsRevoked revoked_sub_group_suggestions = 61;
     GroupChangeNumber change_number = 62;
     GroupUnknownAction unknown = 63;
   }
