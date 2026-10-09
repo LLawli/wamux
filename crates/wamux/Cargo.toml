@@ -91,6 +91,11 @@ bytes.workspace = true
 bincode = { version = "2", features = ["serde"] }
 serde_json = "1"
 http.workspace = true
+# Store encryption at rest (#164): XChaCha20-Poly1305 seals the secret columns.
+# 0.11 sits on cipher 0.5 / chacha20 0.10, already in the graph, so it adds only
+# aead 0.6 (no 0.10 line: that one would add a second chacha20).
+chacha20poly1305 = "0.11"
+sha2 = "0.11"
 
 wacore.workspace = true
 whatsapp-rust.workspace = true
