@@ -14,6 +14,16 @@ has to follow them.
 
 ### Added
 
+- **The raw element of group create, link, unlink and sub-group suggestions
+  crosses as a `StanzaNode`** (issue #146). Additive: `GroupCreated.stanza = 2`,
+  `GroupLinked.stanza = 2`, `GroupUnlinked.stanza = 3`, and the
+  `created_sub_group_suggestion` and `revoked_sub_group_suggestions` cases of
+  `GroupUpdate.action` carry a message with `stanza = 1` where they carried
+  `Empty` (same field numbers, so an older edge skips the field).
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3g. The linked or unlinked
+  group, a suggestion's creator and subject, and a subgroup's `<linked_parent>`
+  were dropped before. The core relays the element and interprets none of it.
+
 - **Server notifications about contacts and devices, the mex notification
   and the missed call are typed instead of RawEvent** (issue #151, part 4 of
   #141, which this closes). Additive: an edge that matched `RawEvent.kind` on

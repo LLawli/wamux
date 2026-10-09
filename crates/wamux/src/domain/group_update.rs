@@ -14,6 +14,7 @@ use whatsapp_rust::wacore_binary::Node;
 
 use self::participants::{notification_participants, participants_change};
 use crate::domain::group_metadata::group_metadata_of;
+use crate::domain::stanza_node::stanza_node_of;
 use crate::domain::wire_time::millis_from_seconds;
 use crate::proto::v1 as pb;
 use crate::proto::v1::group_update::Action;
@@ -126,18 +127,20 @@ fn action_of(action: &Lib) -> Action {
         Lib::Delete { reason } => Action::Delete(pb::GroupDeleted {
             reason: reason.clone(),
         }),
-        // The library keeps the rest of the node unparsed (`raw` is
-        // `#[wire(skip)]`), so only the typed fields cross.
-        Lib::Link { link_type, .. } => Action::Link(pb::GroupLinked {
+        // The typed fields are only part of what the library parsed; `raw`
+        // (`#[wire(skip)]`) crosses whole so the edge sees the rest (#146).
+        Lib::Link { link_type, raw } => Action::Link(pb::GroupLinked {
             link_type: link_type.clone(),
+            stanza: Some(stanza_node_of(raw)),
         }),
         Lib::Unlink {
             unlink_type,
             unlink_reason,
-            ..
+            raw,
         } => Action::Unlink(pb::GroupUnlinked {
             unlink_type: unlink_type.clone(),
             unlink_reason: unlink_reason.clone(),
+            stanza: Some(stanza_node_of(raw)),
         }),
         Lib::LinkedGroupPromote { participants } => {
             Action::LinkedGroupPromote(participants_change(participants, None))
@@ -160,8 +163,16 @@ fn action_of(action: &Lib) -> Action {
         Lib::NotAllowNonAdminSubGroupCreation => {
             Action::NotAllowNonAdminSubGroupCreation(pb::Empty {})
         }
-        Lib::CreatedSubGroupSuggestion { .. } => Action::CreatedSubGroupSuggestion(pb::Empty {}),
-        Lib::RevokedSubGroupSuggestions { .. } => Action::RevokedSubGroupSuggestions(pb::Empty {}),
+        Lib::CreatedSubGroupSuggestion { raw, .. } => {
+            Action::CreatedSubGroupSuggestion(pb::GroupSubGroupSuggestionCreated {
+                stanza: Some(stanza_node_of(raw)),
+            })
+        }
+        Lib::RevokedSubGroupSuggestions { raw, .. } => {
+            Action::RevokedSubGroupSuggestions(pb::GroupSubGroupSuggestionsRevoked {
+                stanza: Some(stanza_node_of(raw)),
+            })
+        }
         Lib::ChangeNumber {
             new_owner,
             sub_group_suggestions,
@@ -193,9 +204,16 @@ fn group_created_of(create: &Node) -> pb::GroupCreated {
         .and_then(|group| GroupMetadataResponse::try_from_node(group).ok())
         .map(GroupMetadata::from)
         .map(|metadata| group_metadata_of(&metadata));
-    pb::GroupCreated { metadata }
+    pb::GroupCreated {
+        metadata,
+        stanza: Some(stanza_node_of(create)),
+    }
 }
 
 #[cfg(test)]
 #[path = "group_update_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "group_update_stanza_tests.rs"]
+mod stanza_tests;

@@ -167,6 +167,7 @@ fn created_metadata(notification: &GroupNotification) -> Action {
     let metadata = whatsapp_rust::GroupMetadata::from(response);
     Action::Create(pb::GroupCreated {
         metadata: Some(group_metadata_of(&metadata)),
+        stanza: None,
     })
 }
 
@@ -294,7 +295,12 @@ fn every_captured_notification_maps_whole() {
             1,
             "line {index}: one action per captured notification"
         );
-        assert_eq!(group_update_of(&updates[0]), want, "line {index}");
+        // The whole `<create>` element is pinned in group_update_stanza_tests.
+        let mut got = group_update_of(&updates[0]);
+        if let Some(Action::Create(created)) = got.action.as_mut() {
+            created.stanza = None;
+        }
+        assert_eq!(got, want, "line {index}");
     }
 }
 
@@ -337,7 +343,10 @@ fn create_without_a_group_leaves_metadata_unset() {
     });
     assert_eq!(
         group_update_of(&update).action,
-        Some(Action::Create(pb::GroupCreated { metadata: None }))
+        Some(Action::Create(pb::GroupCreated {
+            metadata: None,
+            stanza: Some(bare_stanza("create")),
+        }))
     );
 }
 
@@ -408,6 +417,15 @@ fn requested_on_the_wire() -> pb::GroupNotificationParticipant {
         phone_number: wire(MEMBER_PN),
         username: Some("fulano".to_string()),
         ..pb::GroupNotificationParticipant::default()
+    }
+}
+
+/// The wire form of `NodeBuilder::new(tag).build()`: a tag and nothing else.
+fn bare_stanza(tag: &str) -> pb::StanzaNode {
+    pb::StanzaNode {
+        tag: tag.to_string(),
+        attrs: Default::default(),
+        content: None,
     }
 }
 
@@ -611,6 +629,7 @@ fn community_actions() -> Vec<(GroupNotificationAction, Action)> {
             },
             Action::Link(pb::GroupLinked {
                 link_type: "sub_group".to_string(),
+                stanza: Some(bare_stanza("link")),
             }),
         ),
         (
@@ -622,6 +641,7 @@ fn community_actions() -> Vec<(GroupNotificationAction, Action)> {
             Action::Unlink(pb::GroupUnlinked {
                 unlink_type: "sub_group".to_string(),
                 unlink_reason: Some("delete_parent".to_string()),
+                stanza: Some(bare_stanza("unlink")),
             }),
         ),
         (
@@ -644,13 +664,17 @@ fn community_actions() -> Vec<(GroupNotificationAction, Action)> {
             G::CreatedSubGroupSuggestion {
                 raw: NodeBuilder::new("created_sub_group_suggestion").build(),
             },
-            Action::CreatedSubGroupSuggestion(empty()),
+            Action::CreatedSubGroupSuggestion(pb::GroupSubGroupSuggestionCreated {
+                stanza: Some(bare_stanza("created_sub_group_suggestion")),
+            }),
         ),
         (
             G::RevokedSubGroupSuggestions {
                 raw: NodeBuilder::new("revoked_sub_group_suggestions").build(),
             },
-            Action::RevokedSubGroupSuggestions(empty()),
+            Action::RevokedSubGroupSuggestions(pb::GroupSubGroupSuggestionsRevoked {
+                stanza: Some(bare_stanza("revoked_sub_group_suggestions")),
+            }),
         ),
     ]
 }

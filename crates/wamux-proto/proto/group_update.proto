@@ -99,21 +99,48 @@ message GroupInviteJoin {
 // accepts.
 message GroupCreated {
   GroupMetadata metadata = 1;
+  // The whole `<create>` element (#146), `metadata` included. It carries what
+  // the typed metadata does not: a subgroup's `<linked_parent>`, `<general_chat>`,
+  // `<default_sub_group>` and `<incognito>`, a community's `<parent>`. It is also
+  // all the edge gets when the library's group parser rejects the `<group>`.
+  StanzaNode stanza = 2;
 }
 
 message GroupDeleted {
   optional string reason = 1;
 }
 
-// A subgroup was linked to a community. The library keeps the rest of the node
-// unparsed, so only the type crosses.
+// A subgroup was linked to a community. `link_type` is the typed attribute
+// (`sub_group` for the community's notification, `sibling_group` for the other
+// subgroups'). The linked groups are the `<group jid subject s_t/>` children of
+// `stanza` (#146): one, or two when the community was just created.
 message GroupLinked {
   string link_type = 1;
+  StanzaNode stanza = 2;  // the whole `<link>`
 }
 
+// The unlinked group is the `<group jid subject s_t/>` child of `stanza` (#146).
+// `unlink_type` is `sub_group`, `sibling_group` or `parent_group`, depending on
+// whose notification it is.
 message GroupUnlinked {
   string unlink_type = 1;
   optional string unlink_reason = 2;
+  StanzaNode stanza = 3;  // the whole `<unlink>`
+}
+
+// A member suggested a group for the community (#146). The suggestion is
+// `stanza`'s `<sub_group_suggestion>` child: its jid, creator, subject,
+// description and participant count. Was `Empty` before; the field number of
+// the case is unchanged and an old reader skips the new field.
+message GroupSubGroupSuggestionCreated {
+  StanzaNode stanza = 1;  // the whole `<created_sub_group_suggestion>`
+}
+
+// A suggestion ended (#146). Each `<sub_group_suggestion>` child of `stanza`
+// names its group and a `reason` (`cancelled`, `approved`, ...). Was `Empty`
+// before, see GroupSubGroupSuggestionCreated.
+message GroupSubGroupSuggestionsRevoked {
+  StanzaNode stanza = 1;  // the whole `<revoked_sub_group_suggestions>`
 }
 
 message GroupLimitSharing {

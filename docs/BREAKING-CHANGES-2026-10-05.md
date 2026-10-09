@@ -3,7 +3,7 @@
 The `wamux.v1` package keeps its name and breaks in 0.2.0, as the CHANGELOG
 allows while the version is `0.x`. This document collects every Phase D change
 to the contract (#72 split into #120, #121 and #122, #73 into #126, #127 and
-#128, #74 into #132, #133, #134 and #135, then #138, #141 split into #148, #149, #150 and #151, then #96, #99 and #101); each issue adds its section here as it merges. Until the last one
+#128, #74 into #132, #133, #134 and #135, then #138, #141 split into #148, #149, #150 and #151, then #96, #99, #101 and #146); each issue adds its section here as it merges. Until the last one
 lands, the contract is mid-migration: build the edge against a released
 `0.2.0`, not against `main`.
 
@@ -869,3 +869,46 @@ Measured on 2026-10-09: setting a profile picture on one account sent
 receiving account itself, with no `picture_id`; why is not verified. Turning the default disappearing timer on (24 h) and off
 reached both accounts, with `duration` 86400 and then 0. Changing the about
 text sent no notification to the other account.
+
+### 3g. The raw element of group create, link, unlink and sub-group suggestions (#146)
+
+Additive. The library parses five group actions only in part and keeps the
+element it read. The core used to drop it, so what the typed fields did not
+name never reached the edge.
+
+| Message | Before | After |
+|---|---|---|
+| `GroupCreated` | `metadata = 1` | plus `StanzaNode stanza = 2` |
+| `GroupLinked` | `link_type = 1` | plus `StanzaNode stanza = 2` |
+| `GroupUnlinked` | `unlink_type = 1`, `unlink_reason = 2` | plus `StanzaNode stanza = 3` |
+| `GroupUpdate.action` `created_sub_group_suggestion = 60` | `Empty` | `GroupSubGroupSuggestionCreated { StanzaNode stanza = 1 }` |
+| `GroupUpdate.action` `revoked_sub_group_suggestions = 61` | `Empty` | `GroupSubGroupSuggestionsRevoked { StanzaNode stanza = 1 }` |
+
+Replacing `Empty` with a message at the same number is wire-compatible: an
+edge built before this change decodes the new field as unknown and skips it,
+and the case keeps firing. Section 3b lists the two cases as `Empty`; read it
+with this one.
+
+What the server sends, captured on 2026-10-09 (a throwaway community):
+
+- `link`: `link_type` is `sub_group` in the community's own notification and
+  `sibling_group` in the other subgroups'. The linked groups are
+  `<group jid subject s_t/>` children, one, or two when a community was just
+  created (its subgroup and the "Geral" chat).
+- `unlink`: `unlink_type` is `sub_group`, `sibling_group` or `parent_group`,
+  and `unlink_reason` was `unlink_group` or `deactivate_group`. The group is the
+  `<group/>` child.
+- `created_sub_group_suggestion`: a `<sub_group_suggestion jid creator creation
+  creator_pn>` child with `is_existing_group`, `participant_count`, `subject`
+  and `description` below it. `revoked_sub_group_suggestions`: the same element
+  with a `reason` (`cancelled`, `approved`), no children.
+- `create` (`GroupCreated.stanza`): a subgroup's `<linked_parent jid>`,
+  `<general_chat/>`, `<default_sub_group/>` and `<incognito/>`, a community's
+  `<parent .../>`. It is also all the edge gets when the library's group parser
+  rejects the `<group>` (`metadata` unset).
+- `content` keeps the library's shapes: a value that is a protocol token
+  (`true`, `1`) arrives as `text`, the rest as `bytes`. Read both.
+
+The core does not interpret any of it: which group was linked, why, and who
+suggested it is the edge's to read. Values other than the ones above (other
+`link_type` or `reason` tokens) may exist; none has been seen.
