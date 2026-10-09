@@ -51,6 +51,8 @@ MemoryDenyWriteExecute=true
 CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
+# The daemon now creates its store file 0600 on its own (#75); this umask is
+# defense in depth for everything else it writes.
 UMask=0077
 
 [Install]

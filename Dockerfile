@@ -53,4 +53,7 @@ COPY THIRD-PARTY-LICENSES.md LICENSE-MIT LICENSE-APACHE /usr/share/doc/wamux/
 
 USER wamux
 ENV WAMUX_SOCKET_PATH=/run/wamux/wamux.sock
-ENTRYPOINT ["/usr/local/bin/wamux"]
+# The store is a secret (#75): it holds every account's keys in plaintext. The
+# umask makes anything the daemon or its engine creates owner-only, and `exec`
+# keeps wamux as PID 1 so it still receives SIGTERM. Debian-slim ships sh.
+ENTRYPOINT ["/bin/sh", "-c", "umask 077 && exec /usr/local/bin/wamux"]
