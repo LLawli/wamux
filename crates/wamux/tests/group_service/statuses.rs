@@ -1,12 +1,13 @@
 //! Status codes: the account resolution every RPC shares, the server's own
-//! refusal, and each InvalidArgument branch the core has today. The last two
-//! tests pin behavior #96 questions, so a change there shows up here.
+//! refusal, and each refusal the core makes itself (#96 moved four of them
+//! here: a jid that is not a group, an unusable invite code, a LID with no
+//! phone number, and the description conflict's code).
 
 use tonic::Code;
 use wacore_binary::builder::NodeBuilder;
 use wamux::proto::v1 as pb;
 
-use crate::captured::{GROUP, GROUP_ID, REQUESTER_PN};
+use crate::captured::{GROUP, GROUP_ID, REQUESTER_LID, REQUESTER_PN};
 use crate::common;
 use crate::common::mock_wire::{account_ref, iqs_in, sent_iq};
 use crate::harness::{Fixture, G2, PICTURE, call_every_rpc, fixture, jid, jids};
@@ -329,39 +330,44 @@ async fn set_group_description_rejects_more_than_2048_chars() {
     f.cleanup().await;
 }
 
-/// #96: an empty invite code is refused by the library, not the core, and the
-/// edge gets Unavailable ("core down") for a malformed request. Pinned as is.
+/// #96: an invite code the library cannot read is the caller's mistake, not a
+/// core that is down. The library's own message relays; no IQ leaves.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_empty_invite_code_answers_unavailable_today() {
-    let mut f = fixture("an_empty_invite_code_answers_unavailable_today").await;
-    let a = Some(f.account.clone());
-    let join = f
-        .groups
-        .join_with_invite(pb::JoinWithInviteRequest {
-            account: a.clone(),
-            code: String::new(),
-        })
-        .await
-        .unwrap_err();
-    let preview = f
-        .groups
-        .preview_invite(pb::PreviewInviteRequest {
-            account: a,
-            code: String::new(),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(join.code(), Code::Unavailable);
-    assert_eq!(preview.code(), Code::Unavailable);
+async fn an_empty_or_unrecognised_invite_code_answers_invalid_argument() {
+    let mut f = fixture("an_empty_or_unrecognised_invite_code_answers_invalid_argument").await;
+    let before = iqs_in(&f.mock, G2);
+    for code in ["", "   ", "https://example.com/not-an-invite"] {
+        let a = Some(f.account.clone());
+        let join = f
+            .groups
+            .join_with_invite(pb::JoinWithInviteRequest {
+                account: a.clone(),
+                code: code.to_string(),
+            })
+            .await
+            .unwrap_err();
+        let preview = f
+            .groups
+            .preview_invite(pb::PreviewInviteRequest {
+                account: a,
+                code: code.to_string(),
+            })
+            .await
+            .unwrap_err();
+        for status in [join, preview] {
+            assert_eq!(status.code(), Code::InvalidArgument, "code {code:?}");
+            assert_eq!(status.message(), "invalid or empty invite code", "{code:?}");
+        }
+    }
+    assert_eq!(iqs_in(&f.mock, G2), before, "nothing reached the wire");
     f.cleanup().await;
 }
 
-/// #96: a 409 on the description set is rewritten by the library into an
-/// error without a code, so it is the one refusal that is not relayed as
-/// itself. Pinned as is.
+/// #96: the library rewrites a 409 on the description set into an error
+/// without a code; the core hands the code back like every other refusal.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_description_conflict_answers_unavailable_today() {
-    let mut f = fixture("a_description_conflict_answers_unavailable_today").await;
+async fn a_description_conflict_relays_wa_code_409() {
+    let mut f = fixture("a_description_conflict_relays_wa_code_409").await;
     f.mock.answer_iq(
         G2,
         "get",
@@ -376,7 +382,55 @@ async fn a_description_conflict_answers_unavailable_today() {
         text: "x".into(),
     };
     let status = f.groups.set_group_description(request).await.unwrap_err();
+    // 409 has no gRPC mapping of its own: Unavailable, as any unmapped code.
     assert_eq!(status.code(), Code::Unavailable);
-    assert!(status.metadata().get("wa-code").is_none());
+    let code = status
+        .metadata()
+        .get("wa-code")
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(code, Some("409"));
+    f.cleanup().await;
+}
+
+/// #96: a jid on another server is not a group. Every RPC that names one refuses
+/// it by name, before the account is touched, so no `w:g2` IQ goes out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_group_rpc_refuses_a_jid_that_is_not_a_group() {
+    let mut f = fixture("every_group_rpc_refuses_a_jid_that_is_not_a_group").await;
+    let before = iqs_in(&f.mock, G2);
+    let channel = "120363999999999999@newsletter";
+    for other in [REQUESTER_PN, REQUESTER_LID, channel] {
+        let checked = group_scoped_statuses(&mut f, other).await;
+        assert_eq!(checked.len(), 17, "every RPC that names a group");
+        let want = format!("'{other}' is not a group: expected a jid ending in @g.us");
+        for (rpc, status) in checked {
+            assert_eq!(status.code(), Code::InvalidArgument, "{rpc} with {other}");
+            assert_eq!(status.message(), want, "{rpc} with {other}");
+        }
+    }
+    assert_eq!(iqs_in(&f.mock, G2), before, "nothing reached the wire");
+    f.cleanup().await;
+}
+
+/// #96: a LID participant the store holds no phone number for is a request the
+/// core cannot serve yet, not a core that is down. The edge can send the phone
+/// jid instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lid_participant_without_a_phone_mapping_answers_failed_precondition() {
+    let mut f =
+        fixture("a_lid_participant_without_a_phone_mapping_answers_failed_precondition").await;
+    let before = iqs_in(&f.mock, G2);
+    let request = pb::CreateGroupRequest {
+        account: Some(f.account.clone()),
+        subject: "s".into(),
+        participants: jids(&[REQUESTER_LID]),
+    };
+    let status = f.groups.create_group(request).await.unwrap_err();
+    assert_eq!(status.code(), Code::FailedPrecondition, "{status:?}");
+    assert_eq!(
+        status.message(),
+        format!("missing phone number mapping for LID {REQUESTER_LID}")
+    );
+    assert_eq!(iqs_in(&f.mock, G2), before, "nothing reached the wire");
     f.cleanup().await;
 }

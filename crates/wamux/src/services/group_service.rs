@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
-use wamux_types::Jid;
+use wamux_types::{GroupJid, Jid};
 
 use super::client_of;
 use crate::domain::groups;
@@ -47,7 +47,7 @@ impl GroupService for GroupSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let results = groups::add_participants(
             &client,
-            &Jid::from_required_wire(req.group)?,
+            &GroupJid::from_required_wire(req.group)?,
             &Jid::from_required_wire_list(req.participants)?,
         )
         .await?;
@@ -62,7 +62,7 @@ impl GroupService for GroupSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let results = groups::remove_participants(
             &client,
-            &Jid::from_required_wire(req.group)?,
+            &GroupJid::from_required_wire(req.group)?,
             &Jid::from_required_wire_list(req.participants)?,
         )
         .await?;
@@ -77,7 +77,7 @@ impl GroupService for GroupSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let results = groups::promote(
             &client,
-            &Jid::from_required_wire(req.group)?,
+            &GroupJid::from_required_wire(req.group)?,
             &Jid::from_required_wire_list(req.participants)?,
         )
         .await?;
@@ -92,7 +92,7 @@ impl GroupService for GroupSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let results = groups::demote(
             &client,
-            &Jid::from_required_wire(req.group)?,
+            &GroupJid::from_required_wire(req.group)?,
             &Jid::from_required_wire_list(req.participants)?,
         )
         .await?;
@@ -105,7 +105,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_subject(&client, &Jid::from_required_wire(req.group)?, &req.text).await?;
+        groups::set_subject(
+            &client,
+            &GroupJid::from_required_wire(req.group)?,
+            &req.text,
+        )
+        .await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -115,7 +120,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_description(&client, &Jid::from_required_wire(req.group)?, &req.text).await?;
+        groups::set_description(
+            &client,
+            &GroupJid::from_required_wire(req.group)?,
+            &req.text,
+        )
+        .await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -126,7 +136,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::get_metadata(&client, &Jid::from_required_wire(req.group)?).await?,
+            groups::get_metadata(&client, &GroupJid::from_required_wire(req.group)?).await?,
         ))
     }
 
@@ -137,7 +147,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::invite_link(&client, &Jid::from_required_wire(req.group)?, false).await?,
+            groups::invite_link(&client, &GroupJid::from_required_wire(req.group)?, false).await?,
         ))
     }
 
@@ -148,7 +158,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::invite_link(&client, &Jid::from_required_wire(req.group)?, true).await?,
+            groups::invite_link(&client, &GroupJid::from_required_wire(req.group)?, true).await?,
         ))
     }
 
@@ -179,7 +189,7 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::leave(&client, &Jid::from_required_wire(req.group)?).await?;
+        groups::leave(&client, &GroupJid::from_required_wire(req.group)?).await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -189,7 +199,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_announce(&client, &Jid::from_required_wire(req.group)?, req.enabled).await?;
+        groups::set_announce(
+            &client,
+            &GroupJid::from_required_wire(req.group)?,
+            req.enabled,
+        )
+        .await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -199,7 +214,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_locked(&client, &Jid::from_required_wire(req.group)?, req.enabled).await?;
+        groups::set_locked(
+            &client,
+            &GroupJid::from_required_wire(req.group)?,
+            req.enabled,
+        )
+        .await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -211,7 +231,7 @@ impl GroupService for GroupSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         groups::set_ephemeral(
             &client,
-            &Jid::from_required_wire(req.group)?,
+            &GroupJid::from_required_wire(req.group)?,
             req.expiration_seconds,
         )
         .await?;
@@ -235,7 +255,12 @@ impl GroupService for GroupSvc {
     ) -> Result<Response<pb::Empty>, Status> {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
-        groups::set_photo(&client, &Jid::from_required_wire(req.group)?, req.image).await?;
+        groups::set_photo(
+            &client,
+            &GroupJid::from_required_wire(req.group)?,
+            req.image,
+        )
+        .await?;
         Ok(Response::new(pb::Empty {}))
     }
 
@@ -246,7 +271,7 @@ impl GroupService for GroupSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         Ok(Response::new(
-            groups::membership_requests(&client, &Jid::from_required_wire(req.group)?).await?,
+            groups::membership_requests(&client, &GroupJid::from_required_wire(req.group)?).await?,
         ))
     }
 
@@ -258,7 +283,7 @@ impl GroupService for GroupSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let results = groups::approve_membership(
             &client,
-            &Jid::from_required_wire(req.group)?,
+            &GroupJid::from_required_wire(req.group)?,
             &Jid::from_required_wire_list(req.participants)?,
         )
         .await?;
@@ -273,7 +298,7 @@ impl GroupService for GroupSvc {
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let results = groups::reject_membership(
             &client,
-            &Jid::from_required_wire(req.group)?,
+            &GroupJid::from_required_wire(req.group)?,
             &Jid::from_required_wire_list(req.participants)?,
         )
         .await?;

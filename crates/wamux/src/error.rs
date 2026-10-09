@@ -17,11 +17,13 @@ pub(crate) fn client_err(err: impl Into<anyhow::Error>) -> WamuxError {
     }
 }
 
-/// The lib surfaces server rejections as four types depending on the path:
+/// The lib surfaces server rejections as five types depending on the path:
 /// `ServerErrorCode` (its own cross-crate wrapper), the high-level `IqError`,
-/// wacore's `IqError`, or a MEX query's `ExtensionError`. Probe all four.
+/// wacore's `IqError`, a MEX query's `ExtensionError`, or `GroupError::
+/// DescriptionConflict`. Probe all five.
 fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
     use wacore::request::{IqError as WacoreIq, ServerErrorCode};
+    use whatsapp_rust::features::GroupError;
     use whatsapp_rust::request::IqError as ClientIq;
     if let Some(e) = cause.downcast_ref::<ServerErrorCode>() {
         return Some((e.code, e.text.clone()));
@@ -35,6 +37,11 @@ fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16
     }
     if let Some(WacoreIq::ServerError { code, text, .. }) = cause.downcast_ref::<WacoreIq>() {
         return Some((*code, text.clone()));
+    }
+    // #96: the lib rewrites a 409 on the description update into this unit
+    // variant, which loses the code. Put it back so the edge sees a 409.
+    if let Some(err @ GroupError::DescriptionConflict) = cause.downcast_ref::<GroupError>() {
+        return Some((409, err.to_string()));
     }
     mex_server_rejection(cause)
 }
@@ -200,3 +207,7 @@ mod tests {
         assert_eq!(status.message(), "whatsapp operation failed");
     }
 }
+
+#[cfg(test)]
+#[path = "error_group_tests.rs"]
+mod group_tests;

@@ -112,3 +112,14 @@ fn not_found_relays_its_message_verbatim() {
         "newsletter 120363144038483540@newsletter not found",
     );
 }
+
+/// #96: a request the core cannot serve in its current state is a failed
+/// precondition with the message as written, not an opaque Unavailable.
+#[test]
+fn failed_precondition_maps_to_that_status() {
+    assert_status(
+        WamuxError::FailedPrecondition("missing phone number mapping for LID 1@lid".into()),
+        Code::FailedPrecondition,
+        "missing phone number mapping for LID 1@lid",
+    );
+}

@@ -22,6 +22,19 @@ message GroupJidResponse {
   reserved 2;  // #132: was `bytes metadata` (JSON)
   // Set by CreateGroup; unset by JoinWithInvite, whose answer carries no metadata.
   GroupMetadata metadata = 4;
+  // Set by JoinWithInvite only (#96); CreateGroup leaves it UNSPECIFIED. `group`
+  // is the same in both outcomes, so this is the only way to tell a join from
+  // a request that waits for an admin.
+  JoinOutcome join_outcome = 5;
+}
+
+// What the library reported for an accepted invite (`JoinGroupResult`): a closed
+// set of two, so no raw fallback.
+enum JoinOutcome {
+  JOIN_OUTCOME_UNSPECIFIED = 0;
+  JOIN_OUTCOME_JOINED = 1;
+  // The group requires admin approval: the account is not a member yet.
+  JOIN_OUTCOME_PENDING_APPROVAL = 2;
 }
 
 message ParticipantsRequest {
