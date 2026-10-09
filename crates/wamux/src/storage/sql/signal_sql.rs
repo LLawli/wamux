@@ -15,6 +15,7 @@ use wacore::store::error::Result;
 use super::SqlPool;
 use super::SqlTx;
 use crate::storage::batch_chunks::padded_chunks;
+use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::statements::signal::{
     DELETE_IDENTITY, DELETE_PREKEY, DELETE_SENDER_KEY, DELETE_SESSION, PUT_IDENTITY,
     PUT_SENDER_KEY, PUT_SESSION, SELECT_PREKEYS, SELECT_SESSIONS, STORE_PREKEY,
@@ -22,6 +23,7 @@ use crate::storage::statements::signal::{
 
 pub(super) async fn put_identities(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     identities: &[(Arc<str>, [u8; 32])],
 ) -> Result<()> {
@@ -30,7 +32,8 @@ pub(super) async fn put_identities(
     }
     let mut tx = SqlTx::begin(pool).await?;
     for (address, key) in identities {
-        execute_sql!(in tx, PUT_IDENTITY, &**address, &key[..], device_id)?;
+        let sealed = cipher.seal_at(device_id, "identities", "key", address.as_bytes(), key)?;
+        execute_sql!(in tx, PUT_IDENTITY, &**address, &sealed[..], device_id)?;
     }
     tx.commit().await
 }
@@ -45,10 +48,12 @@ pub(super) async fn delete_identities(
 
 pub(super) async fn put_sessions(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     sessions: &[(Arc<str>, Bytes)],
 ) -> Result<()> {
-    put_address_records(pool, PUT_SESSION, device_id, sessions).await
+    let target = SealedColumn::new(PUT_SESSION, "sessions", "record");
+    put_address_records(pool, cipher, target, device_id, sessions).await
 }
 
 pub(super) async fn delete_sessions(
@@ -61,10 +66,12 @@ pub(super) async fn delete_sessions(
 
 pub(super) async fn put_sender_keys(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     sender_keys: &[(Arc<str>, Bytes)],
 ) -> Result<()> {
-    put_address_records(pool, PUT_SENDER_KEY, device_id, sender_keys).await
+    let target = SealedColumn::new(PUT_SENDER_KEY, "sender_keys", "record");
+    put_address_records(pool, cipher, target, device_id, sender_keys).await
 }
 
 pub(super) async fn delete_sender_keys(
@@ -77,6 +84,7 @@ pub(super) async fn delete_sender_keys(
 
 pub(super) async fn store_prekeys(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     keys: &[(u32, Bytes)],
     uploaded: bool,
@@ -86,7 +94,8 @@ pub(super) async fn store_prekeys(
     }
     let mut tx = SqlTx::begin(pool).await?;
     for (id, record) in keys {
-        execute_sql!(in tx, STORE_PREKEY, *id as i32, &record[..], uploaded, device_id)?;
+        let sealed = cipher.seal_at(device_id, "prekeys", "key", &id.to_be_bytes(), record)?;
+        execute_sql!(in tx, STORE_PREKEY, *id as i32, &sealed[..], uploaded, device_id)?;
     }
     tx.commit().await
 }
@@ -104,10 +113,25 @@ pub(super) async fn remove_prekeys(pool: &SqlPool, device_id: i32, ids: &[u32]) 
     tx.commit().await
 }
 
+/// The statement and the sealed column of an `(address, bytes)` upsert.
+#[derive(Clone, Copy)]
+struct SealedColumn {
+    sql: &'static str,
+    table: &'static str,
+    column: &'static str,
+}
+
+impl SealedColumn {
+    fn new(sql: &'static str, table: &'static str, column: &'static str) -> Self {
+        Self { sql, table, column }
+    }
+}
+
 /// Sessions and sender keys share a shape: `(address, bytes)` upserted by address.
 async fn put_address_records(
     pool: &SqlPool,
-    sql: &str,
+    cipher: &BlobCipher,
+    target: SealedColumn,
     device_id: i32,
     records: &[(Arc<str>, Bytes)],
 ) -> Result<()> {
@@ -116,7 +140,9 @@ async fn put_address_records(
     }
     let mut tx = SqlTx::begin(pool).await?;
     for (address, record) in records {
-        execute_sql!(in tx, sql, &**address, &record[..], device_id)?;
+        let row = address.as_bytes();
+        let sealed = cipher.seal_at(device_id, target.table, target.column, row, record)?;
+        execute_sql!(in tx, target.sql, &**address, &sealed[..], device_id)?;
     }
     tx.commit().await
 }
@@ -140,6 +166,7 @@ async fn delete_by_address(
 /// Only the addresses that exist, in no particular order.
 pub(super) async fn get_sessions(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     addresses: &[Arc<str>],
 ) -> Result<Vec<(Arc<str>, Bytes)>> {
@@ -152,10 +179,11 @@ pub(super) async fn get_sessions(
             [device_id],
             chunk.iter().map(|address| &**address)
         )?;
-        found.extend(
-            rows.into_iter()
-                .map(|(a, r)| (Arc::from(a), Bytes::from(r))),
-        );
+        for (address, stored) in rows {
+            let record =
+                cipher.open_at(device_id, "sessions", "record", address.as_bytes(), &stored)?;
+            found.push((Arc::from(address), Bytes::from(record)));
+        }
     }
     Ok(found)
 }
@@ -163,6 +191,7 @@ pub(super) async fn get_sessions(
 /// Only the ids that exist, in no particular order.
 pub(super) async fn load_prekeys(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     ids: &[u32],
 ) -> Result<Vec<(u32, Bytes)>> {
@@ -175,7 +204,10 @@ pub(super) async fn load_prekeys(
             [device_id],
             chunk.iter().map(|id| *id as i32)
         )?;
-        found.extend(rows.into_iter().map(|(id, k)| (id as u32, Bytes::from(k))));
+        for (id, stored) in rows {
+            let record = cipher.open_at(device_id, "prekeys", "key", &id.to_be_bytes(), &stored)?;
+            found.push((id as u32, Bytes::from(record)));
+        }
     }
     Ok(found)
 }

@@ -13,6 +13,7 @@ use wacore::store::traits::{AppStateSyncKey, AppSyncStore};
 use super::exec::binds;
 use super::row_values::first_blob;
 use super::{TursoBackend, TursoTx, app_sync_sql};
+use crate::storage::blob_cipher::joined_row;
 use crate::storage::blob_codec::{
     decode_app_state_sync_key, decode_hash_state, encode_app_state_sync_key, encode_hash_state,
 };
@@ -30,12 +31,16 @@ impl AppSyncStore for TursoBackend {
             .await?;
         match first_blob(row)? {
             None => Ok(None),
-            Some(bytes) => Ok(Some(decode_app_state_sync_key(&bytes)?)),
+            Some(stored) => {
+                let bytes = self.open_at("app_state_keys", "key_data", key_id, &stored)?;
+                Ok(Some(decode_app_state_sync_key(&bytes)?))
+            }
         }
     }
 
     async fn set_sync_key(&self, key_id: &[u8], key: AppStateSyncKey) -> Result<()> {
         let data = encode_app_state_sync_key(&key);
+        let data = self.seal_at("app_state_keys", "key_data", key_id, &data)?;
         let binds = binds![key_id, data, self.device_id];
         self.conn.execute(SET_SYNC_KEY, binds).await?;
         Ok(())
@@ -53,7 +58,11 @@ impl AppSyncStore for TursoBackend {
             .await?;
         match first_blob(row)? {
             None => Ok(None),
-            Some(bytes) => Ok(Some(decode_hash_state(&bytes)?)),
+            Some(stored) => {
+                let name = name.as_bytes();
+                let bytes = self.open_at("app_state_versions", "state_data", name, &stored)?;
+                Ok(Some(decode_hash_state(&bytes)?))
+            }
         }
     }
 
@@ -68,6 +77,7 @@ impl AppSyncStore for TursoBackend {
 
     async fn set_version(&self, name: &str, state: HashState) -> Result<()> {
         let data = encode_hash_state(&state);
+        let data = self.seal_at("app_state_versions", "state_data", name.as_bytes(), &data)?;
         let binds = binds![name, data, self.device_id];
         self.conn.execute(SET_VERSION, binds).await?;
         Ok(())
@@ -80,13 +90,18 @@ impl AppSyncStore for TursoBackend {
         mutations: &[AppStateMutationMAC],
     ) -> Result<()> {
         let tx = TursoTx::begin(&self.conn).await?;
-        app_sync_sql::put_macs_in(&tx, self.device_id, name, version, mutations).await?;
+        app_sync_sql::put_macs_in(&tx, &self.cipher, self.device_id, name, version, mutations)
+            .await?;
         tx.commit().await
     }
 
     async fn get_mutation_mac(&self, name: &str, index_mac: &[u8]) -> Result<Option<Vec<u8>>> {
         let binds = binds![name, index_mac, self.device_id];
-        first_blob(self.conn.fetch_optional(GET_MUTATION_MAC, binds).await?)
+        let row = self.conn.fetch_optional(GET_MUTATION_MAC, binds).await?;
+        let row_key = joined_row(&[name.as_bytes(), index_mac]);
+        first_blob(row)?
+            .map(|stored| self.open_at("app_state_mutation_macs", "value_mac", &row_key, &stored))
+            .transpose()
     }
 
     async fn delete_mutation_macs(&self, name: &str, index_macs: &[Vec<u8>]) -> Result<()> {
@@ -116,7 +131,8 @@ impl AppSyncStore for TursoBackend {
         name: &str,
         index_macs: &[[u8; 32]],
     ) -> Result<HashMap<[u8; 32], Vec<u8>>> {
-        app_sync_sql::get_mutation_macs(&self.conn, self.device_id, name, index_macs).await
+        app_sync_sql::get_mutation_macs(&self.conn, &self.cipher, self.device_id, name, index_macs)
+            .await
     }
 
     async fn commit_patch(
@@ -127,7 +143,8 @@ impl AppSyncStore for TursoBackend {
         added: &[AppStateMutationMAC],
     ) -> Result<()> {
         let device_id = self.device_id;
-        let conn = &self.conn;
-        app_sync_sql::commit_patch(conn, device_id, name, state, removed_index_macs, added).await
+        let (conn, cipher) = (&self.conn, &self.cipher);
+        let removed = removed_index_macs;
+        app_sync_sql::commit_patch(conn, cipher, device_id, name, state, removed, added).await
     }
 }

@@ -7,6 +7,7 @@ use wacore::store::error::Result;
 
 use super::TursoConn;
 use super::exec::binds;
+use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::blob_codec::now_secs;
 use crate::storage::statements::tc_token::{STORE_RECEIVED, TOUCH_SENDER_TIMESTAMP};
 
@@ -29,12 +30,14 @@ pub(super) async fn touch_sender_timestamp(
 /// existing row.
 pub(super) async fn store_received(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     jid: &str,
     token: &[u8],
     token_timestamp: i64,
 ) -> Result<()> {
-    let binds = binds![jid, token, token_timestamp, device_id, now_secs()];
+    let sealed = cipher.seal_at(device_id, "tc_tokens", "token", jid.as_bytes(), token)?;
+    let binds = binds![jid, sealed, token_timestamp, device_id, now_secs()];
     conn.execute(STORE_RECEIVED, binds).await?;
     Ok(())
 }

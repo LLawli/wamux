@@ -13,7 +13,7 @@ use crate::storage::statements::device::{CREATE_DEVICE, DEVICE_EXISTS, LOAD_DEVI
 #[async_trait]
 impl DeviceStore for SqlBackend {
     async fn save(&self, device: &Device) -> Result<()> {
-        let data = encode_device(device);
+        let data = self.seal_at("device", "data", b"", &encode_device(device))?;
         execute_sql!(&self.pool, SAVE_DEVICE, self.device_id, &data)?;
         Ok(())
     }
@@ -24,7 +24,9 @@ impl DeviceStore for SqlBackend {
             None => Ok(None),
             // decode_device restores the runtime-only fields (device_props
             // included), so what comes back is ready to use.
-            Some(bytes) => Ok(Some(decode_device(&bytes)?)),
+            Some(bytes) => Ok(Some(decode_device(
+                &self.open_at("device", "data", b"", &bytes)?,
+            )?)),
         }
     }
 
@@ -33,7 +35,7 @@ impl DeviceStore for SqlBackend {
     }
 
     async fn create(&self) -> Result<i32> {
-        let data = encode_device(&Device::new());
+        let data = self.seal_at("device", "data", b"", &encode_device(&Device::new()))?;
         execute_sql!(&self.pool, CREATE_DEVICE, self.device_id, &data)?;
         Ok(self.device_id)
     }

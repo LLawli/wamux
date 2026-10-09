@@ -32,6 +32,7 @@ mod protocol_store;
 mod row_values;
 mod signal_sql;
 mod signal_store;
+mod store_encryption_sql;
 mod tc_token_sql;
 mod transaction;
 mod turso_error;
@@ -48,8 +49,10 @@ use uuid::Uuid;
 use wacore::store::error::{Result as StoreResult, StoreError};
 use wacore::store::traits::Backend;
 
+use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::engine::{AccountRow, StorageEngine};
 use crate::storage::statements::PING;
+use crate::storage::store_key::StoreKey;
 
 pub use connection::TursoConn;
 pub(crate) use dsn::turso_path;
@@ -62,13 +65,19 @@ pub(crate) use transaction::TursoTx;
 #[derive(Clone)]
 pub struct TursoStore {
     conn: TursoConn,
+    cipher: BlobCipher,
 }
 
 impl TursoStore {
     /// Open (creating if absent) the file a `turso://<path>` DSN names and
     /// apply pending migrations.
     pub async fn open(database_url: &str) -> StoreResult<Self> {
-        Self::open_path(Path::new(turso_path(database_url)?)).await
+        Self::open_keyed(database_url, None).await
+    }
+
+    /// `open` with the store key (#164).
+    pub async fn open_keyed(database_url: &str, key: Option<&StoreKey>) -> StoreResult<Self> {
+        Self::open_path_keyed(Path::new(turso_path(database_url)?), key).await
     }
 
     /// Open (creating if absent) the file at `path` and apply pending
@@ -77,6 +86,12 @@ impl TursoStore {
     /// conversion every engine runs. A failure anywhere drops the connection
     /// before returning, which frees the file.
     pub async fn open_path(path: &Path) -> StoreResult<Self> {
+        Self::open_path_keyed(path, None).await
+    }
+
+    /// `open_path` with the store key (#164): once migrated, the store's
+    /// encryption state is settled against the key before any backend exists.
+    async fn open_path_keyed(path: &Path, key: Option<&StoreKey>) -> StoreResult<Self> {
         crate::storage::file_mode::secure_store_file(path)?;
         let conn = TursoConn::open(path).await?;
         migrations::apply_pending(&conn)
@@ -85,7 +100,8 @@ impl TursoStore {
         bincode_upgrade::upgrade_bincode_blobs(&conn)
             .await
             .map_err(|e| StoreError::Migration(Box::new(e)))?;
-        Ok(Self { conn })
+        let cipher = store_encryption_sql::open_cipher(&conn, key).await?;
+        Ok(Self { conn, cipher })
     }
 
     /// Close the connection and release the file, its lock included, before
@@ -122,6 +138,7 @@ impl StorageEngine for TursoStore {
         Arc::new(TursoBackend {
             conn: self.conn.clone(),
             device_id,
+            cipher: self.cipher.clone(),
         })
     }
 
@@ -137,4 +154,31 @@ impl StorageEngine for TursoStore {
 pub struct TursoBackend {
     pub(crate) conn: TursoConn,
     pub(crate) device_id: i32,
+    pub(crate) cipher: BlobCipher,
+}
+
+impl TursoBackend {
+    /// Seal one value of this account's sealed column (#164).
+    pub(crate) fn seal_at(
+        &self,
+        table: &'static str,
+        column: &'static str,
+        row: &[u8],
+        plain: &[u8],
+    ) -> StoreResult<Vec<u8>> {
+        self.cipher
+            .seal_at(self.device_id, table, column, row, plain)
+    }
+
+    /// Open one value read from this account's sealed column (#164).
+    pub(crate) fn open_at(
+        &self,
+        table: &'static str,
+        column: &'static str,
+        row: &[u8],
+        stored: &[u8],
+    ) -> StoreResult<Vec<u8>> {
+        self.cipher
+            .open_at(self.device_id, table, column, row, stored)
+    }
 }

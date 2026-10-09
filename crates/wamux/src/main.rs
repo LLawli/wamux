@@ -2,6 +2,7 @@
 //! account registry, load existing accounts (connect is edge-driven), bind the
 //! socket, serve.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -10,17 +11,43 @@ use tracing_subscriber::EnvFilter;
 
 use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
+use wamux::storage::{StoreKey, store_key::key_id_hex};
 use wamux::{server, storage, transport};
+
+/// The store key named by `store_key_file`, if any. Logs the key id (a hash
+/// prefix, not the key) so an operator can tell which key is in use.
+fn load_store_key(config: &Config) -> anyhow::Result<Option<StoreKey>> {
+    let Some(path) = &config.store_key_file else {
+        return Ok(None);
+    };
+    let key = StoreKey::from_file(Path::new(path))
+        .with_context(|| format!("loading the store key from {path}"))?;
+    tracing::info!(key_id = %key_id_hex(&key.id()), "store key loaded");
+    Ok(Some(key))
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::load().context("loading config")?;
     init_tracing(&config);
 
+    // The key file is read before the store opens, and a bad one stops startup
+    // here with a message that names the file, never the key (#164).
+    let store_key = load_store_key(&config)?;
+
     // The DSN scheme picks the engine (postgres:// or sqlite://).
-    let engine = storage::open_engine(&config.database_url, config.db_max_connections)
-        .await
-        .context("opening storage")?;
+    let engine = storage::open_engine_keyed(
+        &config.database_url,
+        config.db_max_connections,
+        store_key.as_ref(),
+    )
+    .await
+    .context("opening storage")?;
+    // After the open: the store's verifier has accepted the key by now, so this
+    // line is true (a wrong key stops at the open above).
+    if let Some(key) = &store_key {
+        tracing::info!(key_id = %key_id_hex(&key.id()), "store encryption on");
+    }
 
     let tuning = RegistryTuning {
         ring_capacity: config.event_ring_capacity,

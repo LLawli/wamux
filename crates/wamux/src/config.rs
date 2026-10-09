@@ -21,6 +21,12 @@ pub struct Config {
     /// a single connection to serialize writes (see `storage::sql::connect_sqlite`),
     /// and by the Turso engine, which has one connection behind a mutex.
     pub db_max_connections: u32,
+    /// Path of the file holding the store key (64 hex characters, mode 0600),
+    /// which turns on encryption at rest for the key material in the store
+    /// (#164). The PATH may come from the TOML or `WAMUX_STORE_KEY_FILE`; the key
+    /// itself never does (an environment variable leaks through
+    /// `/proc/<pid>/environ` and `docker inspect`). Unset: a plaintext store.
+    pub store_key_file: Option<String>,
     /// Per-account in-memory replay ring capacity.
     pub event_ring_capacity: usize,
     /// Per-account live broadcast channel capacity (slow subscribers lag past it
@@ -59,6 +65,7 @@ impl Default for Config {
             socket_group: None,
             database_url: "postgres://wamux:wamux@localhost:5432/wamux".to_string(),
             db_max_connections: 16,
+            store_key_file: None,
             event_ring_capacity: 256,
             broadcast_capacity: 1024,
             replay_max_event_bytes: 0,
@@ -87,3 +94,7 @@ impl Config {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;

@@ -7,6 +7,7 @@ use wacore::store::traits::{DeviceListRecord, LidPnMappingEntry, ProtocolStore, 
 
 use super::protocol_batch_sql;
 use super::{SqlBackend, SqlTx, tc_token_sql};
+use crate::storage::blob_cipher::joined_row;
 use crate::storage::blob_codec::now_secs;
 use crate::storage::protocol_rows::{self, DeviceListRow, LidMappingRow};
 use crate::storage::statements::protocol::{
@@ -17,6 +18,21 @@ use crate::storage::statements::protocol::{
     GET_SENDER_KEY_DEVICES, GET_SENT_MESSAGE, GET_TC_TOKEN, PUT_LID_MAPPING, PUT_TC_TOKEN,
     SAVE_BASE_KEY, SET_SENDER_KEY_STATUS, STORE_SENT_MESSAGE, UPDATE_DEVICE_LIST,
 };
+
+impl SqlBackend {
+    /// Open a `sent_messages.payload` read for `(chat_jid, message_id)`.
+    fn open_sent(
+        &self,
+        chat_jid: &str,
+        message_id: &str,
+        stored: Option<Vec<u8>>,
+    ) -> Result<Option<Vec<u8>>> {
+        let row = joined_row(&[chat_jid.as_bytes(), message_id.as_bytes()]);
+        stored
+            .map(|stored| self.open_at("sent_messages", "payload", &row, &stored))
+            .transpose()
+    }
+}
 
 #[async_trait]
 impl ProtocolStore for SqlBackend {
@@ -129,12 +145,14 @@ impl ProtocolStore for SqlBackend {
     // --- Base key collision detection ---
 
     async fn save_base_key(&self, address: &str, message_id: &str, base_key: &[u8]) -> Result<()> {
+        let row = joined_row(&[address.as_bytes(), message_id.as_bytes()]);
+        let sealed = self.seal_at("base_keys", "base_key", &row, base_key)?;
         execute_sql!(
             &self.pool,
             SAVE_BASE_KEY,
             address,
             message_id,
-            base_key,
+            &sealed[..],
             self.device_id,
             now_secs()
         )?;
@@ -155,7 +173,13 @@ impl ProtocolStore for SqlBackend {
             message_id,
             self.device_id
         )?;
-        Ok(row.as_deref() == Some(current_base_key))
+        // Open before comparing: the stored bytes are sealed, so a byte compare
+        // against the plain key would never match.
+        let row_key = joined_row(&[address.as_bytes(), message_id.as_bytes()]);
+        let stored = row
+            .map(|stored| self.open_at("base_keys", "base_key", &row_key, &stored))
+            .transpose()?;
+        Ok(stored.as_deref() == Some(current_base_key))
     }
 
     async fn delete_base_key(&self, address: &str, message_id: &str) -> Result<()> {
@@ -209,21 +233,24 @@ impl ProtocolStore for SqlBackend {
             jid,
             self.device_id
         )?;
-        Ok(
-            row.map(|(token, token_timestamp, sender_timestamp)| TcTokenEntry {
+        row.map(|(stored, token_timestamp, sender_timestamp)| {
+            let token = self.open_at("tc_tokens", "token", jid.as_bytes(), &stored)?;
+            Ok(TcTokenEntry {
                 token,
                 token_timestamp,
                 sender_timestamp,
-            }),
-        )
+            })
+        })
+        .transpose()
     }
 
     async fn put_tc_token(&self, jid: &str, entry: &TcTokenEntry) -> Result<()> {
+        let sealed = self.seal_at("tc_tokens", "token", jid.as_bytes(), &entry.token)?;
         execute_sql!(
             &self.pool,
             PUT_TC_TOKEN,
             jid,
-            entry.token.as_slice(),
+            &sealed[..],
             entry.token_timestamp,
             entry.sender_timestamp,
             self.device_id,
@@ -267,12 +294,14 @@ impl ProtocolStore for SqlBackend {
         payload: &[u8],
     ) -> Result<()> {
         // REPLACE semantics in the reference reset created_at; mirror that.
+        let row = joined_row(&[chat_jid.as_bytes(), message_id.as_bytes()]);
+        let sealed = self.seal_at("sent_messages", "payload", &row, payload)?;
         execute_sql!(
             &self.pool,
             STORE_SENT_MESSAGE,
             chat_jid,
             message_id,
-            payload,
+            &sealed[..],
             self.device_id,
             now_secs()
         )?;
@@ -298,6 +327,8 @@ impl ProtocolStore for SqlBackend {
                 self.device_id
             )?;
         }
+        // Open before committing: a blob that will not open must not be consumed.
+        let payload = self.open_sent(chat_jid, message_id, payload)?;
         tx.commit().await?;
         Ok(payload)
     }
@@ -316,14 +347,15 @@ impl ProtocolStore for SqlBackend {
 
     async fn get_sent_message(&self, chat_jid: &str, message_id: &str) -> Result<Option<Vec<u8>>> {
         // Read-only on purpose: `take_sent_message` consumes, this must not.
-        scalar_optional_sql!(
+        let payload = scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
             GET_SENT_MESSAGE,
             chat_jid,
             message_id,
             self.device_id
-        )
+        )?;
+        self.open_sent(chat_jid, message_id, payload)
     }
 
     async fn delete_expired_base_keys(&self, cutoff_timestamp: i64) -> Result<u32> {
@@ -353,7 +385,15 @@ impl ProtocolStore for SqlBackend {
         token: &[u8],
         token_timestamp: i64,
     ) -> Result<()> {
-        tc_token_sql::store_received(&self.pool, self.device_id, jid, token, token_timestamp).await
+        tc_token_sql::store_received(
+            &self.pool,
+            &self.cipher,
+            self.device_id,
+            jid,
+            token,
+            token_timestamp,
+        )
+        .await
     }
 
     // --- Throughput overrides (#104), see `protocol_batch_sql` ---
@@ -371,6 +411,6 @@ impl ProtocolStore for SqlBackend {
     }
 
     async fn get_tc_tokens(&self, jids: &[String]) -> Result<Vec<Option<TcTokenEntry>>> {
-        protocol_batch_sql::get_tc_tokens(&self.pool, self.device_id, jids).await
+        protocol_batch_sql::get_tc_tokens(&self.pool, &self.cipher, self.device_id, jids).await
     }
 }

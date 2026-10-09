@@ -9,6 +9,7 @@ use wacore::store::error::Result;
 
 use super::{SqlPool, SqlTx};
 use crate::storage::batch_chunks::padded_chunks;
+use crate::storage::blob_cipher::{BlobCipher, joined_row};
 use crate::storage::blob_codec::encode_hash_state;
 use crate::storage::statements::app_sync::{
     DELETE_MUTATION_MAC, PUT_MUTATION_MAC, SELECT_MUTATION_MACS, SET_VERSION,
@@ -17,14 +18,16 @@ use crate::storage::statements::app_sync::{
 // `mut tx: &mut SqlTx`: `execute_sql!(in tx, ..)` takes `&mut tx`, so the binding itself is mut.
 pub(super) async fn put_macs_in(
     mut tx: &mut SqlTx<'_>,
+    cipher: &BlobCipher,
     device_id: i32,
     name: &str,
     version: u64,
     added: &[AppStateMutationMAC],
 ) -> Result<()> {
     for m in added {
-        let (index, value) = (m.index_mac.as_slice(), m.value_mac.as_slice());
-        execute_sql!(in tx, PUT_MUTATION_MAC, name, version as i64, index, value, device_id)?;
+        let index = m.index_mac.as_slice();
+        let value = seal_mac(cipher, device_id, name, index, &m.value_mac)?;
+        execute_sql!(in tx, PUT_MUTATION_MAC, name, version as i64, index, &value[..], device_id)?;
     }
     Ok(())
 }
@@ -47,23 +50,32 @@ pub(super) async fn delete_macs_in(
 /// set. Removals run before additions, as the trait default did.
 pub(super) async fn commit_patch(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     name: &str,
     state: HashState,
     removed_index_macs: &[Vec<u8>],
     added: &[AppStateMutationMAC],
 ) -> Result<()> {
-    let (version, data) = (state.version, encode_hash_state(&state));
+    let version = state.version;
+    let data = cipher.seal_at(
+        device_id,
+        "app_state_versions",
+        "state_data",
+        name.as_bytes(),
+        &encode_hash_state(&state),
+    )?;
     let mut tx = SqlTx::begin(pool).await?;
     execute_sql!(in tx, SET_VERSION, name, &data, device_id)?;
     delete_macs_in(&mut tx, device_id, name, removed_index_macs).await?;
-    put_macs_in(&mut tx, device_id, name, version, added).await?;
+    put_macs_in(&mut tx, cipher, device_id, name, version, added).await?;
     tx.commit().await
 }
 
 /// Only the asked collection and account; absent MACs are left out.
 pub(super) async fn get_mutation_macs(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     name: &str,
     index_macs: &[[u8; 32]],
@@ -78,10 +90,42 @@ pub(super) async fn get_mutation_macs(
             chunk.iter().map(|index_mac| index_mac.as_slice())
         )?;
         // A stored index that is not 32 bytes cannot be one that was asked for.
-        found.extend(rows.into_iter().filter_map(|(index, mac)| {
-            let key: [u8; 32] = index.try_into().ok()?;
-            Some((key, mac))
-        }));
+        for (index, stored) in rows {
+            let Ok(key) = <[u8; 32]>::try_from(index.as_slice()) else {
+                continue;
+            };
+            found.insert(key, open_mac(cipher, device_id, name, &index, &stored)?);
+        }
     }
     Ok(found)
+}
+
+/// The AAD row key of `app_state_mutation_macs` is `name | 0 | index_mac`: the
+/// index stays in the clear (it is the lookup key) but is bound to its MAC.
+fn seal_mac(
+    cipher: &BlobCipher,
+    device_id: i32,
+    name: &str,
+    index: &[u8],
+    mac: &[u8],
+) -> Result<Vec<u8>> {
+    let row = joined_row(&[name.as_bytes(), index]);
+    cipher.seal_at(device_id, "app_state_mutation_macs", "value_mac", &row, mac)
+}
+
+fn open_mac(
+    cipher: &BlobCipher,
+    device_id: i32,
+    name: &str,
+    index: &[u8],
+    stored: &[u8],
+) -> Result<Vec<u8>> {
+    let row = joined_row(&[name.as_bytes(), index]);
+    cipher.open_at(
+        device_id,
+        "app_state_mutation_macs",
+        "value_mac",
+        &row,
+        stored,
+    )
 }

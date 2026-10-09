@@ -15,6 +15,7 @@ pub mod device;
 pub mod msg_secret;
 pub mod protocol;
 pub mod signal;
+pub mod store_encryption;
 pub mod tc_token;
 
 /// The readiness probe: proves a connection can be had and answers.
