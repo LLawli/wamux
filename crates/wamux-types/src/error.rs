@@ -29,6 +29,12 @@ pub enum WamuxError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// A well-formed request the core cannot serve in its current state (#96):
+    /// a LID participant with no phone number in the store. The message relays
+    /// as written.
+    #[error("failed precondition: {0}")]
+    FailedPrecondition(String),
+
     #[error("resource exhausted: {0}")]
     ResourceExhausted(String),
 
@@ -79,6 +85,10 @@ impl From<WamuxError> for tonic::Status {
             WamuxError::InvalidArgument(message) => {
                 tracing::debug!(reason = %message, "invalid argument");
                 Status::invalid_argument(message.clone())
+            }
+            WamuxError::FailedPrecondition(message) => {
+                tracing::debug!(reason = %message, "failed precondition");
+                Status::failed_precondition(message.clone())
             }
             WamuxError::ResourceExhausted(message) => {
                 tracing::warn!(reason = %message, "resource exhausted");

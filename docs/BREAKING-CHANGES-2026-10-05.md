@@ -912,3 +912,31 @@ What the server sends, captured on 2026-10-09 (a throwaway community):
 The core does not interpret any of it: which group was linked, why, and who
 suggested it is the edge's to read. Values other than the ones above (other
 `link_type` or `reason` tokens) may exist; none has been seen.
+
+### 3h. GroupService refuses what never works and relays what the library hides (#96)
+
+No field is retyped. Four answers change, and one field is new.
+
+| Case | Before | After |
+|---|---|---|
+| A `group` that is a valid jid on another server (`@s.whatsapp.net`, `@lid`, `@newsletter`) | the IQ went out; the server's answer came back | `InvalidArgument("'<jid>' is not a group: expected a jid ending in @g.us")`, nothing is sent |
+| `JoinWithInvite` / `PreviewInvite` with an empty or unreadable code | `Unavailable` | `InvalidArgument("invalid or empty invite code")` |
+| `CreateGroup` with a `@lid` participant the store has no phone number for | `Unavailable` | `FailedPrecondition("missing phone number mapping for LID <jid>")` |
+| `SetGroupDescription` when another device changed the description first | `Unavailable`, no `wa-code` | `Unavailable` with `wa-code=409` and `wa-text` |
+
+- **The group check covers the 17 RPCs that take a `group`.** Unset or empty
+  is still `InvalidArgument("missing jid")`, and a malformed jid still
+  `invalid jid '<v>': ...`. Participants are not checked by kind.
+- **An edge that retried `Unavailable` on these stops retrying them.** The
+  first three never succeeded as written: an invite code the library cannot
+  read, or a LID without a phone number, fails the same way every time. For
+  the LID, send the phone jid instead, or wait until the mapping is learned.
+- **The 409 keeps the status every unmapped server code gets** (`Unavailable`):
+  read `wa-code`. A 409 here means the description changed under the edge;
+  read it again and retry. It was the one refusal the library hid.
+- **New:** `GroupJidResponse.join_outcome = 5` (`JoinOutcome`: `UNSPECIFIED`,
+  `JOINED`, `PENDING_APPROVAL`). `JoinWithInvite` sets it; `group` is the same in
+  both cases, so this is the only way to tell a join from a request that waits
+  for an admin. `CreateGroup` leaves it `UNSPECIFIED`. Additive.
+- The third item the issue listed, `GetMembershipRequests` relaying each jid as
+  a JSON object, was settled by #132 (section 3a).

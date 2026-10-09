@@ -155,6 +155,23 @@ impl GroupJid {
     pub fn as_jid(&self) -> &Jid {
         &self.0
     }
+
+    /// The library's jid, which is what `client.groups()` takes.
+    pub fn as_lib(&self) -> &wacore_binary::Jid {
+        self.0.as_lib()
+    }
+
+    /// A required group field of a request (#96): unset, or set with an empty
+    /// value, is `InvalidArgument("missing jid")`; a jid on another server is
+    /// refused by `parse`, before anything reaches the account.
+    pub fn from_required_wire(jid: Option<pb::Jid>) -> Result<Self, WamuxError> {
+        let value: String = jid.unwrap_or_default().value;
+        if value.is_empty() {
+            return Err(WamuxError::InvalidArgument("missing jid".to_string()));
+        }
+        // Parsed from the text as sent, so the refusal names what the caller wrote.
+        Self::parse(&value)
+    }
 }
 
 impl NewsletterJid {

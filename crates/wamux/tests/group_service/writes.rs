@@ -44,6 +44,8 @@ async fn create_group_relays_the_new_jid_and_metadata() {
         .expect("create")
         .into_inner();
     assert_eq!(answer.group, jid(GROUP));
+    // Only JoinWithInvite reports an outcome (#96).
+    assert_eq!(answer.join_outcome, pb::JoinOutcome::Unspecified as i32);
     // #132: the typed metadata, whole. The answer carried only these fields,
     // so everything else stays unset.
     let expected = pb::GroupMetadata {
@@ -141,16 +143,19 @@ async fn revoke_invite_link_resets_and_relays_the_new_link() {
     f.cleanup().await;
 }
 
-/// Joined and PendingApproval relay the same `group_jid`: pinned as it is,
-/// the collapse is #96's to decide.
+/// Joined and PendingApproval relay the same group; `join_outcome` (#96) is
+/// what tells a join from a request that waits for an admin.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn join_with_invite_relays_the_group_jid() {
-    let mut f = fixture("join_with_invite_relays_the_group_jid").await;
+async fn join_with_invite_reports_joined_or_pending() {
+    let mut f = fixture("join_with_invite_reports_joined_or_pending").await;
     let joined = NodeBuilder::new("group").attr("jid", GROUP).build();
     let pending = NodeBuilder::new("membership_approval_request")
         .attr("jid", GROUP)
         .build();
-    for answer in [joined, pending] {
+    for (answer, outcome) in [
+        (joined, pb::JoinOutcome::Joined),
+        (pending, pb::JoinOutcome::PendingApproval),
+    ] {
         f.mock.answer_iq(G2, "set", "invite", answer);
         let request = pb::JoinWithInviteRequest {
             account: Some(f.account.clone()),
@@ -163,6 +168,7 @@ async fn join_with_invite_relays_the_group_jid() {
             .expect("join")
             .into_inner();
         assert_eq!(relayed.group, jid(GROUP));
+        assert_eq!(relayed.join_outcome, outcome as i32);
         // The join answer carries no metadata: unset, not an empty message.
         assert_eq!(relayed.metadata, None);
     }

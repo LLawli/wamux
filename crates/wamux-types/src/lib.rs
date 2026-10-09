@@ -48,6 +48,8 @@ mod event_enums_tests;
 #[cfg(test)]
 mod group_enums_tests;
 #[cfg(test)]
+mod group_jid_wire_tests;
+#[cfg(test)]
 mod jid_relay_tests;
 #[cfg(test)]
 mod jid_tests;
