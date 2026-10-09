@@ -23,6 +23,11 @@ Type=simple
 Environment=WAMUX_DATABASE_URL=sqlite://%S/wamux/wamux.db
 Environment=WAMUX_SOCKET_PATH=%S/wamux/wamux.sock
 Environment=WAMUX_LOG_LEVEL=info,wamux=info
+# Encryption at rest for a NEW store (#164, docs/DEPLOYMENT.md): create the key
+# with `openssl rand -hex 32`, mode 0600, then uncomment both lines. systemd
+# hands the service a private copy under %d (the credentials directory).
+#LoadCredential=store-key:/etc/wamux/store-key
+#Environment=WAMUX_STORE_KEY_FILE=%d/store-key
 ExecStart=%h/.local/bin/wamux
 Restart=on-failure
 RestartSec=10

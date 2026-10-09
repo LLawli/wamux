@@ -81,7 +81,86 @@ a private key.
   `wamux-pgdata` volume holds the same secret.
 - **Backups.** Encrypt them, restrict who can read them, and choose retention
   as you would for a private key.
-- **Encryption at rest** is future work (#76).
+- **Encryption at rest** is available for new stores: see the next section.
+
+## Encryption at rest
+
+A key makes the store useless to whoever copies only the database: the secret
+columns are sealed with XChaCha20-Poly1305 (#164, the first part of #76), so a
+dump, a backup or the file without the key holds ciphertext. The key lives
+outside the database, in a file.
+
+- **Generate it.** 32 random bytes as 64 hex characters, readable by its owner
+  only. The daemon refuses a key file with any group or other permission bit.
+
+  ```sh
+  umask 077
+  openssl rand -hex 32 > /etc/wamux/store-key
+  chmod 600 /etc/wamux/store-key
+  ```
+
+- **Point the daemon at it.** `store_key_file` in `wamux.toml`, or
+  `WAMUX_STORE_KEY_FILE`, is the PATH of the file. The key itself is never a
+  config value or an environment variable: an environment is readable through
+  `/proc/<pid>/environ` and `docker inspect`. At startup the daemon logs
+  `store encryption on, key id <hex>`; the id is the first 4 bytes of the key's
+  SHA-256, enough to tell keys apart and nothing more.
+- **systemd.** Let systemd deliver the file with `LoadCredential=`, so the key
+  stays `0600` under `/etc` and the service sees a private copy:
+
+  ```ini
+  LoadCredential=store-key:/etc/wamux/store-key
+  Environment=WAMUX_STORE_KEY_FILE=%d/store-key
+  ```
+
+  `contrib/wamux.service` carries this as a commented block.
+- **Docker / Compose.** Use a secret and point the variable at it:
+
+  ```yaml
+  services:
+    wamux:
+      environment:
+        WAMUX_STORE_KEY_FILE: /run/secrets/wamux_store_key
+      secrets:
+        - wamux_store_key
+  secrets:
+    wamux_store_key:
+      file: ./store-key
+  ```
+
+  A file secret is a bind mount of the host file, so it keeps the host file's
+  mode and owner: keep it `0600` and owned by the uid the daemon runs as in the
+  container, or the daemon refuses it.
+
+**What is sealed.** The 13 columns that hold key material or message content:
+`device.data`, `identities.key`, `sessions.record`, `prekeys.key`,
+`signed_prekeys.record`, `sender_keys.record`, `app_state_keys.key_data`,
+`app_state_versions.state_data`, `app_state_mutation_macs.value_mac`,
+`base_keys.base_key`, `tc_tokens.token`, `msg_secrets.secret` and
+`sent_messages.payload`. The last one is the text of recently sent messages
+(kept for retries), so it is sealed too. Each blob is bound to its device,
+table, column and row, so a blob copied to another row or account does not open.
+
+**What is not.** `app_state_keys.key_id` and `app_state_mutation_macs.index_mac`
+stay in the clear because the daemon looks rows up by them. Account metadata,
+`device_registry` and `lid_pn_mapping` (phone numbers, device lists) stay in the
+clear too: they are not key material. Sealing protects the secrets, not the
+fact that an account exists.
+
+**Limits of this version.**
+
+- A key can be turned on only for a **new store**, one with no accounts yet. The
+  store is then marked encrypted for good. Turning a key on over a store that
+  already has accounts is refused with "not encrypted yet"; converting it is
+  planned (#165).
+- An encrypted store does not open without its key (the error names
+  `store_key_file`), and a different key is refused at startup with "does not
+  match", before any account is read.
+- **Losing the key means re-pairing every account.** There is no recovery: keep
+  a copy of the key where you keep your other secrets, apart from the database
+  backups.
+- Postgres is covered by the same mechanism; the key protects the columns, so
+  restrict who can read the server anyway (see above).
 
 ## Native (systemd)
 

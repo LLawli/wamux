@@ -14,6 +14,26 @@ has to follow them.
 
 ### Added
 
+- **Encryption at rest for the store, part 1 of 3** (issue #164, under #76).
+  A new `store_key_file` setting (the PATH of a file with 64 hex characters,
+  mode `0600`; the key itself never comes from the environment or the TOML)
+  turns on XChaCha20-Poly1305 for the secret columns: the device record,
+  identities, sessions, prekeys, signed prekeys, sender keys, app-state keys,
+  versions and mutation MACs, base keys, tc tokens, message secrets and the
+  payload of sent messages. Each sealed blob carries a version, the key id and
+  a random nonce, and is bound to its device, table, column and row, so a blob
+  moved elsewhere does not open. Lookup keys (`app_state_keys.key_id`,
+  `app_state_mutation_macs.index_mac`), an empty tc token and the account
+  metadata stay in the clear. A new `store_encryption` table (migration 0005 in
+  both directories) records the state and a verifier, so a wrong key fails at
+  startup with "does not match", before the first account. A new store opened
+  with a key is born encrypted; an encrypted store without a key, or a store
+  with accounts that is still plaintext, refuses to start with an error that
+  says what to do (converting an existing store is #165, rotating the key is
+  #166). Without `store_key_file` nothing changes. New "Encryption at rest"
+  section in `docs/DEPLOYMENT.md`; losing the key means re-pairing every
+  account.
+
 - **The store file is created owner-only, and the docs say what it is** (issue
   #75). The store holds every paired account's keys in plaintext, so a dump or a
   copy of the file is a takeover of all of them. A new `sqlite://` or `turso://`
