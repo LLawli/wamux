@@ -71,13 +71,62 @@ message PairingError {
   string message = 1;
 }
 
+// The pair code in progress is no longer valid (#150): the server asked for a
+// new one, or the phone never answered within a minute. The library has
+// already cleared the flow, so nothing more comes for this code.
+message PairingCodeRefreshInfo {
+  bool force_manual = 1;  // the server wants the code requested again explicitly
+}
+
+// A phone-number pair-code flow failed, so no linking will come of it (#150).
+// Before this, PairWithCode stayed open forever on a refused code.
+message PairingCodeErrorInfo {
+  // UNSPECIFIED when nothing was refused: the failure was local (validation,
+  // no connection) or the request got no answer.
+  PairCodeRejection rejection = 1;
+  // The server's number, only when `rejection` is UNKNOWN (#73 rule).
+  int32 rejection_code = 2;
+  // The wait the server asked for, from its `backoff` attribute (ms).
+  optional int64 backoff_ms = 3;
+  // The failure as the library renders it for logs. Do not branch on it.
+  string detail = 4;
+}
+
+// The server's QR refs are used up: no QR is left until a new connection
+// (#150).
+message PairingQrCodesExhaustedInfo {
+  // True when the client closed the connection itself, which it does only
+  // with no pair code outstanding. False: a pair code is still valid on this
+  // connection, and the connection stays up.
+  bool disconnected = 1;
+}
+
+// `wacore::pair_code::PairCodeRejection`, open in the library (code in comment).
+enum PairCodeRejection {
+  PAIR_CODE_REJECTION_UNSPECIFIED = 0;
+  PAIR_CODE_REJECTION_UNKNOWN = 1;
+  // 400. The server also uses it to throttle a phone number, so it is not
+  // reliably permanent.
+  PAIR_CODE_REJECTION_BAD_REQUEST = 2;
+  PAIR_CODE_REJECTION_FORBIDDEN = 3;              // 403
+  PAIR_CODE_REJECTION_RATE_OVERLIMIT = 4;         // 429
+  PAIR_CODE_REJECTION_FEATURE_NOT_AVAILABLE = 5;  // 452, link with the QR instead
+  PAIR_CODE_REJECTION_INTERNAL_SERVER_ERROR = 6;  // 500
+}
+
 // Streamed during pairing: QR refreshes, the pair code, then success or error.
+// PairWithQr and PairWithCode end after `paired`, `error`, `code_error`,
+// `code_refresh`, or `qr_codes_exhausted` with `disconnected` true: nothing
+// more can come on that flow (#150). Asking again is the caller's decision.
 message PairingUpdate {
   oneof event {
     string qr_code = 1;
     string pair_code = 2;
     PairedInfo paired = 3;
     PairingError error = 4;
+    PairingCodeRefreshInfo code_refresh = 5;              // #150
+    PairingCodeErrorInfo code_error = 6;                  // #150
+    PairingQrCodesExhaustedInfo qr_codes_exhausted = 7;   // #150
   }
 }
 

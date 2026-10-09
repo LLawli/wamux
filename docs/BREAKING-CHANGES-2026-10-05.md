@@ -730,6 +730,16 @@ that matched `RawEvent.kind` on it stops seeing that kind.
 | `SelfPushNameUpdated` | `SelfPushNameUpdate`, `EventEnvelope.self_push_name = 32` | #153 |
 | `ContactRemoved` | `ContactUpdate` with `removed` true and no `action` | #153 |
 | `CallLogSync` | `CallLogUpdate`, `EventEnvelope.call_log = 33` | #153 |
+| `ConnectFailure` | `ConnectionNotice.connect_failure` (`ConnectFailureInfo`), `EventEnvelope.connection_notice = 34` | #150 |
+| `ClientOutdated` | `ConnectionNotice.client_outdated` (`ClientOutdatedInfo`) | #150 |
+| `StreamError` | `ConnectionNotice.stream_error` (`StreamErrorInfo`) | #150 |
+| `StreamReplaced` | `ConnectionNotice.stream_replaced` (`Empty`) | #150 |
+| `AppStateSyncFailed` | `ConnectionNotice.app_state_sync_failed` (`AppStateSyncFailedInfo`) | #150 |
+| `ClientExpirationChanged` | `ConnectionNotice.client_expiration` (`ClientExpirationInfo`) | #150 |
+| `PairingCodeRefresh` | `PairingUpdate.code_refresh` (`PairingCodeRefreshInfo`) | #150 |
+| `PairingCodeError` | `PairingUpdate.code_error` (`PairingCodeErrorInfo`) | #150 |
+| `PairingQrCodesExhausted` | `PairingUpdate.qr_codes_exhausted` (`PairingQrCodesExhaustedInfo`) | #150 |
+| `DirtyState` | dropped, not relayed: the library already resyncs | #150 |
 
 **JSON key to field (#148).**
 
@@ -800,3 +810,25 @@ a `start_time` in seconds, equal to the second the offer arrived; a
 rejected one carried REJECTED and `duration` 0. Only the companion of the
 caller received the call log. A removed contact carried its
 `action_timestamp` (equal to `timestamp`).
+
+**JSON key to field (#150).**
+
+| JSON (`payload`) | Field |
+|---|---|
+| `reason` (connect failure) | `connect_failure.reason` (`LogoutReason`), `reason_code` on UNKNOWN |
+| `message`, `raw` (connect failure) | `connect_failure.message`, `stanza` (`StanzaNode`) |
+| `raw` (client outdated) | `client_outdated.stanza` |
+| `code`, `raw` (stream error) | `stream_error.code` (verbatim, empty when absent), `stanza` |
+| (stream replaced, no fields) | `stream_replaced` (`Empty`) |
+| `fatal`, `retryable`, `skipped`, `connected` | the same names on `app_state_sync_failed` |
+| `expires_at` (Unix seconds), `version` (`[a, b, c]`), `withdrawn` | `client_expiration.expires_at` (ms), `version` (`ClientBuildVersion` primary, secondary, tertiary), `withdrawn` |
+| `force_manual` | `code_refresh.force_manual` |
+| `rejection` (absent when nothing was refused) | `code_error.rejection` (`PairCodeRejection`; UNSPECIFIED when absent), `rejection_code` on UNKNOWN |
+| `backoff` (`{secs, nanos}`) | `code_error.backoff_ms` |
+| `error` | `code_error.detail` (for logs; do not branch on it) |
+| `disconnected` | `qr_codes_exhausted.disconnected` |
+
+PairWithQr and PairWithCode now end after `code_error`, `code_refresh`, or
+`qr_codes_exhausted` with `disconnected` true, as well as after `paired` and
+`error`. A client that read the stream until it ended keeps working; one that
+waited for `paired` or `error` alone no longer hangs on a refused code.

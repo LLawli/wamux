@@ -14,6 +14,34 @@ has to follow them.
 
 ### Added
 
+- **The connection and pairing lifecycle is typed instead of RawEvent**
+  (issue #150, part 3 of #141). Additive: an edge that matched
+  `RawEvent.kind` on these nine stops seeing them.
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
+  - `EventEnvelope.connection_notice = 34` (`ConnectionNotice`) has one case
+    per event: a refused connection that is not a logout or a ban
+    (`connect_failure`, its reason in the logout's `LogoutReason`), an outdated
+    build (`client_outdated`), a stream error the library keeps the connection
+    through (`stream_error`, the 429 among them), a session taken over
+    (`stream_replaced`), an app-state sync that left collections unsynced
+    (`app_state_sync_failed`) and a retirement deadline for the build
+    (`client_expiration`, `expires_at` in ms). The three that carried the
+    stanza keep it whole as a `StanzaNode` (#138). None of them changes the
+    account's state: a terminal end still arrives as `ConnectionStateChanged`.
+  - `PairingUpdate` gains `code_refresh = 5` (the pair code is no longer
+    valid), `code_error = 6` (the pair code was refused, with the server's
+    `PairCodeRejection`, open as #73 rules, and `backoff_ms`) and
+    `qr_codes_exhausted = 7`. They reach `SubscribeEvents` as `pairing` and
+    now also the PairWithQr and PairWithCode streams, which never saw them.
+  - **PairWithQr and PairWithCode end when nothing more can come**: after
+    `code_error`, `code_refresh`, or `qr_codes_exhausted` with `disconnected`
+    true, besides `paired` and `error`. Before, a refused code or used-up QR
+    refs left the stream open forever. With `disconnected` false a pair code is
+    still valid on the same connection, and the stream goes on. Asking again is
+    the edge's call.
+  - `DirtyState` (`<ib><dirty>`) is no longer relayed as RawEvent: it is an
+    informational hook, and the library already resyncs.
+
 - **The own push name, a removed contact and the call log are typed instead
   of RawEvent** (issue #153, part 2b of #141). Two new events:
   `EventEnvelope.self_push_name = 32` (`SelfPushNameUpdate`: this account's

@@ -142,6 +142,7 @@ fn event_kind(envelope: &pb::EventEnvelope) -> &'static str {
         Some(Event::AccountSetting(_)) => "account_setting",
         Some(Event::SelfPushName(_)) => "self_push_name",
         Some(Event::CallLog(_)) => "call_log",
+        Some(Event::ConnectionNotice(_)) => "connection_notice",
         Some(Event::Raw(raw)) => raw_kind(raw),
         None => "empty",
     }

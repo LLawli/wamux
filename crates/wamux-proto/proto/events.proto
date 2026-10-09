@@ -754,6 +754,69 @@ message OfflineSyncInterrupted {
   int32 delivered = 2;  // offline stanzas processed before the connection ended
 }
 
+// The connection's lifecycle, past what ConnectionStateChanged says (#150,
+// part 3 of #141). None of these changes the account's state on its own:
+// a terminal end still arrives as ConnectionStateChanged. They reached the
+// socket as RawEvent.
+message ConnectionNotice {
+  oneof notice {
+    ConnectFailureInfo connect_failure = 10;
+    ClientOutdatedInfo client_outdated = 11;
+    StreamErrorInfo stream_error = 12;
+    // Another session took this one over (409, or `conflict type="replaced"`).
+    // The library stops reconnecting on its own.
+    Empty stream_replaced = 13;
+    AppStateSyncFailedInfo app_state_sync_failed = 14;
+    ClientExpirationInfo client_expiration = 15;
+  }
+}
+
+// The server refused the connection for a reason that is not a logout, a ban
+// or an outdated client (each of those has its own event).
+message ConnectFailureInfo {
+  LogoutReason reason = 1;    // the same codes as a logout's (#126)
+  int32 reason_code = 2;      // the server's number, only when `reason` is UNKNOWN
+  optional string message = 3;  // the `<failure>` stanza's `message` attribute
+  StanzaNode stanza = 4;      // the whole `<failure>` (#138); unset when the library had none
+}
+
+// The server rejected this client build (405).
+message ClientOutdatedInfo {
+  StanzaNode stanza = 1;  // the whole `<failure>`; unset when the library had none
+}
+
+// A `<stream:error>` the library does not act on as a logout or a takeover:
+// a 429 (rate limited; the library backs off and reconnects) or a code it does
+// not know. The connection is kept.
+message StreamErrorInfo {
+  string code = 1;        // verbatim; empty when the stanza carried none (e.g. `<ack/>`)
+  StanzaNode stanza = 2;  // the whole `<stream:error>`
+}
+
+// An app-state sync ended without every collection synced. Collections cross by
+// their wire names (`critical_block`, `regular_high`, ...), as the library keeps
+// them.
+message AppStateSyncFailedInfo {
+  repeated string fatal = 1;      // refused by the server; repeating gets the same answer
+  repeated string retryable = 2;  // a later attempt can sync them
+  repeated string skipped = 3;    // another writer held them, so this sync did nothing
+  bool connected = 4;             // the client still announced the connection as up
+}
+
+// The server set or withdrew a retirement deadline for this client build.
+// Notice, not an order: the library keeps connecting until it is refused.
+message ClientExpirationInfo {
+  optional int64 expires_at = 1;  // ms (the server sends seconds); unset when withdrawn
+  ClientBuildVersion version = 2;  // the build the deadline was issued against
+  bool withdrawn = 3;
+}
+
+message ClientBuildVersion {
+  uint32 primary = 1;
+  uint32 secondary = 2;
+  uint32 tertiary = 3;
+}
+
 message EventEnvelope {
   // Stays a string (#122, decided 2026-10-05): it is not a jid, and no other
   // uuid in the contract is a message (`AccountRef.uuid`, `Account.uuid`), so a
@@ -786,6 +849,7 @@ message EventEnvelope {
     AccountSettingUpdate account_setting = 31;  // #149
     SelfPushNameUpdate self_push_name = 32;     // #153
     CallLogUpdate call_log = 33;                // #153
+    ConnectionNotice connection_notice = 34;    // #150
     RawEvent raw = 99;
   }
 }
