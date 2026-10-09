@@ -1,6 +1,6 @@
 //! #121: every jid in `newsletters.proto` and the `JidRequest` two channel
-//! RPCs share is a `pb::Jid`. Unset or empty answers "missing jid"; the three
-//! RPCs that refused another server still refuse it, with the same message.
+//! RPCs share is a `pb::Jid`. Unset or empty answers "missing jid"; since #99
+//! every RPC that names a channel refuses another server, with one message.
 
 use tonic::Code;
 use wamux::proto::v1 as pb;
@@ -48,9 +48,17 @@ async fn every_channel_rpc_answers_missing_jid_for_an_unset_or_empty_jid() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_three_channel_only_rpcs_still_refuse_another_server() {
-    let mut f = fixture("the_three_channel_only_rpcs_still_refuse_another_server").await;
+async fn the_five_channel_rpcs_refuse_another_server() {
+    let mut f = fixture("the_five_channel_rpcs_refuse_another_server").await;
     let expected = format!("'{GROUP}' is not a channel: expected a jid ending in @newsletter");
+    let metadata = f
+        .channels
+        .get_newsletter_metadata(f.jid_request(GROUP))
+        .await;
+    let history = f
+        .channels
+        .get_newsletter_messages(f.history(GROUP, 5, 0))
+        .await;
     let live = f
         .channels
         .subscribe_newsletter_live_updates(f.jid_request(GROUP))
@@ -64,6 +72,8 @@ async fn the_three_channel_only_rpcs_still_refuse_another_server() {
         .send_newsletter_poll_vote(f.vote(GROUP, 1, vec![vec![0; 32]]))
         .await;
     for (case, result) in [
+        ("GetNewsletterMetadata", metadata.map(drop)),
+        ("GetNewsletterMessages", history.map(drop)),
         ("SubscribeNewsletterLiveUpdates", live.map(drop)),
         ("GetMyNewsletterAddOns", add_ons.map(drop)),
         ("SendNewsletterPollVote", vote.map(drop)),

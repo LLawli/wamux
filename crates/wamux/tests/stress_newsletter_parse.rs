@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use wamux::domain::newsletters;
 use wamux::proto::v1 as pb;
 use wamux::stress::MockWaServer;
-use wamux_types::Jid;
+use wamux_types::NewsletterJid;
 
 #[allow(dead_code)]
 mod common;
@@ -29,8 +29,8 @@ mod common;
 const CHANNEL: &str = "120363144038483540@newsletter";
 
 /// The channel as the domain takes it since #116: parsed at the boundary.
-fn channel() -> Jid {
-    Jid::parse(CHANNEL).expect("channel jid")
+fn channel() -> NewsletterJid {
+    NewsletterJid::parse(CHANNEL).expect("channel jid")
 }
 
 /// The live-captured channel node, with the three enum fields in the server's

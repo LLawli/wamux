@@ -14,6 +14,14 @@ has to follow them.
 
 ### Added
 
+- **Channel metadata and history refuse a jid that is not a channel** (issue
+  #99). `GetNewsletterMetadata` and `GetNewsletterMessages` answer
+  `InvalidArgument` for a valid jid on another server before anything is sent,
+  as the other three channel RPCs already did. Measured live: the server
+  answered metadata with 400 and never answered history, which waited the
+  library's 75 s IQ timeout and came back as `Unavailable`.
+  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3i.
+
 - **GroupService refuses a `group` that is not a group, and stops hiding three
   refusals behind Unavailable** (issue #96). Every RPC that takes a group answers
   `InvalidArgument` for a jid on another server before anything is sent; an

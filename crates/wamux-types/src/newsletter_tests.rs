@@ -6,7 +6,7 @@
 use wamux_proto::v1 as pb;
 
 use crate::{
-    Jid, MAX_NEWSLETTER_VOTE_OPTIONS, NewsletterAddOnsQuery, NewsletterHistoryQuery, NewsletterJid,
+    MAX_NEWSLETTER_VOTE_OPTIONS, NewsletterAddOnsQuery, NewsletterHistoryQuery, NewsletterJid,
     NewsletterPollVote, WamuxError,
 };
 
@@ -73,7 +73,7 @@ fn a_history_query_converts_every_field() {
     assert_eq!(
         query,
         NewsletterHistoryQuery {
-            jid: Jid::parse(CHANNEL).unwrap(),
+            jid: NewsletterJid::parse(CHANNEL).unwrap(),
             count: 20,
             before: Some(4321),
         }
@@ -115,12 +115,31 @@ fn a_history_query_checks_the_jid_before_the_count() {
     );
 }
 
-// #99 decides whether history refuses a jid that is not a channel. Until it
-// does, any jid converts and goes to the server as it always did.
+// #99: history refuses a jid that is not a channel, as the three other channel
+// RPCs do. Measured on 2026-10-09 (live-trabalho): the server never answers a
+// history IQ for a group or phone jid, so it used to wait the library's 75 s
+// IQ timeout and answer Unavailable.
 #[test]
-fn a_history_query_takes_any_jid_today() {
-    let query = NewsletterHistoryQuery::try_from(history(GROUP, 5, 0)).unwrap();
-    assert_eq!(query.jid.to_string(), GROUP);
+fn a_history_query_refuses_a_jid_that_is_not_a_channel() {
+    for jid in [GROUP, "5511999000111@s.whatsapp.net", "100000000000002@lid"] {
+        assert_eq!(
+            invalid_argument(NewsletterHistoryQuery::try_from(history(jid, 5, 0))),
+            format!("'{jid}' is not a channel: expected a jid ending in @newsletter")
+        );
+    }
+}
+
+#[test]
+fn a_history_query_takes_a_channel() {
+    assert!(NewsletterHistoryQuery::try_from(history(CHANNEL, 5, 0)).is_ok());
+}
+
+#[test]
+fn a_history_query_checks_the_channel_before_the_count() {
+    assert_eq!(
+        invalid_argument(NewsletterHistoryQuery::try_from(history(GROUP, 0, 0))),
+        format!("'{GROUP}' is not a channel: expected a jid ending in @newsletter")
+    );
 }
 
 #[test]

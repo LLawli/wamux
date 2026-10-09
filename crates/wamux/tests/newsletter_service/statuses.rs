@@ -1,14 +1,13 @@
 //! Status codes: the account resolution every RPC shares, the server's own
-//! refusal, and each InvalidArgument branch the core has today. The last test
-//! pins behavior #99 questions, so a change there shows up here.
+//! refusal, and each InvalidArgument branch the core has (#99 added the last
+//! one: metadata and history refuse a jid that is not a channel).
 
 use tonic::Code;
-use wacore_binary::NodeContent;
 use wamux::proto::v1 as pb;
 
-use crate::captured::{CHANNEL, MISSING_CODE, MISSING_JSON, MISSING_TEXT, VOTED_POLL};
+use crate::captured::{CHANNEL, VOTED_POLL};
 use crate::common;
-use crate::common::mock_wire::{account_ref, attr, iqs_in, operation, sent_iq};
+use crate::common::mock_wire::{account_ref, iqs_in, sent_iq};
 use crate::harness::{Fixture, MEX, NEWSLETTER, call_every_rpc, fixture, option_hash};
 
 /// A jid that parses and is not a channel.
@@ -264,36 +263,29 @@ async fn zero_page_sizes_are_invalid_argument() {
     f.cleanup().await;
 }
 
-/// #99: unlike their three siblings, metadata and history do not refuse a jid
-/// that is not a channel. The request goes out naming it, and the server's
-/// answer is what the edge gets.
+/// #99: metadata and history refuse a jid that is not a channel before any
+/// stanza leaves. Measured live (2026-10-09): the server answered metadata with
+/// 400 and never answered history, which then waited the library's 75 s IQ
+/// timeout and came back as Unavailable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn metadata_and_history_send_a_non_channel_jid_to_the_server() {
-    let mut f = fixture("metadata_and_history_send_a_non_channel_jid_to_the_server").await;
-    f.mock.answer_mex_with(MISSING_JSON);
-    f.mock
-        .answer_iq_error(NEWSLETTER, "get", "messages", MISSING_CODE, MISSING_TEXT);
+async fn metadata_and_history_refuse_a_non_channel_jid_before_any_iq() {
+    let mut f = fixture("metadata_and_history_refuse_a_non_channel_jid_before_any_iq").await;
+    let (newsletter_iqs, mex_iqs) = (iqs_in(&f.mock, NEWSLETTER), iqs_in(&f.mock, MEX));
+    let expected = format!("'{GROUP}' is not a channel: expected a jid ending in @newsletter");
     let metadata = f
         .channels
         .get_newsletter_metadata(f.jid_request(GROUP))
         .await
-        .expect_err("the server has no channel there");
-    assert_eq!(metadata.code(), Code::NotFound, "{metadata:?}");
-    let query = sent_iq(&f.mock, MEX, "get", "query").await;
-    let variables = match &operation(&query).expect("<query>").content {
-        Some(NodeContent::Bytes(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
-        other => panic!("<query> carries JSON bytes, got {other:?}"),
-    };
-    assert!(variables.contains(GROUP), "{variables}");
-
+        .expect_err("not a channel");
     let history = f
         .channels
         .get_newsletter_messages(f.history(GROUP, 5, 0))
         .await
-        .expect_err("the server has no channel there");
-    assert_eq!(history.code(), Code::NotFound, "{history:?}");
-    let iq = sent_iq(&f.mock, NEWSLETTER, "get", "messages").await;
-    let messages = operation(&iq).expect("<messages>");
-    assert_eq!(attr(messages, "jid").as_deref(), Some(GROUP));
+        .expect_err("not a channel");
+    for status in [metadata, history] {
+        assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
+        assert_eq!(status.message(), expected);
+    }
+    assert_only_the_probe_was_sent(&mut f, newsletter_iqs, mex_iqs).await;
     f.cleanup().await;
 }

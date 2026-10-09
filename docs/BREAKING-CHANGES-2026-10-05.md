@@ -940,3 +940,24 @@ No field is retyped. Four answers change, and one field is new.
   for an admin. `CreateGroup` leaves it `UNSPECIFIED`. Additive.
 - The third item the issue listed, `GetMembershipRequests` relaying each jid as
   a JSON object, was settled by #132 (section 3a).
+
+### 3i. Channel metadata and history refuse a jid that is not a channel (#99)
+
+No field changes. Two RPCs answer differently when `jid` is valid but is not on
+`@newsletter` (a group, a phone number, a LID); the other three channel RPCs
+already did this.
+
+| RPC | Before | After |
+|---|---|---|
+| `GetNewsletterMetadata` | the server answered `400 Bad Request`: `InvalidArgument` with `wa-code=400` | `InvalidArgument("'<jid>' is not a channel: expected a jid ending in @newsletter")`, no `wa-code`, nothing sent |
+| `GetNewsletterMessages` | the server sent nothing back: after the library's 75 s IQ timeout, `Unavailable` | the same `InvalidArgument`, at once |
+
+Measured live on 2026-10-09 with a group jid and a phone jid, on a connected
+account. The account stayed connected after the history timeout.
+
+- An edge that matched `wa-code=400` on metadata to detect "not a channel"
+  matches the status message instead, or validates before calling.
+- A history call that used to hang for 75 s and read as "core down" now fails
+  fast and is the caller's mistake, not a reason to retry.
+- Unset or empty is still `InvalidArgument("missing jid")`, and the jid is still
+  checked before `count`.
