@@ -55,8 +55,9 @@ pub async fn pin_chat(client: &Client, chat: Jid, pinned: bool) -> Result<(), Wa
 }
 
 /// Mute (indefinite or until a timestamp) or unmute. `mute_until_ms <= 0` with
-/// `muted` means indefinite. A non-future timestamp is the lib's to reject; we
-/// relay that error verbatim (the core supplies no clock, decides no duration).
+/// `muted` means indefinite. A non-future timestamp is the lib's to reject
+/// (`AppStateError::InvalidRequest`); `client_err` maps it to InvalidArgument
+/// with the lib's reason (#101). The core supplies no clock, decides no duration.
 pub async fn mute_chat(
     client: &Client,
     chat: Jid,

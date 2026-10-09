@@ -231,21 +231,25 @@ async fn delete_message_refuses_a_status_before_resolving_the_account() {
     f.cleanup().await;
 }
 
-/// #101: a malformed chat is refused before the account only on a revoke. A
-/// delete-for-me resolves the account first, so an unknown account answers
-/// NotFound for the same malformed key.
+/// #101: a malformed chat is refused before the account on both deletes. An
+/// unknown account used to answer NotFound for a delete-for-me.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn delete_message_for_me_checks_the_account_before_the_jid_today() {
-    let mut f = fixture("delete_message_for_me_checks_the_account_before_the_jid_today").await;
+async fn delete_message_checks_the_jid_before_the_account() {
+    let mut f = fixture("delete_message_checks_the_jid_before_the_account").await;
     let unknown = account_ref(&uuid::Uuid::new_v4().to_string());
     let bad = key("not a jid", "3EB0X");
-    let revoke = f
-        .messages
-        .delete_message(delete(unknown.clone(), bad.clone(), true))
-        .await;
-    assert_eq!(revoke.expect_err("revoke").code(), Code::InvalidArgument);
-    let for_me = f.messages.delete_message(delete(unknown, bad, false)).await;
-    assert_eq!(for_me.expect_err("delete for me").code(), Code::NotFound);
+    for for_everyone in [true, false] {
+        let result = f
+            .messages
+            .delete_message(delete(unknown.clone(), bad.clone(), for_everyone))
+            .await;
+        let status = result.expect_err("a malformed chat");
+        assert_eq!(
+            status.code(),
+            Code::InvalidArgument,
+            "{for_everyone}: {status:?}"
+        );
+    }
     f.cleanup().await;
 }
 

@@ -11,10 +11,29 @@ pub use wamux_types::WamuxError;
 /// the full anyhow cause chain (`{:#}`) as an opaque `Client` error.
 pub(crate) fn client_err(err: impl Into<anyhow::Error>) -> WamuxError {
     let err: anyhow::Error = err.into();
-    match err.chain().find_map(iq_server_rejection) {
-        Some((code, text)) => WamuxError::WaServer { code, text },
+    if let Some((code, text)) = err.chain().find_map(iq_server_rejection) {
+        return WamuxError::WaServer { code, text };
+    }
+    match err.chain().find_map(invalid_request_message) {
+        Some(reason) => WamuxError::InvalidArgument(reason),
         None => WamuxError::Client(format!("{err:#}")),
     }
+}
+
+/// #101: the lib refuses a request it can never serve with typed errors that
+/// carry no server code (`PollError::InvalidPoll`, `AppStateError::
+/// InvalidRequest`). Read as opaque they became Unavailable and the edge
+/// retried a call that could never succeed. The lib's own Display is the
+/// reason; `NotConnected` and `NotLoggedIn` are transport, not the request.
+fn invalid_request_message(cause: &(dyn std::error::Error + 'static)) -> Option<String> {
+    use whatsapp_rust::features::{AppStateError, PollError};
+    if let Some(err @ PollError::InvalidPoll(_)) = cause.downcast_ref::<PollError>() {
+        return Some(err.to_string());
+    }
+    if let Some(err @ AppStateError::InvalidRequest(_)) = cause.downcast_ref::<AppStateError>() {
+        return Some(err.to_string());
+    }
+    None
 }
 
 /// The lib surfaces server rejections as five types depending on the path:
@@ -211,3 +230,7 @@ mod tests {
 #[cfg(test)]
 #[path = "error_group_tests.rs"]
 mod group_tests;
+
+#[cfg(test)]
+#[path = "error_invalid_request_tests.rs"]
+mod invalid_request_tests;

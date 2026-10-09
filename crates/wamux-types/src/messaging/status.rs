@@ -11,7 +11,7 @@ use crate::message_id::MessageId;
 /// A text status. `background_argb` 0 is a valid transparent background, and
 /// `font` stays a raw number the domain checks against the library's enum.
 /// `recipients` is the device set the status is encrypted to; an empty one is
-/// the library's to refuse (#101).
+/// refused here, before any account is looked up (#101).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusText {
     pub text: String,
@@ -42,7 +42,7 @@ impl TryFrom<pb::PostStatusTextRequest> for StatusText {
 
     fn try_from(request: pb::PostStatusTextRequest) -> Result<Self, WamuxError> {
         Ok(Self {
-            recipients: parse_recipients(&request.recipients)?,
+            recipients: require_recipients(&request.recipients, POSTED_TO)?,
             text: request.text,
             background_argb: request.background_argb,
             font: request.font,
@@ -50,7 +50,7 @@ impl TryFrom<pb::PostStatusTextRequest> for StatusText {
     }
 }
 
-/// The kind first (`MediaKind::parse_status`), then the recipients.
+/// The kind first (`MediaKind::parse_status`), then the recipients (#101).
 impl TryFrom<pb::PostStatusMediaHeader> for StatusMedia {
     type Error = WamuxError;
 
@@ -58,7 +58,7 @@ impl TryFrom<pb::PostStatusMediaHeader> for StatusMedia {
         let kind = MediaKind::parse_status(header.media_type)?;
         Ok(Self {
             kind,
-            recipients: parse_recipients(&header.recipients)?,
+            recipients: require_recipients(&header.recipients, POSTED_TO)?,
             caption: header.caption,
             thumbnail: header.thumbnail,
             seconds: header.seconds,
@@ -66,11 +66,8 @@ impl TryFrom<pb::PostStatusMediaHeader> for StatusMedia {
     }
 }
 
-/// An empty id or recipient list would reach the library and come back as an
-/// opaque client error, which maps to Unavailable; the edge sent a malformed
-/// request and hears that, with today's messages:
-/// `"message_id is empty; expected the status's own id (PostStatus* key.id)"`,
-/// `"recipients is empty; expected the device set the status was posted to"`.
+/// The id first, then the recipients: an empty one of either is the edge's
+/// malformed request and is refused here as InvalidArgument.
 impl TryFrom<pb::RevokeStatusRequest> for StatusRevoke {
     type Error = WamuxError;
 
@@ -81,16 +78,27 @@ impl TryFrom<pb::RevokeStatusRequest> for StatusRevoke {
                     .to_string(),
             ));
         }
-        if request.recipients.is_empty() {
-            return Err(WamuxError::InvalidArgument(
-                "recipients is empty; expected the device set the status was posted to".to_string(),
-            ));
-        }
+        let recipients = require_recipients(&request.recipients, WAS_POSTED_TO)?;
         Ok(Self {
             message_id: MessageId::new(request.message_id)?,
-            recipients: parse_recipients(&request.recipients)?,
+            recipients,
         })
     }
+}
+
+const POSTED_TO: &str = "is posted to";
+const WAS_POSTED_TO: &str = "was posted to";
+
+/// A status with no recipients encrypts for nobody; the lib refuses it with an
+/// error that read as Unavailable (#101), so the shape check lives here.
+/// `verb` keeps the revoke's past tense ("the status was posted to").
+fn require_recipients(values: &[pb::Jid], verb: &str) -> Result<Vec<Jid>, WamuxError> {
+    if values.is_empty() {
+        return Err(WamuxError::InvalidArgument(format!(
+            "recipients is empty; expected the device set the status {verb}"
+        )));
+    }
+    parse_recipients(values)
 }
 
 fn parse_recipients(values: &[pb::Jid]) -> Result<Vec<Jid>, WamuxError> {

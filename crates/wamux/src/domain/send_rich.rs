@@ -47,7 +47,9 @@ pub(crate) fn build_contact_message(card: &ContactCard) -> wa::Message {
 
 /// Create a poll. The lib validates (2..=12 options, selectable_count
 /// 1..=len, no duplicate names) and returns the `SendResult` plus the
-/// `message_secret` the edge needs to decrypt incoming votes.
+/// `message_secret` the edge needs to decrypt incoming votes. A refusal is
+/// `PollError::InvalidPoll`, which `client_err` maps to InvalidArgument with
+/// the lib's reason (#101); the core pre-validates nothing.
 pub async fn send_poll(
     client: &Client,
     to: Jid,

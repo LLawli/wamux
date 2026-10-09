@@ -180,18 +180,19 @@ async fn mute_chat_sends_until_forever_and_unmute() {
     f.cleanup().await;
 }
 
-/// #101: a deadline already past is refused by the library, which the core
-/// relays as Unavailable. Nothing is sent.
+/// #101: a deadline already past can never succeed: InvalidArgument with the
+/// library's reason. Nothing is sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mute_chat_in_the_past_is_unavailable_today() {
-    let mut f = fixture("mute_chat_in_the_past_is_unavailable_today").await;
+async fn mute_chat_in_the_past_is_invalid_argument() {
+    let mut f = fixture("mute_chat_in_the_past_is_invalid_argument").await;
     let before = wire_count(&f);
     let status = f
         .messages
         .mute_chat(mute(&f, true, 1_000))
         .await
         .expect_err("a deadline in 1970");
-    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
+    assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
+    assert!(status.message().contains("in the past"), "{status:?}");
     assert_only_the_probe_was_sent(&mut f, before).await;
     f.cleanup().await;
 }

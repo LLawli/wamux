@@ -961,3 +961,31 @@ account. The account stayed connected after the history timeout.
   fast and is the caller's mistake, not a reason to retry.
 - Unset or empty is still `InvalidArgument("missing jid")`, and the jid is still
   checked before `count`.
+
+### 3j. MessagingService refuses requests that can never work (#101)
+
+No field changes. Four request shapes answered `Unavailable` ("the core is
+down") or the wrong status first; they are the caller's mistake and now say so.
+
+| RPC | Request | Before | After |
+|---|---|---|---|
+| `SendPoll` | fewer than 2 or more than 12 options, `selectable_count` 0 or above the option count, duplicate names | `Unavailable` | `InvalidArgument("invalid poll: <reason>")`, nothing sent |
+| `MuteChat` | `muted` with `mute_until_ms` in the past | `Unavailable` | `InvalidArgument("invalid app-state request: mute_end_timestamp_ms is in the past (...)")`, nothing sent |
+| `PostStatusText`, `PostStatusMedia` | no `recipients` | `Unavailable` (on media, after the upload) | `InvalidArgument("recipients is empty; expected the device set the status is posted to")`, before the upload |
+| `DeleteMessage` with `for_everyone=false` | malformed `target.chat` and an unknown account | `NotFound` | `InvalidArgument`, the key is checked first as on a revoke |
+
+Measured live on 2026-10-09 on a connected account: `SendPoll` with one option
+and `MuteChat` with `mute_until_ms=1000` both answered `InvalidArgument` with the
+library's reason. Status posts and the delete were exercised only against the
+mock.
+
+- `selectable_count` is proto3's default 0, so an edge that leaves it out gets
+  `InvalidArgument` now, not `Unavailable`.
+- Every `AppStateError::InvalidRequest` from the library takes this path, not only
+  the mute: an empty label id or a contact id that is not a phone number is
+  `InvalidArgument` too. A lost connection (`NotConnected`) stays `Unavailable`.
+- An edge that retried `Unavailable` on these calls stops retrying a request that
+  could never succeed.
+- Unchanged: a status recipient given by phone number whose LID the client does not
+  know is dropped silently by the library (it resolves from its local cache and
+  sends no query). Send LIDs when posting a status.

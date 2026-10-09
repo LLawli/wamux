@@ -175,11 +175,11 @@ async fn revoke_status_reaches_every_recipient() {
     f.cleanup().await;
 }
 
-/// #101: the library refuses a status with no recipients, which the core
-/// relays as Unavailable. Nothing is sent.
+/// #101: a list with nobody in it can never be posted to: InvalidArgument,
+/// refused before any work. On the media post that includes the upload.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_status_with_no_recipients_is_unavailable_today() {
-    let mut f = fixture("a_status_with_no_recipients_is_unavailable_today").await;
+async fn a_status_with_no_recipients_is_invalid_argument() {
+    let mut f = fixture("a_status_with_no_recipients_is_invalid_argument").await;
     let before = wire_count(&f);
     let request = status_text(&f, 1, Vec::new());
     let status = f
@@ -187,7 +187,17 @@ async fn a_status_with_no_recipients_is_unavailable_today() {
         .post_status_text(request)
         .await
         .expect_err("no recipients");
-    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
+    assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
+    let mut head = status_head(&f, pb::MediaType::Image);
+    if let Some(pb::post_status_media_chunk::Part::Header(header)) = head.part.as_mut() {
+        header.recipients.clear();
+    }
+    let status = post_media(&mut f, vec![head, status_chunk(b"jpeg")])
+        .await
+        .expect_err("no recipients on media");
+    assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
+    assert!(status.message().contains("recipients"), "{status:?}");
+    assert!(f.cdn.uploads().is_empty(), "nothing was uploaded");
     assert_only_the_probe_was_sent(&mut f, before).await;
     f.cleanup().await;
 }
