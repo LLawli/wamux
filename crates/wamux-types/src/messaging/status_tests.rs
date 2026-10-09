@@ -73,12 +73,24 @@ fn status_text_refuses_a_malformed_recipient() {
     assert_eq!(invalid_argument(result), "missing jid");
 }
 
-// An empty recipient list is the library's to refuse (#101, pinned "today"
-// over the socket); the conversion does not add a check of its own.
+// An empty recipient list can never be posted to (#101): refused with the
+// same words as the revoke.
 #[test]
-fn status_text_leaves_an_empty_recipient_list_to_the_library() {
-    let status = StatusText::try_from(pb::PostStatusTextRequest::default()).unwrap();
-    assert!(status.recipients.is_empty());
+fn status_text_refuses_an_empty_recipient_list() {
+    let result = StatusText::try_from(pb::PostStatusTextRequest::default());
+    assert_eq!(
+        invalid_argument(result),
+        "recipients is empty; expected the device set the status is posted to"
+    );
+}
+
+#[test]
+fn status_media_refuses_an_empty_recipient_list() {
+    let result = StatusMedia::try_from(media_header(pb::MediaType::Image, &[]));
+    assert_eq!(
+        invalid_argument(result),
+        "recipients is empty; expected the device set the status is posted to"
+    );
 }
 
 #[test]

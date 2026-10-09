@@ -216,23 +216,34 @@ async fn aggregate_poll_votes_tallies_the_vote_this_account_sent() {
     f.cleanup().await;
 }
 
-/// #101: the library refuses a malformed poll, and the core relays that as
-/// Unavailable. `selectable_count` 0 is proto3's default, so leaving it out
-/// lands here too. Nothing is sent.
+/// #101: a malformed poll is the caller's mistake: InvalidArgument with the
+/// library's reason, nothing sent. `selectable_count` 0 is proto3's default, so
+/// leaving it out lands here too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_invalid_poll_is_unavailable_today() {
-    let mut f = fixture("an_invalid_poll_is_unavailable_today").await;
+async fn an_invalid_poll_is_invalid_argument() {
+    let mut f = fixture("an_invalid_poll_is_invalid_argument").await;
     let before = wire_count(&f);
-    let one_option = pb::SendPollRequest {
-        options: vec!["azul".into()],
+    let with_options = |options: Vec<String>| pb::SendPollRequest {
+        options,
         ..poll_request(&f, 1)
     };
+    let thirteen: Vec<String> = (0..13).map(|n| format!("opcao {n}")).collect();
     for (case, request) in [
         ("selectable_count 0", poll_request(&f, 0)),
-        ("one option", one_option),
+        ("one option", with_options(vec!["azul".into()])),
+        ("thirteen options", with_options(thirteen)),
+        (
+            "duplicate names",
+            with_options(vec!["azul".into(), "azul".into()]),
+        ),
+        ("selectable_count over the options", poll_request(&f, 3)),
     ] {
         let status = f.messages.send_poll(request).await.expect_err(case);
-        assert_eq!(status.code(), Code::Unavailable, "{case}: {status:?}");
+        assert_eq!(status.code(), Code::InvalidArgument, "{case}: {status:?}");
+        assert!(
+            status.message().contains("invalid poll"),
+            "{case}: {status:?}"
+        );
     }
     assert_only_the_probe_was_sent(&mut f, before).await;
     f.cleanup().await;
