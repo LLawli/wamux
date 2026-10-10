@@ -41,7 +41,11 @@ impl TursoConn {
             StoreError::InvalidConfig(format!("turso path is not valid UTF-8: {path:?}"))
         })?;
         // `build` also converts the file header to WAL (the turso default).
+        // #165: turso 0.8.1 refuses VACUUM unless it is switched on. The conversion
+        // needs it to drop the plaintext the sealing left in the file (tested: the
+        // file stays whole for sqlite3 and sqlx, and the old bytes are gone).
         let database = Builder::new_local(path)
+            .experimental_vacuum(true)
             .build()
             .await
             .map_err(|e| StoreError::Connection(Box::new(e)))?;

@@ -3,12 +3,14 @@
 //! socket, serve.
 
 use std::path::Path;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
+use wamux::cli::{self, Command};
 use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage::{StoreKey, store_key::key_id_hex};
@@ -26,8 +28,53 @@ fn load_store_key(config: &Config) -> anyhow::Result<Option<StoreKey>> {
     Ok(Some(key))
 }
 
+/// `wamux` with no arguments serves, as it always has; the other commands are
+/// one-shot (#165). A usage error exits 2, any other failure 1 (the `Err`
+/// `main` returns), success 0.
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match cli::parse(&args) {
+        Err(usage_error) => {
+            eprintln!("{usage_error}");
+            Ok(ExitCode::from(2))
+        }
+        Ok(Command::Help) => {
+            println!("{}", cli::usage());
+            Ok(ExitCode::SUCCESS)
+        }
+        Ok(Command::Serve) => serve().await.map(|()| ExitCode::SUCCESS),
+        Ok(Command::StoreDecrypt { yes }) => store_decrypt(yes).await.map(|()| ExitCode::SUCCESS),
+    }
+}
+
+/// `wamux store decrypt --yes` (#165). The confirmation is checked first: this
+/// writes every account's keys to the store in the clear, and an operator who
+/// typed the command half way should be told that, not surprised by it.
+async fn store_decrypt(yes: bool) -> anyhow::Result<()> {
+    if !yes {
+        anyhow::bail!(
+            "`wamux store decrypt` writes the keys of every account to the store in the clear: \
+             anyone who can read the database or a backup of it can then impersonate the \
+             accounts. Run `wamux store decrypt --yes` to confirm"
+        );
+    }
+    let config = Config::load().context("loading config")?;
+    init_tracing(&config);
+    let Some(key) = load_store_key(&config)? else {
+        anyhow::bail!(
+            "`wamux store decrypt` needs store_key_file (WAMUX_STORE_KEY_FILE) set to the key \
+             that encrypted the store"
+        );
+    };
+    let decrypted = storage::decrypt_engine(&config.database_url, config.db_max_connections, &key)
+        .await
+        .context("decrypting the store")?;
+    println!("decrypted {decrypted} account(s)");
+    Ok(())
+}
+
+async fn serve() -> anyhow::Result<()> {
     let config = Config::load().context("loading config")?;
     init_tracing(&config);
 

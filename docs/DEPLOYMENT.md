@@ -81,7 +81,7 @@ a private key.
   `wamux-pgdata` volume holds the same secret.
 - **Backups.** Encrypt them, restrict who can read them, and choose retention
   as you would for a private key.
-- **Encryption at rest** is available for new stores: see the next section.
+- **Encryption at rest** is available, for new stores and for stores with accounts: see the next section.
 
 ## Encryption at rest
 
@@ -147,12 +147,42 @@ stay in the clear because the daemon looks rows up by them. Account metadata,
 clear too: they are not key material. Sealing protects the secrets, not the
 fact that an account exists.
 
+**Turning a key on over a store with accounts (#165).** Set `store_key_file` and
+start the daemon: it converts the store before it serves anything.
+
+- **Back up first.** Take a database backup before the first start with the key.
+  A conversion that is interrupted is resumed, but a backup is the way back from
+  anything else.
+- **What it does.** It records the key's id and verifier, then seals the 13
+  columns one account at a time, one transaction per account, in `device_id`
+  order, logging `sealing account i of n`. The store is marked encrypted by the
+  last account's transaction. If the process dies half way, start it again with
+  the SAME key: accounts already sealed are skipped (a progress table says
+  which), nothing is sealed twice, and a different key is refused with "does not
+  match". Started without the key, a half-converted store refuses with
+  "interrupted" and names `store_key_file`.
+- **Old plaintext is scrubbed.** An `UPDATE` does not erase the old bytes: SQLite
+  keeps them in free pages and in the WAL, Postgres in dead tuples. At the end of
+  a conversion the daemon runs `VACUUM` and a truncating WAL checkpoint (SQLite
+  and Turso) or `VACUUM FULL` on the 13 tables (Postgres). It cannot reach copies
+  it does not own: **discard the backups, the Postgres WAL archives and the
+  replicas made before the conversion**, they still hold the keys in the clear.
+- **Stop the daemon first** if another process converts or decrypts the same
+  store. SQLite and Turso lock the file; Postgres does not, so there it is on
+  you not to run two at once.
+
+**Turning it off: `wamux store decrypt --yes`.** It writes the keys of every
+account back to the store in the clear, which is why it needs `--yes`. It needs
+the same `store_key_file` the daemon uses (and the same `database_url`), opens
+the store without serving it, decrypts account by account like the conversion
+does, and prints `decrypted N account(s)`. After it the store is plaintext and
+opens without a key. An interrupted run is finished by running the command
+again; until then the daemon refuses to start, with "interrupted" and the
+command to run. Stop the daemon before running it. The old encrypted pages are
+not scrubbed on this path, and the data is now in the clear anyway.
+
 **Limits of this version.**
 
-- A key can be turned on only for a **new store**, one with no accounts yet. The
-  store is then marked encrypted for good. Turning a key on over a store that
-  already has accounts is refused with "not encrypted yet"; converting it is
-  planned (#165).
 - An encrypted store does not open without its key (the error names
   `store_key_file`), and a different key is refused at startup with "does not
   match", before any account is read.
@@ -161,93 +191,4 @@ fact that an account exists.
   backups.
 - Postgres is covered by the same mechanism; the key protects the columns, so
   restrict who can read the server anyway (see above).
-
-## Native (systemd)
-
-The simplest case: daemon and consumer are the same user on the same host, so
-permissions take care of themselves.
-
-```sh
-cp target/release/wamux ~/.local/bin/
-cp contrib/wamux.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now wamux
-```
-
-The unit uses `StateDirectory=wamux`, so the database and the socket both land
-in `~/.local/state/wamux/`. The consumer connects to
-`~/.local/state/wamux/wamux.sock`.
-
-## Docker, consumer on the host
-
-This is what `docker-compose.yml` sets up. The socket is bind-mounted out to
-`./run` on the host.
-
-```sh
-docker compose up -d --build
-# socket at ./run/wamux.sock
-```
-
-**The UID has to match, and this is the step people get wrong.** The image
-creates a `wamux` user whose UID defaults to `1000` (the compose file passes
-`${WAMUX_UID:-1000}`). If your host user is not 1000, the socket comes out
-owned by someone else and every connection fails with permission denied, which
-looks exactly like the daemon being down. Fix it at build time:
-
-```sh
-WAMUX_UID=$(id -u) WAMUX_GID=$(id -g) docker compose up -d --build
-```
-
-A **bind mount** is used rather than a named volume on purpose: a named volume
-lives under `/var/lib/docker` and is root-owned, which puts the socket out of
-reach of a normal user on the host.
-
-## Docker, consumer in another container
-
-Here a **named volume is the right choice** — the socket never needs to be
-visible on the host, and both containers see it at the same path.
-
-```yaml
-services:
-  wamux:
-    # ...as in docker-compose.yml, but:
-    volumes:
-      - wamux-socket:/run/wamux
-
-  my-edge:
-    image: my-edge:latest
-    depends_on: [wamux]
-    # Same UID as the wamux container, or the 0660 socket is unreachable.
-    user: "10001:10001"
-    environment:
-      WAMUX_SOCKET: /run/wamux/wamux.sock
-    volumes:
-      - wamux-socket:/run/wamux
-
-volumes:
-  wamux-socket:
-```
-
-Both containers must agree on UID/GID. Build the image with
-`--build-arg WAMUX_UID=...` to match whatever your consumer runs as.
-
-## Troubleshooting
-
-**`permission denied` connecting to the socket.** Check the owner:
-`ls -l ./run/wamux.sock`. If the UID is not yours, rebuild the image with
-`WAMUX_UID=$(id -u) WAMUX_GID=$(id -g)`. Adding your user to the socket's group
-also works if you own that group.
-
-**`path must be shorter than SUN_LEN`** at startup. The kernel caps Unix socket
-paths at about 107 bytes, and the daemon fails to bind rather than truncating.
-Use a short path: `/run/wamux/wamux.sock`, not a deeply nested one.
-
-**Socket file exists but nothing answers.** A stale socket from an unclean
-shutdown. The daemon removes it on a clean stop and unlinks a leftover on
-startup, so this usually means the process died before binding — check the logs
-before deleting anything.
-
-**`ready=false` from `AdminService.Check`.** The daemon is serving but storage
-is not answering: Postgres is down or unreachable, or the SQLite file is not
-writable. `serving` stays true because the RPC layer is fine; the two fields
-are separate for exactly this reason.
+- Changing the key of an encrypted store is not supported yet (#166).

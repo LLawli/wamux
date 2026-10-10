@@ -17,6 +17,9 @@ use wamux::storage::StorageEngine;
 use wamux::storage::sql::{SqlPool, SqlStore};
 use wamux::{server, transport};
 
+// Shared by the two encryption suites (#164, #165).
+pub mod store_secrets;
+
 // `MockWaServer` exists only in a stress build.
 #[cfg(feature = "stress")]
 pub mod mock_wire;
