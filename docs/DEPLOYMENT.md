@@ -27,6 +27,27 @@ SQLite pins its pool to one connection so the process serializes its own
 writes, which is correct for a handful of accounts and a bottleneck for many.
 Postgres is the answer when accounts pile up.
 
+### What survives a crash
+
+The engines do not commit alike. The difference matters for the Signal state
+the store keeps: a ratchet that was already used to send or receive a message
+and is then lost makes the following messages fail to decrypt, or resets the
+session.
+
+| Engine | Setting | A process crash | A power loss or an OS crash |
+|---|---|---|---|
+| SQLite | WAL, `synchronous = NORMAL` | loses nothing | can lose the last commits; the database stays consistent |
+| Turso | WAL, `synchronous = FULL` | loses nothing | loses nothing that was acknowledged |
+| Postgres | its default (`synchronous_commit = on`) | loses nothing | loses nothing that was acknowledged |
+
+SQLite's `NORMAL` was inherited from the whatsapp-rust SQLite reference, not
+chosen for this project, and it trades that last guarantee for speed: with
+`FULL` every write is its own fsync, which is what `NORMAL` avoids. Moving the
+SQLite engine to `FULL` without losing throughput, by grouping the commits of
+different accounts into one fsync, is tracked in #169. Until then, a host that
+can lose power should either run Postgres, or accept that the last few writes
+before an outage may not be on disk.
+
 ### Turso (experimental)
 
 `turso://<path>` runs the same schema on the native `turso` crate (a Rust
