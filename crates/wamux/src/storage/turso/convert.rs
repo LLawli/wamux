@@ -7,6 +7,7 @@ use ::turso::Value;
 use wacore::store::error::{Result as StoreResult, StoreError};
 
 use super::TursoConn;
+use super::exec::fetch_all;
 use super::row_values::{blob, int, int32, text};
 use super::transaction::TursoTx;
 use crate::storage::blob_cipher::BlobCipher;
@@ -134,8 +135,10 @@ fn read_row(row: &::turso::Row, column: &SealedColumn) -> StoreResult<StoredRow>
 /// still hold the old plaintext, and a truncating checkpoint drops the WAL
 /// pages that do. Neither alone is enough.
 pub(super) async fn scrub_old_plaintext(conn: &TursoConn) -> StoreResult<()> {
-    conn.fetch_all(VACUUM_FILE, Vec::new()).await?;
-    let checkpoint = conn.fetch_all(WAL_TRUNCATE, Vec::new()).await?;
+    // Outside any transaction: VACUUM and the checkpoint cannot run in one (#172).
+    let guard = conn.lock_autocommit().await?;
+    fetch_all(&guard, VACUUM_FILE, Vec::new()).await?;
+    let checkpoint = fetch_all(&guard, WAL_TRUNCATE, Vec::new()).await?;
     let busy = checkpoint
         .first()
         .map(|row| int(row, 0))

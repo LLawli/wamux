@@ -1,7 +1,8 @@
 //! The one connection a `TursoStore` runs on (#106), and how it is opened.
 //!
-//! One `turso::Connection` behind a `tokio::sync::Mutex`, the equivalent of the
-//! SQLite engine's `max_connections(1)`. Why one, measured on turso 0.8.1: a
+//! One `turso::Connection` behind the group commit's `tokio::sync::Mutex`
+//! (#172), the equivalent of the SQLite engine's `max_connections(1)`. Why
+//! one, measured on turso 0.8.1: a
 //! cloned `Connection` shares its transaction state, so two tasks using it at
 //! once get `Misuse("concurrent use forbidden")` and a commit that was not
 //! atomic; and two connections on one file contend with `Busy`. The mutex is
@@ -14,11 +15,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ::turso::{Builder, Connection, Database};
-use tokio::sync::{Mutex, MutexGuard};
 use wacore::store::error::{Result as StoreResult, StoreError};
 
 use super::exec;
 use super::turso_error::db;
+use crate::storage::group_commit::{
+    BatchConn, CommitStats, ConnGuard, ControlStatement, GroupCommit, JobGuard,
+};
 
 /// Same patience as the SQLite engine's `busy_timeout`.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -26,8 +29,19 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 /// The connection and the `Database` it came from. Field order is drop order:
 /// the connection goes first, then the handle that closes the file.
 struct ConnInner {
-    conn: Mutex<Connection>,
+    group: GroupCommit<Connection>,
     db: Database,
+}
+
+/// The control statements of the batch, run as plain statements (#172).
+#[async_trait::async_trait]
+impl BatchConn for Connection {
+    async fn control(&mut self, statement: ControlStatement) -> StoreResult<()> {
+        self.execute(statement.sql(), ())
+            .await
+            .map(drop)
+            .map_err(db)
+    }
 }
 
 /// The one connection a `TursoStore` runs on, shared by every account.
@@ -36,7 +50,7 @@ pub struct TursoConn(Arc<ConnInner>);
 
 impl TursoConn {
     /// Open (creating if absent) the database file with the engine's pragmas.
-    pub(super) async fn open(path: &Path) -> StoreResult<Self> {
+    pub(super) async fn open(path: &Path, batch_cap: usize) -> StoreResult<Self> {
         let path = path.to_str().ok_or_else(|| {
             StoreError::InvalidConfig(format!("turso path is not valid UTF-8: {path:?}"))
         })?;
@@ -52,33 +66,38 @@ impl TursoConn {
         let conn = database.connect().map_err(db)?;
         apply_pragmas(&conn).await?;
         let inner = ConnInner {
-            conn: Mutex::new(conn),
+            group: GroupCommit::new(conn, batch_cap),
             db: database,
         };
         Ok(Self(Arc::new(inner)))
     }
 
-    /// Exclusive use of the connection until the guard drops.
-    ///
-    /// A transaction abandoned half way (an early `?`, or a request future
-    /// dropped by a client that went away) leaves the connection inside it, and
-    /// the next user would join it. Dropping is not async, so the cleanup is
-    /// here, before anyone else is handed the connection: a ROLLBACK whenever
-    /// the connection is not in autocommit.
-    pub async fn lock(&self) -> MutexGuard<'_, Connection> {
-        let guard = self.0.conn.lock().await;
-        if matches!(guard.is_autocommit(), Ok(false)) {
-            tracing::warn!("turso connection found inside an abandoned transaction, rolling back");
-            if let Err(error) = guard.execute("ROLLBACK", ()).await {
-                tracing::error!(%error, "rolling back an abandoned turso transaction failed");
-            }
-        }
-        guard
+    /// The connection for a read (#172): an abandoned job is rolled back, and a
+    /// batch in progress is either committed (no writer pending) or seen as is.
+    pub async fn lock(&self) -> ConnGuard<'_, Connection> {
+        self.0.group.lock().await
+    }
+
+    /// The connection outside any transaction, for what cannot run inside one:
+    /// the checkpoint, VACUUM and the migrations.
+    pub(super) async fn lock_autocommit(&self) -> StoreResult<ConnGuard<'_, Connection>> {
+        self.0.group.lock_autocommit().await
+    }
+
+    /// Start a job in the batch: the entry of every write.
+    pub(super) async fn begin_job(&self) -> StoreResult<JobGuard<'_, Connection>> {
+        self.0.group.begin_job().await
+    }
+
+    pub(super) fn commit_stats(&self) -> CommitStats {
+        self.0.group.stats()
     }
 
     /// Release the file before returning. Only possible when no other handle
     /// (a backend, a clone) is alive: they share the one connection.
     pub(super) async fn close(self) -> StoreResult<()> {
+        // Jobs whose callers went away may still wait for their COMMIT.
+        drop(self.lock_autocommit().await?);
         let others = Arc::strong_count(&self.0) - 1;
         let inner = Arc::try_unwrap(self.0).map_err(|_| {
             StoreError::Connection(
@@ -86,8 +105,8 @@ impl TursoConn {
                     .into(),
             )
         })?;
-        let ConnInner { conn, db } = inner;
-        drop(conn.into_inner());
+        let ConnInner { group, db } = inner;
+        drop(group.into_inner());
         drop(db);
         Ok(())
     }

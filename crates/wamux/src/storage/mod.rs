@@ -15,6 +15,7 @@ pub(crate) mod convert;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod engine;
 pub(crate) mod file_mode;
+pub mod group_commit;
 pub(crate) mod protocol_rows;
 pub mod sealed_columns;
 pub mod sql;
@@ -30,6 +31,7 @@ mod engine_dispatch_tests;
 
 pub use blob_cipher::{BlobCipher, BlobContext};
 pub use engine::{AccountRow, StorageEngine};
+pub use group_commit::CommitStats;
 pub use store_key::{StoreKey, StoreKeyError};
 
 use std::sync::Arc;

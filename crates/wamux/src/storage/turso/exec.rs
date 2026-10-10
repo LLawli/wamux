@@ -63,11 +63,40 @@ pub(super) async fn execute(conn: &Connection, sql: &str, binds: Binds) -> Store
         .map_err(db)
 }
 
-/// One statement on the shared connection: lock, run, unlock. A multi-statement
-/// operation uses a `TursoTx` instead, which holds the lock throughout.
+/// One statement on the shared connection. A write is a job of the group commit
+/// (#172): it returns once the COMMIT that carries it ran. A read takes the lock
+/// and sees the open batch. A multi-statement operation uses a `TursoTx`.
+///
+/// `fetch_*` are reads, not jobs. A write with `RETURNING` goes through
+/// `write_returning_optional`, never through `fetch_*`: through them it would
+/// join an open batch and be answered before the COMMIT.
 impl TursoConn {
     pub(super) async fn execute(&self, sql: &str, binds: Binds) -> StoreResult<u64> {
-        execute(&*self.lock().await, sql, binds).await
+        let job = self.begin_job().await?;
+        match execute(&job, sql, binds).await {
+            Ok(changed) => job.finish().await.map(|()| changed),
+            Err(error) => {
+                job.fail().await;
+                Err(error)
+            }
+        }
+    }
+
+    /// A write whose statement has `RETURNING`: a job of the batch, and the row
+    /// is handed back only once the COMMIT that carries the job ran.
+    pub(super) async fn write_returning_optional(
+        &self,
+        sql: &str,
+        binds: Binds,
+    ) -> StoreResult<Option<Row>> {
+        let job = self.begin_job().await?;
+        match fetch_optional(&job, sql, binds).await {
+            Ok(row) => job.finish().await.map(|()| row),
+            Err(error) => {
+                job.fail().await;
+                Err(error)
+            }
+        }
     }
 
     pub(super) async fn fetch_all(&self, sql: &str, binds: Binds) -> StoreResult<Vec<Row>> {

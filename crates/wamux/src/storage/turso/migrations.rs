@@ -69,7 +69,7 @@ type MigrationResult<T> = Result<T, TursoMigrationError>;
 
 /// Apply the migrations the store lacks, oldest first, under the one lock.
 pub(super) async fn apply_pending(conn: &TursoConn) -> MigrationResult<()> {
-    let conn = conn.lock().await;
+    let conn = conn.lock_autocommit().await.map_err(bookkeeping)?;
     conn.execute(CREATE_MIGRATIONS_TABLE, ())
         .await
         .map_err(|e| bookkeeping(db(e)))?;
