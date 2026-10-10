@@ -63,13 +63,16 @@ turso_storage_cases() {
   must_run_tests --features turso --test store_conversion turso_
   must_run_tests --features turso --test store_rotation turso_
   WAMUX_TEST_ENCRYPT=1 must_run_tests --features turso --test store_parity turso_
+  # #172: group commit on the real engine, under real concurrency.
+  must_run_tests --features turso --test group_commit_turso turso_
+  must_run_tests --features turso --test group_commit_turso_accounts turso_
 }
 
 # wamux-tools (#64): the shared client, the env contract, the exit code, and
 # the built binaries refusing a bad config. Every suite but inproc runs its
 # daemon fixture on SQLite; inproc is Postgres-backed like the bins it serves.
 TOOLS_NO_PG_SUITES=(--test live_env --test report --test delivery --test media_qr
-  --test socket_client --test bin_contract --test runbook)
+  --test socket_client --test bin_contract --test runbook --test commit_bench)
 
 # Fail fast with an actionable message if Postgres isn't reachable (tests need it).
 # Parse host:port from any valid URL shape: strip the scheme, then optional
@@ -101,7 +104,7 @@ cargo clippy --workspace --all-targets --features wamux/stress,wamux-tools/stres
 
 # #106: the Turso family compiles only with its feature on; lint it too.
 stage "clippy (--features turso)"
-cargo clippy --workspace --all-targets --features wamux/turso -- -D warnings
+cargo clippy --workspace --all-targets --features wamux/turso,wamux-tools/turso -- -D warnings
 
 stage "no duplicate gRPC/HTTP crates"
 scripts/check-dup-deps.sh

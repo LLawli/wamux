@@ -15,7 +15,7 @@ use super::turso_error::{db, is_busy};
 /// error or a full disk means the log could not be written back, which is what
 /// this pass exists to catch, so those stay errors.
 pub(super) async fn run(conn: &TursoConn) -> Result<()> {
-    let guard = conn.lock().await;
+    let guard = conn.lock_autocommit().await?;
     match fetch_all_raw(&guard, "PRAGMA wal_checkpoint(TRUNCATE)", Vec::new()).await {
         Ok(_checkpoint_row) => Ok(()),
         Err(error) if is_busy(&error) => Ok(()),

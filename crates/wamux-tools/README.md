@@ -59,6 +59,13 @@ of nothing, proved nothing and exits non-zero.
 - **Proves:** issue #24: a chat state names the conversation it happened in (group vs direct differ in `chat`) and carries no `online` value.
 - **Writes to WhatsApp:** a group between your own two accounts (unless `WAMUX_LIVE_GROUP` is set) and three typing indicators. No message.
 
+### commit_bench
+
+- **Needs:** a database to write to, and no daemon: it opens the store itself (`sqlite://`, `postgres://`, or `turso://` when built with `--features turso`). Run it on a real disk: on tmpfs it refuses unless `WAMUX_BENCH_ALLOW_TMPFS=1`, and then the report carries a warning.
+- **Env:** `WAMUX_BENCH_ALLOW_TMPFS=1` (optional). Arguments: `<database_url> [accounts=10] [writes=30] [batch_cap]`; `batch_cap` applies to turso only. Use a new store: the accounts are created by the run.
+- **Proves:** nothing; it is a benchmark (#172). N accounts each write M sessions at once, every write waiting for its own commit, and it prints writes per second, p50/p99 latency of a write and jobs per commit. It exits 2 on a bad argument and 1 on a refusal or a failure.
+- **Writes to WhatsApp:** nothing; it writes only to the store it is given.
+
 ### e2e_all
 
 - **Needs:** the daemon, `WAMUX_REF` paired and connected.

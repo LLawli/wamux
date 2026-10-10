@@ -15,6 +15,8 @@ use uuid::Uuid;
 use wacore::store::error::Result as StoreResult;
 use wacore::store::traits::Backend;
 
+use super::group_commit::CommitStats;
+
 /// One row of the wamux-specific `accounts` table: canonical UUID and optional
 /// `external_ref` mapped to the integer `device_id` that scopes every store
 /// table. Engine-neutral — each engine decodes its own driver row into this
@@ -56,4 +58,10 @@ pub trait StorageEngine: Send + Sync + 'static {
     /// Trivial round-trip for the readiness probe. Returns `false` rather than
     /// an error: AdminService wants `ready=false`, never a `Status`.
     async fn ping_storage(&self) -> bool;
+
+    /// How many COMMITs carried how many writes (#172), for the engines that
+    /// group commits; `None` for the others. The benchmark and the tests read it.
+    fn commit_stats(&self) -> Option<CommitStats> {
+        None
+    }
 }

@@ -13,6 +13,8 @@ workspace = true
 [features]
 # `stress_live` drives the mock WhatsApp server from wamux's `stress` feature.
 stress = ["wamux/stress"]
+# `commit_bench` can open turso:// stores and set their batch cap (#172).
+turso = ["wamux/turso"]
 
 [[bin]]
 name = "stress_live"

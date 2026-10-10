@@ -5,6 +5,7 @@
 //! The env contract every binary follows lives in `live_env`; the runbook is
 //! `crates/wamux-tools/README.md`.
 
+pub mod commit_bench;
 pub mod delivery;
 pub mod inproc;
 pub mod live_env;

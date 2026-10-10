@@ -53,6 +53,7 @@ use wacore::store::traits::Backend;
 
 use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::engine::{AccountRow, StorageEngine};
+use crate::storage::group_commit::{CommitStats, DEFAULT_BATCH_CAP};
 use crate::storage::statements::PING;
 use crate::storage::store_key::StoreKey;
 
@@ -77,9 +78,15 @@ impl TursoStore {
         Self::open_keyed(database_url, None).await
     }
 
+    /// `open` with an explicit batch cap (#172), for `commit_bench` to measure
+    /// the cap with. Not a setting: the daemon always uses `DEFAULT_BATCH_CAP`.
+    pub async fn open_with_batch_cap(database_url: &str, cap: usize) -> StoreResult<Self> {
+        Self::open_path_keyed(Path::new(turso_path(database_url)?), None, cap).await
+    }
+
     /// `open` with the store key (#164).
     pub async fn open_keyed(database_url: &str, key: Option<&StoreKey>) -> StoreResult<Self> {
-        Self::open_path_keyed(Path::new(turso_path(database_url)?), key).await
+        Self::open_path_keyed(Path::new(turso_path(database_url)?), key, DEFAULT_BATCH_CAP).await
     }
 
     /// Open (creating if absent) the file at `path` and apply pending
@@ -88,14 +95,18 @@ impl TursoStore {
     /// conversion every engine runs. A failure anywhere drops the connection
     /// before returning, which frees the file.
     pub async fn open_path(path: &Path) -> StoreResult<Self> {
-        Self::open_path_keyed(path, None).await
+        Self::open_path_keyed(path, None, DEFAULT_BATCH_CAP).await
     }
 
     /// `open_path` with the store key (#164): once migrated, the store's
     /// encryption state is settled against the key before any backend exists.
-    async fn open_path_keyed(path: &Path, key: Option<&StoreKey>) -> StoreResult<Self> {
+    async fn open_path_keyed(
+        path: &Path,
+        key: Option<&StoreKey>,
+        batch_cap: usize,
+    ) -> StoreResult<Self> {
         crate::storage::file_mode::secure_store_file(path)?;
-        let conn = TursoConn::open(path).await?;
+        let conn = TursoConn::open(path, batch_cap).await?;
         migrations::apply_pending(&conn)
             .await
             .map_err(|e| StoreError::Migration(Box::new(e)))?;
@@ -111,7 +122,7 @@ impl TursoStore {
     pub async fn decrypt(database_url: &str, key: &StoreKey) -> StoreResult<usize> {
         let path = Path::new(turso_path(database_url)?);
         crate::storage::file_mode::secure_store_file(path)?;
-        let conn = TursoConn::open(path).await?;
+        let conn = TursoConn::open(path, DEFAULT_BATCH_CAP).await?;
         let decrypted = Self::decrypt_open(&conn, key).await;
         conn.close().await?;
         decrypted
@@ -132,7 +143,7 @@ impl TursoStore {
     pub async fn rotate(database_url: &str, old: &StoreKey, new: &StoreKey) -> StoreResult<usize> {
         let path = Path::new(turso_path(database_url)?);
         crate::storage::file_mode::secure_store_file(path)?;
-        let conn = TursoConn::open(path).await?;
+        let conn = TursoConn::open(path, DEFAULT_BATCH_CAP).await?;
         let rotated = Self::rotate_open(&conn, old, new).await;
         conn.close().await?;
         rotated
@@ -190,6 +201,10 @@ impl StorageEngine for TursoStore {
         // A trivial round-trip: proves the connection answers, which is exactly
         // what readiness means here.
         self.conn.fetch_all(PING, Vec::new()).await.is_ok()
+    }
+
+    fn commit_stats(&self) -> Option<CommitStats> {
+        Some(self.conn.commit_stats())
     }
 }
 

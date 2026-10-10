@@ -24,15 +24,15 @@ fn account_row(row: &Row) -> Result<AccountRow> {
     })
 }
 
-/// `device_id` is assigned by AUTOINCREMENT. Goes through `fetch_optional`
-/// because of RETURNING (see `exec`).
+/// `device_id` is assigned by AUTOINCREMENT. Goes through
+/// `write_returning_optional`: a write with RETURNING (see `exec`).
 pub(super) async fn create_account(
     conn: &TursoConn,
     external_ref: Option<&str>,
 ) -> Result<AccountRow> {
     let uuid = Uuid::new_v4().to_string();
     let row = conn
-        .fetch_optional(INSERT_ACCOUNT, binds![uuid, external_ref])
+        .write_returning_optional(INSERT_ACCOUNT, binds![uuid, external_ref])
         .await?;
     let row =
         row.ok_or_else(|| StoreError::Validation("the account insert returned no row".into()))?;
