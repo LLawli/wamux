@@ -14,6 +14,20 @@ has to follow them.
 
 ### Added
 
+- **Encryption at rest, part 3 of 3: `wamux store rotate-key`** (issue #166,
+  closes #76). `wamux store rotate-key --new-key-file <path>` re-seals every
+  secret of an encrypted store under a new key: the old key comes from
+  `store_key_file`, the new one from a file with the same checks (64 hex
+  characters, mode `0600`). It verifies the old key against the store first,
+  refuses a new key equal to the old one, turns every account and replaces the
+  store's key id and verifier in one transaction (an interrupted run leaves the
+  store whole under the old key, so there is no half-rotated state and no new
+  migration), and then scrubs the old blobs out of the file like a conversion
+  does. Afterwards only the new key opens the store; the old one is refused with
+  "does not match". Plaintext stores and stores with an interrupted conversion
+  or decrypt are refused. Stop the daemon first. The rotation procedure is in
+  `docs/DEPLOYMENT.md`. No wire or config change.
+
 - **Encryption at rest, part 2 of 3: converting an existing store, and
   `wamux store decrypt`** (issue #165, under #76). Turning `store_key_file` on
   over a store that already has accounts now converts it when the daemon starts,

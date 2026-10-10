@@ -181,6 +181,51 @@ again; until then the daemon refuses to start, with "interrupted" and the
 command to run. Stop the daemon before running it. The old encrypted pages are
 not scrubbed on this path, and the data is now in the clear anyway.
 
+**Changing the key: `wamux store rotate-key --new-key-file <path>` (#166).** It
+re-seals every secret of an encrypted store under a new key, and after it only
+the new key opens the store. Use it on a schedule, or at once if the key may
+have leaked.
+
+1. **Stop the daemon**, and take a database backup (under the old key).
+2. **Generate the new key** the same way as the first one, next to it:
+
+   ```sh
+   umask 077
+   openssl rand -hex 32 > /etc/wamux/store-key.new
+   chmod 600 /etc/wamux/store-key.new
+   ```
+
+3. **Rotate.** With the daemon's config (`store_key_file` still pointing at the
+   OLD key, and the same `database_url`):
+
+   ```sh
+   wamux store rotate-key --new-key-file /etc/wamux/store-key.new
+   ```
+
+   It checks the old key against the store first ("does not match" if it is the
+   wrong one), refuses a new key equal to the old one ("already"), opens every
+   blob of the 13 columns with the old key and seals it with the new one, and
+   replaces the store's key id and verifier, all in **one transaction**. If it
+   dies half way nothing changed: the store is still whole under the old key,
+   and running the command again starts over. It prints
+   `rotated N account(s) to key id <hex>`. The new key file goes through the
+   same checks as `store_key_file` (64 hex characters, mode `0600`).
+4. **Swap the files**, so `store_key_file` names the new key
+   (`mv /etc/wamux/store-key.new /etc/wamux/store-key`, or point the setting at
+   the new path), then start the daemon. It logs the new key id.
+
+The old blobs are scrubbed like after a conversion (`VACUUM` and a truncating
+WAL checkpoint on SQLite and Turso, `VACUUM FULL` on the 13 tables on
+Postgres), so the store file does not keep blobs the old key can open. Copies
+made before the rotation are out of its reach: **a backup taken before it still
+opens with the old key**, so if the reason to rotate is a leaked key, discard
+those backups (and Postgres WAL archives and replicas) too, or keep the old key
+as secret as the new one for as long as they exist. The store must be encrypted
+and whole: a plaintext store, or one whose conversion or decrypt was
+interrupted, is refused with the step that finishes it. As with decrypt,
+Postgres does not lock the store against a second process: the daemon must be
+stopped.
+
 **Limits of this version.**
 
 - An encrypted store does not open without its key (the error names
@@ -191,4 +236,3 @@ not scrubbed on this path, and the data is now in the clear anyway.
   backups.
 - Postgres is covered by the same mechanism; the key protects the columns, so
   restrict who can read the server anyway (see above).
-- Changing the key of an encrypted store is not supported yet (#166).
