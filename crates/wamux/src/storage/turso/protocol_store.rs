@@ -10,6 +10,7 @@ use super::exec::binds;
 use super::protocol_decode::{device_list_row, lid_mapping_row, sender_key_device, tc_token_entry};
 use super::row_values::{first_blob, text};
 use super::{TursoBackend, TursoTx, protocol_batch_sql, tc_token_sql};
+use crate::storage::blob_cipher::joined_row;
 use crate::storage::blob_codec::now_secs;
 use crate::storage::protocol_rows;
 use crate::storage::statements::protocol::{
@@ -20,6 +21,21 @@ use crate::storage::statements::protocol::{
     GET_SENDER_KEY_DEVICES, GET_SENT_MESSAGE, GET_TC_TOKEN, PUT_LID_MAPPING, PUT_TC_TOKEN,
     SAVE_BASE_KEY, SET_SENDER_KEY_STATUS, STORE_SENT_MESSAGE, UPDATE_DEVICE_LIST,
 };
+
+impl TursoBackend {
+    /// Open a `sent_messages.payload` read for `(chat_jid, message_id)`.
+    fn open_sent(
+        &self,
+        chat_jid: &str,
+        message_id: &str,
+        stored: Option<Vec<u8>>,
+    ) -> Result<Option<Vec<u8>>> {
+        let row = joined_row(&[chat_jid.as_bytes(), message_id.as_bytes()]);
+        stored
+            .map(|stored| self.open_at("sent_messages", "payload", &row, &stored))
+            .transpose()
+    }
+}
 
 #[async_trait]
 impl ProtocolStore for TursoBackend {
@@ -114,7 +130,9 @@ impl ProtocolStore for TursoBackend {
     // --- Base key collision detection ---
 
     async fn save_base_key(&self, address: &str, message_id: &str, base_key: &[u8]) -> Result<()> {
-        let binds = binds![address, message_id, base_key, self.device_id, now_secs()];
+        let row = joined_row(&[address.as_bytes(), message_id.as_bytes()]);
+        let sealed = self.seal_at("base_keys", "base_key", &row, base_key)?;
+        let binds = binds![address, message_id, sealed, self.device_id, now_secs()];
         self.conn.execute(SAVE_BASE_KEY, binds).await?;
         Ok(())
     }
@@ -127,7 +145,13 @@ impl ProtocolStore for TursoBackend {
     ) -> Result<bool> {
         let binds = binds![address, message_id, self.device_id];
         let row = self.conn.fetch_optional(GET_BASE_KEY, binds).await?;
-        Ok(first_blob(row)?.as_deref() == Some(current_base_key))
+        // Open before comparing: the stored bytes are sealed, so a byte compare
+        // against the plain key would never match.
+        let row_key = joined_row(&[address.as_bytes(), message_id.as_bytes()]);
+        let stored = first_blob(row)?
+            .map(|stored| self.open_at("base_keys", "base_key", &row_key, &stored))
+            .transpose()?;
+        Ok(stored.as_deref() == Some(current_base_key))
     }
 
     async fn delete_base_key(&self, address: &str, message_id: &str) -> Result<()> {
@@ -173,13 +197,16 @@ impl ProtocolStore for TursoBackend {
     async fn get_tc_token(&self, jid: &str) -> Result<Option<TcTokenEntry>> {
         let binds = binds![jid, self.device_id];
         let row = self.conn.fetch_optional(GET_TC_TOKEN, binds).await?;
-        row.map(|row| tc_token_entry(&row, 0)).transpose()
+        let cipher = &self.cipher;
+        row.map(|row| tc_token_entry(&row, 0, cipher, self.device_id, jid))
+            .transpose()
     }
 
     async fn put_tc_token(&self, jid: &str, entry: &TcTokenEntry) -> Result<()> {
+        let sealed = self.seal_at("tc_tokens", "token", jid.as_bytes(), &entry.token)?;
         let binds = binds![
             jid,
-            entry.token.as_slice(),
+            sealed,
             entry.token_timestamp,
             entry.sender_timestamp,
             self.device_id,
@@ -220,7 +247,9 @@ impl ProtocolStore for TursoBackend {
         payload: &[u8],
     ) -> Result<()> {
         // REPLACE semantics in the reference reset created_at; mirror that.
-        let binds = binds![chat_jid, message_id, payload, self.device_id, now_secs()];
+        let row = joined_row(&[chat_jid.as_bytes(), message_id.as_bytes()]);
+        let sealed = self.seal_at("sent_messages", "payload", &row, payload)?;
+        let binds = binds![chat_jid, message_id, sealed, self.device_id, now_secs()];
         self.conn.execute(STORE_SENT_MESSAGE, binds).await?;
         Ok(())
     }
@@ -228,7 +257,9 @@ impl ProtocolStore for TursoBackend {
     async fn take_sent_message(&self, chat_jid: &str, message_id: &str) -> Result<Option<Vec<u8>>> {
         let tx = TursoTx::begin(&self.conn).await?;
         let binds = binds![chat_jid, message_id, self.device_id];
-        let payload = first_blob(tx.fetch_optional(GET_SENT_MESSAGE, binds).await?)?;
+        let stored = first_blob(tx.fetch_optional(GET_SENT_MESSAGE, binds).await?)?;
+        // Open before consuming: a blob that will not open must stay in its row.
+        let payload = self.open_sent(chat_jid, message_id, stored)?;
         if payload.is_some() {
             let binds = binds![chat_jid, message_id, self.device_id];
             tx.execute(DELETE_SENT_MESSAGE, binds).await?;
@@ -251,7 +282,8 @@ impl ProtocolStore for TursoBackend {
     async fn get_sent_message(&self, chat_jid: &str, message_id: &str) -> Result<Option<Vec<u8>>> {
         // Read-only on purpose: `take_sent_message` consumes, this must not.
         let binds = binds![chat_jid, message_id, self.device_id];
-        first_blob(self.conn.fetch_optional(GET_SENT_MESSAGE, binds).await?)
+        let stored = first_blob(self.conn.fetch_optional(GET_SENT_MESSAGE, binds).await?)?;
+        self.open_sent(chat_jid, message_id, stored)
     }
 
     async fn delete_expired_base_keys(&self, cutoff_timestamp: i64) -> Result<u32> {
@@ -277,7 +309,15 @@ impl ProtocolStore for TursoBackend {
         token: &[u8],
         token_timestamp: i64,
     ) -> Result<()> {
-        tc_token_sql::store_received(&self.conn, self.device_id, jid, token, token_timestamp).await
+        tc_token_sql::store_received(
+            &self.conn,
+            &self.cipher,
+            self.device_id,
+            jid,
+            token,
+            token_timestamp,
+        )
+        .await
     }
 
     // --- Throughput overrides (#104), see `protocol_batch_sql` ---
@@ -295,6 +335,6 @@ impl ProtocolStore for TursoBackend {
     }
 
     async fn get_tc_tokens(&self, jids: &[String]) -> Result<Vec<Option<TcTokenEntry>>> {
-        protocol_batch_sql::get_tc_tokens(&self.conn, self.device_id, jids).await
+        protocol_batch_sql::get_tc_tokens(&self.conn, &self.cipher, self.device_id, jids).await
     }
 }

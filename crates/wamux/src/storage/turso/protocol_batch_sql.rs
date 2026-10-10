@@ -12,6 +12,7 @@ use super::protocol_decode::{device_list_row, tc_token_entry};
 use super::row_values::text;
 use super::{TursoConn, TursoTx};
 use crate::storage::batch_chunks::padded_chunks;
+use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::blob_codec::now_secs;
 use crate::storage::protocol_rows;
 use crate::storage::statements::protocol::{
@@ -99,6 +100,7 @@ pub(super) async fn get_devices_batch(
 /// the rows are queried per chunk of distinct jids, then mapped back by jid.
 pub(super) async fn get_tc_tokens(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     jids: &[String],
 ) -> Result<Vec<Option<TcTokenEntry>>> {
@@ -109,7 +111,9 @@ pub(super) async fn get_tc_tokens(
             chunk.iter().map(|jid| jid.as_str().into()),
         );
         for row in conn.fetch_all(SELECT_TC_TOKENS.as_str(), binds).await? {
-            by_jid.insert(text(&row, 0)?, tc_token_entry(&row, 1)?);
+            let jid = text(&row, 0)?;
+            let entry = tc_token_entry(&row, 1, cipher, device_id, &jid)?;
+            by_jid.insert(jid, entry);
         }
     }
     Ok(jids.iter().map(|jid| by_jid.get(jid).cloned()).collect())

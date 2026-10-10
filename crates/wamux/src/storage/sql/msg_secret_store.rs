@@ -8,9 +8,15 @@ use wacore::store::error::Result;
 use wacore::store::traits::{MsgSecretEntry, MsgSecretStore};
 
 use super::{SqlBackend, SqlTx};
+use crate::storage::blob_cipher::joined_row;
 use crate::storage::statements::msg_secret::{
     DELETE_EXPIRED_MSG_SECRETS, GET_MSG_SECRET, GET_MSG_SECRET_WITH_TS, PUT_MSG_SECRET,
 };
+
+/// The AAD row key of `msg_secrets`: `chat | 0 | sender | 0 | msg_id`.
+fn secret_row(chat: &str, sender: &str, msg_id: &str) -> Vec<u8> {
+    joined_row(&[chat.as_bytes(), sender.as_bytes(), msg_id.as_bytes()])
+}
 
 #[async_trait]
 impl MsgSecretStore for SqlBackend {
@@ -22,13 +28,15 @@ impl MsgSecretStore for SqlBackend {
         }
         let mut tx = SqlTx::begin(&self.pool).await?;
         for e in &entries {
+            let row = secret_row(&e.chat, &e.sender, &e.msg_id);
+            let sealed = self.seal_at("msg_secrets", "secret", &row, e.secret.as_slice())?;
             execute_sql!(
                 in tx,
                 PUT_MSG_SECRET,
                 &*e.chat,
                 &*e.sender,
                 &*e.msg_id,
-                e.secret.as_slice(),
+                &sealed[..],
                 e.expires_at,
                 e.message_ts,
                 self.device_id
@@ -44,7 +52,7 @@ impl MsgSecretStore for SqlBackend {
         sender: &str,
         msg_id: &str,
     ) -> Result<Option<Vec<u8>>> {
-        scalar_optional_sql!(
+        let stored = scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
             GET_MSG_SECRET,
@@ -52,7 +60,11 @@ impl MsgSecretStore for SqlBackend {
             sender,
             msg_id,
             self.device_id
-        )
+        )?;
+        let row = secret_row(chat, sender, msg_id);
+        stored
+            .map(|stored| self.open_at("msg_secrets", "secret", &row, &stored))
+            .transpose()
     }
 
     /// Overridden rather than defaulted: the default pairs the secret with a
@@ -63,7 +75,7 @@ impl MsgSecretStore for SqlBackend {
         sender: &str,
         msg_id: &str,
     ) -> Result<Option<(Vec<u8>, i64)>> {
-        row_optional_sql!(
+        let found = row_optional_sql!(
             (Vec<u8>, i64),
             &self.pool,
             GET_MSG_SECRET_WITH_TS,
@@ -71,7 +83,11 @@ impl MsgSecretStore for SqlBackend {
             sender,
             msg_id,
             self.device_id
-        )
+        )?;
+        let row = secret_row(chat, sender, msg_id);
+        found
+            .map(|(stored, ts)| Ok((self.open_at("msg_secrets", "secret", &row, &stored)?, ts)))
+            .transpose()
     }
 
     /// `expires_at = 0` is "never" and is deliberately excluded from the sweep.

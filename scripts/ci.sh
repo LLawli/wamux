@@ -58,6 +58,9 @@ turso_storage_cases() {
   must_run_tests --features turso --test store_parity turso_
   must_run_tests --features turso --test existing_store turso_
   must_run_tests --features turso --test store_file_mode turso_
+  # #164: sealed columns on turso, and the whole parity suite with the key on.
+  must_run_tests --features turso --test store_encryption turso_
+  WAMUX_TEST_ENCRYPT=1 must_run_tests --features turso --test store_parity turso_
 }
 
 # wamux-tools (#64): the shared client, the env contract, the exit code, and
@@ -204,6 +207,9 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   must_run_tests --test storage_backend sqlite_
   must_run_tests --test bincode_upgrade sqlite_
   must_run_tests --test store_parity sqlite_
+  # #164: encryption at rest, and the parity suite again with the key on.
+  must_run_tests --test store_encryption sqlite_
+  WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
   # #65: a store the pre-unification code wrote, opened on the unified SQL.
   must_run_tests --test existing_store sqlite_
 
@@ -309,6 +315,13 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test messaging_servi
 # permissive umask and warns about a loose one. No database, no account.
 stage "store file mode"
 must_run_tests --test store_file_mode sqlite_
+
+# Encryption at rest (#164): every sealed column on each engine (Postgres in a
+# throwaway database), and the whole sqlite parity suite with the key on. The
+# raw byte-parity tests skip when the key is on: sealed blobs differ by nonce.
+stage "store encryption"
+must_run_tests --test store_encryption
+WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"

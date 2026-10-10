@@ -9,6 +9,7 @@ use wacore::store::traits::{DeviceListRecord, LidPnMappingEntry, TcTokenEntry};
 
 use super::{SqlPool, SqlTx};
 use crate::storage::batch_chunks::padded_chunks;
+use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::blob_codec::now_secs;
 use crate::storage::protocol_rows::{self, DeviceListRow};
 use crate::storage::statements::protocol::{
@@ -104,6 +105,7 @@ pub(super) async fn get_devices_batch(
 /// the rows are queried per chunk of distinct jids, then mapped back by jid.
 pub(super) async fn get_tc_tokens(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     jids: &[String],
 ) -> Result<Vec<Option<TcTokenEntry>>> {
@@ -116,7 +118,8 @@ pub(super) async fn get_tc_tokens(
             [device_id],
             chunk.iter().map(String::as_str)
         )?;
-        for (jid, token, token_timestamp, sender_timestamp) in rows {
+        for (jid, stored, token_timestamp, sender_timestamp) in rows {
+            let token = cipher.open_at(device_id, "tc_tokens", "token", jid.as_bytes(), &stored)?;
             let entry = TcTokenEntry {
                 token,
                 token_timestamp,

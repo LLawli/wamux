@@ -22,7 +22,14 @@ impl SignalStore for SqlBackend {
     // --- Identities ---
 
     async fn put_identity(&self, address: &str, key: [u8; 32]) -> Result<()> {
-        execute_sql!(&self.pool, PUT_IDENTITY, address, &key[..], self.device_id)?;
+        let sealed = self.seal_at("identities", "key", address.as_bytes(), &key)?;
+        execute_sql!(
+            &self.pool,
+            PUT_IDENTITY,
+            address,
+            &sealed[..],
+            self.device_id
+        )?;
         Ok(())
     }
 
@@ -31,7 +38,8 @@ impl SignalStore for SqlBackend {
             scalar_optional_sql!(Vec<u8>, &self.pool, LOAD_IDENTITY, address, self.device_id)?;
         match row {
             None => Ok(None),
-            Some(bytes) => {
+            Some(stored) => {
+                let bytes = self.open_at("identities", "key", address.as_bytes(), &stored)?;
                 let arr: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
                     StoreError::Validation(format!("Invalid identity key length: {}", bytes.len()))
                 })?;
@@ -49,11 +57,21 @@ impl SignalStore for SqlBackend {
 
     async fn get_session(&self, address: &str) -> Result<Option<Bytes>> {
         let row = scalar_optional_sql!(Vec<u8>, &self.pool, GET_SESSION, address, self.device_id)?;
+        let row = row
+            .map(|stored| self.open_at("sessions", "record", address.as_bytes(), &stored))
+            .transpose()?;
         Ok(row.map(Bytes::from))
     }
 
     async fn put_session(&self, address: &str, session: &[u8]) -> Result<()> {
-        execute_sql!(&self.pool, PUT_SESSION, address, session, self.device_id)?;
+        let sealed = self.seal_at("sessions", "record", address.as_bytes(), session)?;
+        execute_sql!(
+            &self.pool,
+            PUT_SESSION,
+            address,
+            &sealed[..],
+            self.device_id
+        )?;
         Ok(())
     }
 
@@ -65,11 +83,12 @@ impl SignalStore for SqlBackend {
     // --- PreKeys ---
 
     async fn store_prekey(&self, id: u32, record: &[u8], uploaded: bool) -> Result<()> {
+        let sealed = self.seal_at("prekeys", "key", &id.to_be_bytes(), record)?;
         execute_sql!(
             &self.pool,
             STORE_PREKEY,
             id as i32,
-            record,
+            &sealed[..],
             uploaded,
             self.device_id
         )?;
@@ -88,6 +107,9 @@ impl SignalStore for SqlBackend {
     async fn load_prekey(&self, id: u32) -> Result<Option<Bytes>> {
         let row =
             scalar_optional_sql!(Vec<u8>, &self.pool, LOAD_PREKEY, id as i32, self.device_id)?;
+        let row = row
+            .map(|stored| self.open_at("prekeys", "key", &id.to_be_bytes(), &stored))
+            .transpose()?;
         Ok(row.map(Bytes::from))
     }
 
@@ -104,24 +126,27 @@ impl SignalStore for SqlBackend {
     // --- Signed PreKeys ---
 
     async fn store_signed_prekey(&self, id: u32, record: &[u8]) -> Result<()> {
+        let sealed = self.seal_at("signed_prekeys", "record", &id.to_be_bytes(), record)?;
         execute_sql!(
             &self.pool,
             STORE_SIGNED_PREKEY,
             id as i32,
-            record,
+            &sealed[..],
             self.device_id
         )?;
         Ok(())
     }
 
     async fn load_signed_prekey(&self, id: u32) -> Result<Option<Vec<u8>>> {
-        scalar_optional_sql!(
+        let row = scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
             LOAD_SIGNED_PREKEY,
             id as i32,
             self.device_id
-        )
+        )?;
+        row.map(|stored| self.open_at("signed_prekeys", "record", &id.to_be_bytes(), &stored))
+            .transpose()
     }
 
     async fn load_all_signed_prekeys(&self) -> Result<Vec<(u32, Vec<u8>)>> {
@@ -131,7 +156,13 @@ impl SignalStore for SqlBackend {
             LOAD_ALL_SIGNED_PREKEYS,
             self.device_id
         )?;
-        Ok(rows.into_iter().map(|(id, rec)| (id as u32, rec)).collect())
+        rows.into_iter()
+            .map(|(id, stored)| {
+                let record =
+                    self.open_at("signed_prekeys", "record", &id.to_be_bytes(), &stored)?;
+                Ok((id as u32, record))
+            })
+            .collect()
     }
 
     async fn remove_signed_prekey(&self, id: u32) -> Result<()> {
@@ -142,12 +173,22 @@ impl SignalStore for SqlBackend {
     // --- Sender Keys ---
 
     async fn put_sender_key(&self, address: &str, record: &[u8]) -> Result<()> {
-        execute_sql!(&self.pool, PUT_SENDER_KEY, address, record, self.device_id)?;
+        let sealed = self.seal_at("sender_keys", "record", address.as_bytes(), record)?;
+        execute_sql!(
+            &self.pool,
+            PUT_SENDER_KEY,
+            address,
+            &sealed[..],
+            self.device_id
+        )?;
         Ok(())
     }
 
     async fn get_sender_key(&self, address: &str) -> Result<Option<Vec<u8>>> {
-        scalar_optional_sql!(Vec<u8>, &self.pool, GET_SENDER_KEY, address, self.device_id)
+        let row =
+            scalar_optional_sql!(Vec<u8>, &self.pool, GET_SENDER_KEY, address, self.device_id)?;
+        row.map(|stored| self.open_at("sender_keys", "record", address.as_bytes(), &stored))
+            .transpose()
     }
 
     async fn delete_sender_key(&self, address: &str) -> Result<()> {
@@ -158,7 +199,7 @@ impl SignalStore for SqlBackend {
     // --- Batches (#104): one transaction or one query per chunk, see `signal_sql` ---
 
     async fn put_identities_batch(&self, identities: &[(Arc<str>, [u8; 32])]) -> Result<()> {
-        signal_sql::put_identities(&self.pool, self.device_id, identities).await
+        signal_sql::put_identities(&self.pool, &self.cipher, self.device_id, identities).await
     }
 
     async fn delete_identities_batch(&self, addresses: &[Arc<str>]) -> Result<()> {
@@ -166,11 +207,11 @@ impl SignalStore for SqlBackend {
     }
 
     async fn put_sessions_batch(&self, sessions: &[(Arc<str>, Bytes)]) -> Result<()> {
-        signal_sql::put_sessions(&self.pool, self.device_id, sessions).await
+        signal_sql::put_sessions(&self.pool, &self.cipher, self.device_id, sessions).await
     }
 
     async fn get_sessions_batch(&self, addresses: &[Arc<str>]) -> Result<Vec<(Arc<str>, Bytes)>> {
-        signal_sql::get_sessions(&self.pool, self.device_id, addresses).await
+        signal_sql::get_sessions(&self.pool, &self.cipher, self.device_id, addresses).await
     }
 
     async fn delete_sessions_batch(&self, addresses: &[Arc<str>]) -> Result<()> {
@@ -178,11 +219,11 @@ impl SignalStore for SqlBackend {
     }
 
     async fn store_prekeys_batch(&self, keys: &[(u32, Bytes)], uploaded: bool) -> Result<()> {
-        signal_sql::store_prekeys(&self.pool, self.device_id, keys, uploaded).await
+        signal_sql::store_prekeys(&self.pool, &self.cipher, self.device_id, keys, uploaded).await
     }
 
     async fn load_prekeys_batch(&self, ids: &[u32]) -> Result<Vec<(u32, Bytes)>> {
-        signal_sql::load_prekeys(&self.pool, self.device_id, ids).await
+        signal_sql::load_prekeys(&self.pool, &self.cipher, self.device_id, ids).await
     }
 
     async fn remove_prekeys_batch(&self, ids: &[u32]) -> Result<()> {
@@ -190,7 +231,7 @@ impl SignalStore for SqlBackend {
     }
 
     async fn put_sender_keys_batch(&self, sender_keys: &[(Arc<str>, Bytes)]) -> Result<()> {
-        signal_sql::put_sender_keys(&self.pool, self.device_id, sender_keys).await
+        signal_sql::put_sender_keys(&self.pool, &self.cipher, self.device_id, sender_keys).await
     }
 
     async fn delete_sender_keys_batch(&self, addresses: &[Arc<str>]) -> Result<()> {

@@ -9,6 +9,7 @@
 
 pub mod batch_chunks;
 pub mod bincode_upgrade;
+pub mod blob_cipher;
 pub mod blob_codec;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod engine;
@@ -17,13 +18,17 @@ pub(crate) mod protocol_rows;
 pub mod sql;
 pub mod sqlx_error;
 pub mod statements;
+pub(crate) mod store_encryption;
+pub mod store_key;
 #[cfg(feature = "turso")]
 pub mod turso;
 
 #[cfg(test)]
 mod engine_dispatch_tests;
 
+pub use blob_cipher::{BlobCipher, BlobContext};
 pub use engine::{AccountRow, StorageEngine};
+pub use store_key::{StoreKey, StoreKeyError};
 
 use std::sync::Arc;
 
@@ -40,12 +45,24 @@ pub async fn open_engine(
     database_url: &str,
     pg_max_connections: u32,
 ) -> Result<Arc<dyn StorageEngine>, StoreError> {
+    open_engine_keyed(database_url, pg_max_connections, None).await
+}
+
+/// `open_engine` with the store key (#164): the engine resolves it against the
+/// store's `store_encryption` state before any account is touched.
+pub async fn open_engine_keyed(
+    database_url: &str,
+    pg_max_connections: u32,
+    key: Option<&StoreKey>,
+) -> Result<Arc<dyn StorageEngine>, StoreError> {
     match dsn_scheme(database_url) {
         "postgres" | "postgresql" => Ok(Arc::new(
-            sql::SqlStore::open_postgres(database_url, pg_max_connections).await?,
+            sql::SqlStore::open_postgres_keyed(database_url, pg_max_connections, key).await?,
         )),
-        "sqlite" => Ok(Arc::new(sql::SqlStore::open_sqlite(database_url).await?)),
-        "turso" => open_turso(database_url).await,
+        "sqlite" => Ok(Arc::new(
+            sql::SqlStore::open_sqlite_keyed(database_url, key).await?,
+        )),
+        "turso" => open_turso(database_url, key).await,
         other => Err(StoreError::InvalidConfig(format!(
             "unsupported database_url scheme '{other}': expected one of \
              postgres://, postgresql://, sqlite://, turso://"
@@ -54,14 +71,22 @@ pub async fn open_engine(
 }
 
 #[cfg(feature = "turso")]
-async fn open_turso(database_url: &str) -> Result<Arc<dyn StorageEngine>, StoreError> {
-    Ok(Arc::new(turso::TursoStore::open(database_url).await?))
+async fn open_turso(
+    database_url: &str,
+    key: Option<&StoreKey>,
+) -> Result<Arc<dyn StorageEngine>, StoreError> {
+    Ok(Arc::new(
+        turso::TursoStore::open_keyed(database_url, key).await?,
+    ))
 }
 
 /// Without the feature the scheme is still recognized, so the operator is told
 /// what to rebuild with instead of getting "unsupported scheme" (#106).
 #[cfg(not(feature = "turso"))]
-async fn open_turso(database_url: &str) -> Result<Arc<dyn StorageEngine>, StoreError> {
+async fn open_turso(
+    database_url: &str,
+    _key: Option<&StoreKey>,
+) -> Result<Arc<dyn StorageEngine>, StoreError> {
     Err(StoreError::InvalidConfig(format!(
         "database_url '{database_url}' is a turso:// DSN, but this binary was compiled \
          without the `turso` feature: rebuild with `--features turso`"

@@ -6,6 +6,7 @@
 use wacore::store::error::Result;
 
 use super::SqlPool;
+use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::blob_codec::now_secs;
 use crate::storage::statements::tc_token::{STORE_RECEIVED, TOUCH_SENDER_TIMESTAMP};
 
@@ -37,16 +38,18 @@ pub(super) async fn touch_sender_timestamp(
 /// Never touches `sender_timestamp` of an existing row.
 pub(super) async fn store_received(
     pool: &SqlPool,
+    cipher: &BlobCipher,
     device_id: i32,
     jid: &str,
     token: &[u8],
     token_timestamp: i64,
 ) -> Result<()> {
+    let sealed = cipher.seal_at(device_id, "tc_tokens", "token", jid.as_bytes(), token)?;
     execute_sql!(
         pool,
         STORE_RECEIVED,
         jid,
-        token,
+        &sealed[..],
         token_timestamp,
         device_id,
         now_secs()

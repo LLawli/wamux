@@ -21,6 +21,20 @@ use wamux::{server, transport};
 #[cfg(feature = "stress")]
 pub mod mock_wire;
 
+/// `WAMUX_TEST_ENCRYPT=1` opens the file-backed engines (SQLite, Turso) with a
+/// store key, so a whole suite runs against sealed blobs (#164). Postgres is
+/// not keyed here: the shared test database would turn `encrypted` for good and
+/// refuse every later keyless run; its keyed case has a throwaway database.
+pub fn encrypted_tests() -> bool {
+    std::env::var("WAMUX_TEST_ENCRYPT").is_ok_and(|value| value == "1")
+}
+
+/// The key `encrypted_tests` opens with; `None` when the suite runs plaintext.
+pub fn test_store_key() -> Option<wamux::storage::StoreKey> {
+    // expect: a literal of 64 hex characters.
+    encrypted_tests().then(|| wamux::storage::StoreKey::parse_hex(&"ab".repeat(32)).expect("hex"))
+}
+
 /// The dockerized test database (CLAUDE.md's wamux-pg on :5433) unless the
 /// environment points elsewhere — the single home of the default DSN.
 pub fn database_url() -> String {
@@ -61,7 +75,7 @@ pub async fn sqlite_engine() -> (Arc<SqlStore>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("wamux-test.db");
     let url = format!("sqlite://{}?mode=rwc", path.display());
-    let engine = SqlStore::open_sqlite(&url)
+    let engine = SqlStore::open_sqlite_keyed(&url, test_store_key().as_ref())
         .await
         .expect("open sqlite storage");
     (Arc::new(engine), dir)
@@ -72,7 +86,7 @@ pub async fn sqlite_engine() -> (Arc<SqlStore>, tempfile::TempDir) {
 pub async fn turso_engine() -> (Arc<wamux::storage::turso::TursoStore>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let url = format!("turso://{}", dir.path().join("wamux-test.db").display());
-    let engine = wamux::storage::turso::TursoStore::open(&url)
+    let engine = wamux::storage::turso::TursoStore::open_keyed(&url, test_store_key().as_ref())
         .await
         .expect("open turso storage");
     (Arc::new(engine), dir)

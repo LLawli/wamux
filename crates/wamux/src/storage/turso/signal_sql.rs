@@ -16,6 +16,7 @@ use super::exec::{binds, with_list};
 use super::row_values::{blob, int32, text};
 use super::{TursoConn, TursoTx};
 use crate::storage::batch_chunks::padded_chunks;
+use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::statements::signal::{
     DELETE_IDENTITY, DELETE_PREKEY, DELETE_SENDER_KEY, DELETE_SESSION, MARK_PREKEY_UPLOADED,
     PUT_IDENTITY, PUT_SENDER_KEY, PUT_SESSION, SELECT_PREKEYS, SELECT_SESSIONS, STORE_PREKEY,
@@ -36,6 +37,7 @@ pub(super) async fn mark_uploaded(conn: &TursoConn, device_id: i32, ids: &[u32])
 
 pub(super) async fn put_identities(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     identities: &[(Arc<str>, [u8; 32])],
 ) -> Result<()> {
@@ -44,7 +46,8 @@ pub(super) async fn put_identities(
     }
     let tx = TursoTx::begin(conn).await?;
     for (address, key) in identities {
-        let binds = binds![&**address, &key[..], device_id];
+        let sealed = cipher.seal_at(device_id, "identities", "key", address.as_bytes(), key)?;
+        let binds = binds![&**address, sealed, device_id];
         tx.execute(PUT_IDENTITY, binds).await?;
     }
     tx.commit().await
@@ -60,10 +63,12 @@ pub(super) async fn delete_identities(
 
 pub(super) async fn put_sessions(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     sessions: &[(Arc<str>, Bytes)],
 ) -> Result<()> {
-    put_address_records(conn, PUT_SESSION, device_id, sessions).await
+    let target = SealedColumn::new(PUT_SESSION, "sessions", "record");
+    put_address_records(conn, cipher, target, device_id, sessions).await
 }
 
 pub(super) async fn delete_sessions(
@@ -76,10 +81,12 @@ pub(super) async fn delete_sessions(
 
 pub(super) async fn put_sender_keys(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     sender_keys: &[(Arc<str>, Bytes)],
 ) -> Result<()> {
-    put_address_records(conn, PUT_SENDER_KEY, device_id, sender_keys).await
+    let target = SealedColumn::new(PUT_SENDER_KEY, "sender_keys", "record");
+    put_address_records(conn, cipher, target, device_id, sender_keys).await
 }
 
 pub(super) async fn delete_sender_keys(
@@ -92,6 +99,7 @@ pub(super) async fn delete_sender_keys(
 
 pub(super) async fn store_prekeys(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     keys: &[(u32, Bytes)],
     uploaded: bool,
@@ -101,7 +109,8 @@ pub(super) async fn store_prekeys(
     }
     let tx = TursoTx::begin(conn).await?;
     for (id, record) in keys {
-        let binds = binds![*id as i32, &record[..], uploaded, device_id];
+        let sealed = cipher.seal_at(device_id, "prekeys", "key", &id.to_be_bytes(), record)?;
+        let binds = binds![*id as i32, sealed, uploaded, device_id];
         tx.execute(STORE_PREKEY, binds).await?;
     }
     tx.commit().await
@@ -119,10 +128,25 @@ pub(super) async fn remove_prekeys(conn: &TursoConn, device_id: i32, ids: &[u32]
     tx.commit().await
 }
 
+/// The statement and the sealed column of an `(address, bytes)` upsert.
+#[derive(Clone, Copy)]
+struct SealedColumn {
+    sql: &'static str,
+    table: &'static str,
+    column: &'static str,
+}
+
+impl SealedColumn {
+    fn new(sql: &'static str, table: &'static str, column: &'static str) -> Self {
+        Self { sql, table, column }
+    }
+}
+
 /// Sessions and sender keys share a shape: `(address, bytes)` upserted by address.
 async fn put_address_records(
     conn: &TursoConn,
-    sql: &str,
+    cipher: &BlobCipher,
+    target: SealedColumn,
     device_id: i32,
     records: &[(Arc<str>, Bytes)],
 ) -> Result<()> {
@@ -131,8 +155,10 @@ async fn put_address_records(
     }
     let tx = TursoTx::begin(conn).await?;
     for (address, record) in records {
-        let binds = binds![&**address, &record[..], device_id];
-        tx.execute(sql, binds).await?;
+        let row = address.as_bytes();
+        let sealed = cipher.seal_at(device_id, target.table, target.column, row, record)?;
+        let binds = binds![&**address, sealed, device_id];
+        tx.execute(target.sql, binds).await?;
     }
     tx.commit().await
 }
@@ -156,6 +182,7 @@ async fn delete_by_address(
 /// Only the addresses that exist, in no particular order.
 pub(super) async fn get_sessions(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     addresses: &[Arc<str>],
 ) -> Result<Vec<(Arc<str>, Bytes)>> {
@@ -164,7 +191,11 @@ pub(super) async fn get_sessions(
         let list = chunk.iter().map(|address| (&**address).into());
         let binds = with_list(binds![device_id], list);
         for row in conn.fetch_all(SELECT_SESSIONS.as_str(), binds).await? {
-            found.push((Arc::from(text(&row, 0)?), Bytes::from(blob(&row, 1)?)));
+            let address = text(&row, 0)?;
+            let stored = blob(&row, 1)?;
+            let record =
+                cipher.open_at(device_id, "sessions", "record", address.as_bytes(), &stored)?;
+            found.push((Arc::from(address), Bytes::from(record)));
         }
     }
     Ok(found)
@@ -173,6 +204,7 @@ pub(super) async fn get_sessions(
 /// Only the ids that exist, in no particular order.
 pub(super) async fn load_prekeys(
     conn: &TursoConn,
+    cipher: &BlobCipher,
     device_id: i32,
     ids: &[u32],
 ) -> Result<Vec<(u32, Bytes)>> {
@@ -181,7 +213,10 @@ pub(super) async fn load_prekeys(
         let list = chunk.iter().map(|id| (*id as i32).into());
         let binds = with_list(binds![device_id], list);
         for row in conn.fetch_all(SELECT_PREKEYS.as_str(), binds).await? {
-            found.push((int32(&row, 0)? as u32, Bytes::from(blob(&row, 1)?)));
+            let id = int32(&row, 0)?;
+            let stored = blob(&row, 1)?;
+            let record = cipher.open_at(device_id, "prekeys", "key", &id.to_be_bytes(), &stored)?;
+            found.push((id as u32, Bytes::from(record)));
         }
     }
     Ok(found)

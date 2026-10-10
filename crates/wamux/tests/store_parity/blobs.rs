@@ -17,6 +17,7 @@ use wacore::store::traits::{
     AppStateSyncKey, Backend, DeviceInfo, DeviceListRecord, MsgSecretEntry, TcTokenEntry,
 };
 
+use crate::common;
 use crate::harness::{self, Harness, TwoAccounts};
 
 /// One engine, one account (`a` of the pair), ready for identical writes.
@@ -96,6 +97,12 @@ async fn write_signal_state(b: &dyn Backend) {
 
 /// Same signal writes on two engines, same bytes in every column.
 async fn signal_blobs_match(left: Side, right: Side) {
+    if common::encrypted_tests() {
+        // Sealed blobs differ by nonce; `store_encryption` covers what is stored.
+        left.drop().await;
+        right.drop().await;
+        return;
+    }
     for side in [&left, &right] {
         write_signal_state(&**side.backend()).await;
     }
@@ -157,6 +164,12 @@ async fn write_app_sync_state(b: &dyn Backend) {
 
 /// Same app_sync writes on two engines, same bytes in every column.
 async fn app_sync_blobs_match(left: Side, right: Side) {
+    if common::encrypted_tests() {
+        // Sealed blobs differ by nonce; `store_encryption` covers what is stored.
+        left.drop().await;
+        right.drop().await;
+        return;
+    }
     for side in [&left, &right] {
         write_app_sync_state(&**side.backend()).await;
     }
@@ -226,6 +239,12 @@ async fn write_protocol_state(b: &dyn Backend) {
 
 /// Same protocol writes on two engines, same bytes in every column.
 async fn protocol_blobs_match(left: Side, right: Side) {
+    if common::encrypted_tests() {
+        // Sealed blobs differ by nonce; `store_encryption` covers what is stored.
+        left.drop().await;
+        right.drop().await;
+        return;
+    }
     for side in [&left, &right] {
         write_protocol_state(&**side.backend()).await;
     }

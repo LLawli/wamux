@@ -25,6 +25,14 @@ pub(super) fn blob(row: &Row, column: usize) -> StoreResult<Vec<u8>> {
     }
 }
 
+pub(super) fn opt_blob(row: &Row, column: usize) -> StoreResult<Option<Vec<u8>>> {
+    match row.get_value(column).map_err(db)? {
+        Value::Null => Ok(None),
+        Value::Blob(bytes) => Ok(Some(bytes)),
+        other => Err(wrong_type(column, "a blob or NULL", &other)),
+    }
+}
+
 pub(super) fn text(row: &Row, column: usize) -> StoreResult<String> {
     match row.get_value(column).map_err(db)? {
         Value::Text(text) => Ok(text),

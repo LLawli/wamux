@@ -15,7 +15,7 @@ use crate::storage::statements::device::{CREATE_DEVICE, DEVICE_EXISTS, LOAD_DEVI
 #[async_trait]
 impl DeviceStore for TursoBackend {
     async fn save(&self, device: &Device) -> Result<()> {
-        let data = encode_device(device);
+        let data = self.seal_at("device", "data", b"", &encode_device(device))?;
         let binds = binds![self.device_id, data];
         self.conn.execute(SAVE_DEVICE, binds).await?;
         Ok(())
@@ -30,7 +30,9 @@ impl DeviceStore for TursoBackend {
             None => Ok(None),
             // decode_device restores the runtime-only fields (device_props
             // included), so what comes back is ready to use.
-            Some(bytes) => Ok(Some(decode_device(&bytes)?)),
+            Some(bytes) => Ok(Some(decode_device(
+                &self.open_at("device", "data", b"", &bytes)?,
+            )?)),
         }
     }
 
@@ -41,7 +43,7 @@ impl DeviceStore for TursoBackend {
     }
 
     async fn create(&self) -> Result<i32> {
-        let data = encode_device(&Device::new());
+        let data = self.seal_at("device", "data", b"", &encode_device(&Device::new()))?;
         let binds = binds![self.device_id, data];
         self.conn.execute(CREATE_DEVICE, binds).await?;
         Ok(self.device_id)

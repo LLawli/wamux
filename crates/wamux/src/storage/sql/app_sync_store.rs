@@ -11,6 +11,7 @@ use wacore::store::traits::{AppStateSyncKey, AppSyncStore};
 
 use super::app_sync_sql;
 use super::{SqlBackend, SqlTx};
+use crate::storage::blob_cipher::joined_row;
 use crate::storage::blob_codec::{
     decode_app_state_sync_key, decode_hash_state, encode_app_state_sync_key, encode_hash_state,
 };
@@ -25,12 +26,16 @@ impl AppSyncStore for SqlBackend {
         let row = scalar_optional_sql!(Vec<u8>, &self.pool, GET_SYNC_KEY, key_id, self.device_id)?;
         match row {
             None => Ok(None),
-            Some(bytes) => Ok(Some(decode_app_state_sync_key(&bytes)?)),
+            Some(stored) => {
+                let bytes = self.open_at("app_state_keys", "key_data", key_id, &stored)?;
+                Ok(Some(decode_app_state_sync_key(&bytes)?))
+            }
         }
     }
 
     async fn set_sync_key(&self, key_id: &[u8], key: AppStateSyncKey) -> Result<()> {
         let data = encode_app_state_sync_key(&key);
+        let data = self.seal_at("app_state_keys", "key_data", key_id, &data)?;
         execute_sql!(&self.pool, SET_SYNC_KEY, key_id, &data, self.device_id)?;
         Ok(())
     }
@@ -44,7 +49,11 @@ impl AppSyncStore for SqlBackend {
         let row = scalar_optional_sql!(Vec<u8>, &self.pool, GET_VERSION, name, self.device_id)?;
         match row {
             None => Ok(None),
-            Some(bytes) => Ok(Some(decode_hash_state(&bytes)?)),
+            Some(stored) => {
+                let bytes =
+                    self.open_at("app_state_versions", "state_data", name.as_bytes(), &stored)?;
+                Ok(Some(decode_hash_state(&bytes)?))
+            }
         }
     }
 
@@ -58,6 +67,7 @@ impl AppSyncStore for SqlBackend {
 
     async fn set_version(&self, name: &str, state: HashState) -> Result<()> {
         let data = encode_hash_state(&state);
+        let data = self.seal_at("app_state_versions", "state_data", name.as_bytes(), &data)?;
         execute_sql!(&self.pool, SET_VERSION, name, &data, self.device_id)?;
         Ok(())
     }
@@ -69,19 +79,31 @@ impl AppSyncStore for SqlBackend {
         mutations: &[AppStateMutationMAC],
     ) -> Result<()> {
         let mut tx = SqlTx::begin(&self.pool).await?;
-        app_sync_sql::put_macs_in(&mut tx, self.device_id, name, version, mutations).await?;
+        app_sync_sql::put_macs_in(
+            &mut tx,
+            &self.cipher,
+            self.device_id,
+            name,
+            version,
+            mutations,
+        )
+        .await?;
         tx.commit().await
     }
 
     async fn get_mutation_mac(&self, name: &str, index_mac: &[u8]) -> Result<Option<Vec<u8>>> {
-        scalar_optional_sql!(
+        let stored = scalar_optional_sql!(
             Vec<u8>,
             &self.pool,
             GET_MUTATION_MAC,
             name,
             index_mac,
             self.device_id
-        )
+        )?;
+        let row = joined_row(&[name.as_bytes(), index_mac]);
+        stored
+            .map(|stored| self.open_at("app_state_mutation_macs", "value_mac", &row, &stored))
+            .transpose()
     }
 
     async fn delete_mutation_macs(&self, name: &str, index_macs: &[Vec<u8>]) -> Result<()> {
@@ -109,7 +131,8 @@ impl AppSyncStore for SqlBackend {
         name: &str,
         index_macs: &[[u8; 32]],
     ) -> Result<HashMap<[u8; 32], Vec<u8>>> {
-        app_sync_sql::get_mutation_macs(&self.pool, self.device_id, name, index_macs).await
+        app_sync_sql::get_mutation_macs(&self.pool, &self.cipher, self.device_id, name, index_macs)
+            .await
     }
 
     async fn commit_patch(
@@ -122,6 +145,7 @@ impl AppSyncStore for SqlBackend {
         let device_id = self.device_id;
         app_sync_sql::commit_patch(
             &self.pool,
+            &self.cipher,
             device_id,
             name,
             state,

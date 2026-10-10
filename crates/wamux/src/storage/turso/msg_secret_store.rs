@@ -9,9 +9,15 @@ use wacore::store::traits::{MsgSecretEntry, MsgSecretStore};
 use super::exec::binds;
 use super::row_values::{blob, first_blob, int};
 use super::{TursoBackend, TursoTx};
+use crate::storage::blob_cipher::joined_row;
 use crate::storage::statements::msg_secret::{
     DELETE_EXPIRED_MSG_SECRETS, GET_MSG_SECRET, GET_MSG_SECRET_WITH_TS, PUT_MSG_SECRET,
 };
+
+/// The AAD row key of `msg_secrets`: `chat | 0 | sender | 0 | msg_id`.
+fn secret_row(chat: &str, sender: &str, msg_id: &str) -> Vec<u8> {
+    joined_row(&[chat.as_bytes(), sender.as_bytes(), msg_id.as_bytes()])
+}
 
 #[async_trait]
 impl MsgSecretStore for TursoBackend {
@@ -23,11 +29,13 @@ impl MsgSecretStore for TursoBackend {
         }
         let tx = TursoTx::begin(&self.conn).await?;
         for e in &entries {
+            let row = secret_row(&e.chat, &e.sender, &e.msg_id);
+            let sealed = self.seal_at("msg_secrets", "secret", &row, e.secret.as_slice())?;
             let binds = binds![
                 &*e.chat,
                 &*e.sender,
                 &*e.msg_id,
-                e.secret.as_slice(),
+                sealed,
                 e.expires_at,
                 e.message_ts,
                 self.device_id
@@ -45,7 +53,11 @@ impl MsgSecretStore for TursoBackend {
         msg_id: &str,
     ) -> Result<Option<Vec<u8>>> {
         let binds = binds![chat, sender, msg_id, self.device_id];
-        first_blob(self.conn.fetch_optional(GET_MSG_SECRET, binds).await?)
+        let row = self.conn.fetch_optional(GET_MSG_SECRET, binds).await?;
+        let row_key = secret_row(chat, sender, msg_id);
+        first_blob(row)?
+            .map(|stored| self.open_at("msg_secrets", "secret", &row_key, &stored))
+            .transpose()
     }
 
     /// Overridden rather than defaulted: the default pairs the secret with a
@@ -61,8 +73,12 @@ impl MsgSecretStore for TursoBackend {
             .conn
             .fetch_optional(GET_MSG_SECRET_WITH_TS, binds)
             .await?;
-        row.map(|row| Ok((blob(&row, 0)?, int(&row, 1)?)))
-            .transpose()
+        let row_key = secret_row(chat, sender, msg_id);
+        row.map(|row| {
+            let secret = self.open_at("msg_secrets", "secret", &row_key, &blob(&row, 0)?)?;
+            Ok((secret, int(&row, 1)?))
+        })
+        .transpose()
     }
 
     /// `expires_at = 0` is "never" and is deliberately excluded from the sweep.
