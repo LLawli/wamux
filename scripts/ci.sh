@@ -60,6 +60,7 @@ turso_storage_cases() {
   must_run_tests --features turso --test store_file_mode turso_
   # #164: sealed columns on turso, and the whole parity suite with the key on.
   must_run_tests --features turso --test store_encryption turso_
+  must_run_tests --features turso --test store_conversion turso_
   WAMUX_TEST_ENCRYPT=1 must_run_tests --features turso --test store_parity turso_
 }
 
@@ -209,6 +210,8 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   must_run_tests --test store_parity sqlite_
   # #164: encryption at rest, and the parity suite again with the key on.
   must_run_tests --test store_encryption sqlite_
+  must_run_tests --test store_conversion sqlite_
+  must_run_tests --test store_cli
   WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
   # #65: a store the pre-unification code wrote, opened on the unified SQL.
   must_run_tests --test existing_store sqlite_
@@ -321,6 +324,10 @@ must_run_tests --test store_file_mode sqlite_
 # raw byte-parity tests skip when the key is on: sealed blobs differ by nonce.
 stage "store encryption"
 must_run_tests --test store_encryption
+# Turning a key on over a store with accounts, resuming, and `wamux store decrypt` (#165).
+must_run_tests --test store_conversion
+must_run_tests --test store_cli
+must_run_tests --test existing_store sqlite_store_written_before_unification_is_converted
 WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
 
 if [[ "$FULL" == 1 ]]; then
