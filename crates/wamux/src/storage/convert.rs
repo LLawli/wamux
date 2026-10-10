@@ -35,21 +35,48 @@ impl Direction {
     }
 }
 
-/// One blob of `column`, turned the way `direction` says. The row key comes
-/// from `sealed_columns`, the same rule the stores seal and open with. An empty
-/// blob stays empty (the cipher guarantees it).
+/// How one blob is turned: the cipher(s) and the way. Conversion and decrypt
+/// use one cipher (`Direction`); the rotation of #166 opens with one key and
+/// seals with another, in the same pass over the same columns.
+pub(crate) enum Turn<'a> {
+    Seal(&'a BlobCipher),
+    Open(&'a BlobCipher),
+    Rotate {
+        from: &'a BlobCipher,
+        to: &'a BlobCipher,
+    },
+}
+
+impl<'a> Turn<'a> {
+    /// The turn a conversion run of `direction` does with `cipher`.
+    pub(crate) fn of(direction: Direction, cipher: &'a BlobCipher) -> Self {
+        match direction {
+            Direction::Seal => Turn::Seal(cipher),
+            Direction::Open => Turn::Open(cipher),
+        }
+    }
+}
+
+/// One blob of `column`, turned the way `turn` says. The row key comes from
+/// `sealed_columns`, the same rule the stores seal and open with, and a
+/// rotation uses that one row key to open and to seal. An empty blob stays
+/// empty (the cipher guarantees it).
 pub(crate) fn turn_blob(
-    cipher: &BlobCipher,
-    direction: Direction,
+    turn: &Turn<'_>,
     device_id: i32,
     column: &SealedColumn,
     parts: &[RowPart],
     blob: &[u8],
 ) -> StoreResult<Vec<u8>> {
     let row = row_key(column, parts);
-    match direction {
-        Direction::Seal => cipher.seal_at(device_id, column.table, column.column, &row, blob),
-        Direction::Open => cipher.open_at(device_id, column.table, column.column, &row, blob),
+    let (table, name) = (column.table, column.column);
+    match turn {
+        Turn::Seal(cipher) => cipher.seal_at(device_id, table, name, &row, blob),
+        Turn::Open(cipher) => cipher.open_at(device_id, table, name, &row, blob),
+        Turn::Rotate { from, to } => {
+            let plain = from.open_at(device_id, table, name, &row, blob)?;
+            to.seal_at(device_id, table, name, &row, &plain)
+        }
     }
 }
 
@@ -79,11 +106,28 @@ mod tests {
         let cipher = BlobCipher::sealing(&key);
         let column = sealed_columns()[1];
         let parts = [RowPart::Text("alice@s.whatsapp.net".into())];
-        let sealed = turn_blob(&cipher, Direction::Seal, 4, &column, &parts, b"secret").unwrap();
+        let sealed = turn_blob(&Turn::Seal(&cipher), 4, &column, &parts, b"secret").unwrap();
         assert_ne!(sealed, b"secret");
-        let opened = turn_blob(&cipher, Direction::Open, 4, &column, &parts, &sealed).unwrap();
+        let opened = turn_blob(&Turn::Open(&cipher), 4, &column, &parts, &sealed).unwrap();
         assert_eq!(opened, b"secret");
-        let empty = turn_blob(&cipher, Direction::Seal, 4, &column, &parts, b"").unwrap();
+        let empty = turn_blob(&Turn::Seal(&cipher), 4, &column, &parts, b"").unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn a_rotated_blob_opens_with_the_new_cipher_only() {
+        let old = BlobCipher::sealing(&StoreKey::parse_hex(&"ab".repeat(32)).unwrap());
+        let new = BlobCipher::sealing(&StoreKey::parse_hex(&"cd".repeat(32)).unwrap());
+        let column = sealed_columns()[1];
+        let parts = [RowPart::Text("alice@s.whatsapp.net".into())];
+        let sealed = turn_blob(&Turn::Seal(&old), 4, &column, &parts, b"secret").unwrap();
+        let rotate = Turn::Rotate {
+            from: &old,
+            to: &new,
+        };
+        let rotated = turn_blob(&rotate, 4, &column, &parts, &sealed).unwrap();
+        let opened = turn_blob(&Turn::Open(&new), 4, &column, &parts, &rotated).unwrap();
+        assert_eq!(opened, b"secret");
+        assert!(turn_blob(&Turn::Open(&old), 4, &column, &parts, &rotated).is_err());
     }
 }

@@ -13,7 +13,7 @@ use wacore::store::error::{Result as StoreResult, StoreError};
 
 use super::{SqlPool, SqlTx};
 use crate::storage::blob_cipher::BlobCipher;
-use crate::storage::convert::{Direction, accounts_left, turn_blob};
+use crate::storage::convert::{Direction, Turn, accounts_left, turn_blob};
 use crate::storage::sealed_columns::{KeyColumn, RowPart, SealedColumn, sealed_columns};
 use crate::storage::sqlx_error::db;
 use crate::storage::statements::convert::{
@@ -59,8 +59,9 @@ async fn convert_account(
     is_last: bool,
 ) -> StoreResult<()> {
     let mut tx = SqlTx::begin(pool).await?;
+    let turn = Turn::of(direction, cipher);
     for column in sealed_columns() {
-        convert_column(&mut tx, cipher, direction, device_id, column).await?;
+        convert_column(&mut tx, &turn, device_id, column).await?;
     }
     execute_sql!(in tx, INSERT_PROGRESS, device_id)?;
     if is_last {
@@ -84,10 +85,11 @@ async fn finish_alone(pool: &SqlPool, direction: Direction) -> StoreResult<()> {
     tx.commit().await
 }
 
-async fn convert_column(
+/// Turn every row of one column of one account inside `tx`. The rotation of
+/// #166 calls this for all accounts in its single transaction.
+pub(super) async fn convert_column(
     mut tx: &mut SqlTx<'static>,
-    cipher: &BlobCipher,
-    direction: Direction,
+    turn: &Turn<'_>,
     device_id: i32,
     column: &SealedColumn,
 ) -> StoreResult<()> {
@@ -99,7 +101,7 @@ async fn convert_column(
     })
     .map_err(db)?;
     for (parts, blob) in rows {
-        let turned = turn_blob(cipher, direction, device_id, column, &parts, &blob)?;
+        let turned = turn_blob(turn, device_id, column, &parts, &blob)?;
         write_row(tx, &update, device_id, &parts, turned).await?;
     }
     Ok(())
@@ -177,8 +179,9 @@ async fn scrub_sqlite(pool: &sqlx::SqlitePool) -> StoreResult<()> {
         .map_err(db)?;
     if busy != 0 {
         return Err(StoreError::Connection(
-            "the WAL could not be truncated after the conversion, so the old plaintext may \
-             still be in the -wal file: stop whatever else has the store open and run again"
+            "the WAL could not be truncated after the secret columns were rewritten, so their \
+             old bytes may still be in the -wal file: stop whatever else has the store open \
+             and run again"
                 .into(),
         ));
     }

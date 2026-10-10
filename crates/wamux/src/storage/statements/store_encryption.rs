@@ -22,3 +22,10 @@ pub const HAS_PROGRESS: &str = "SELECT EXISTS(SELECT 1 FROM store_conversion_pro
 pub const MARK_CONVERTING: &str = "UPDATE store_encryption
      SET key_id = $1, verifier = $2
      WHERE id = 1 AND state = 'plaintext' AND verifier IS NULL";
+
+/// The last step of a rotation (#166), in the same transaction as the last
+/// re-sealed blob: the store names the new key and carries its verifier. Zero
+/// rows affected means the store stopped being encrypted under the run.
+pub const ROTATE_MARK: &str = "UPDATE store_encryption
+     SET key_id = $1, verifier = $2
+     WHERE id = 1 AND state = 'encrypted'";

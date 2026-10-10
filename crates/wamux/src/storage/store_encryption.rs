@@ -127,6 +127,51 @@ pub(crate) fn cipher_for_decrypt(
     Ok(verify_key(stored, key)?.cipher)
 }
 
+/// What `wamux store rotate-key` turns every blob with (#166): `from` opens
+/// what the old key sealed, `to` seals under the new one, and `mark` replaces
+/// the store's `key_id` and verifier in the same transaction as the last blob.
+pub(crate) struct Rotation {
+    pub from: BlobCipher,
+    pub to: BlobCipher,
+    pub mark: NewMark,
+}
+
+/// Check that `old` is the key this store is encrypted with and that `new` is a
+/// different one. A plaintext store (a half-done conversion included) and a
+/// half-done decrypt are refused: the rotation only turns a whole store.
+pub(crate) fn plan_rotation(
+    stored: &StoredEncryption,
+    has_progress: bool,
+    old: &StoreKey,
+    new: &StoreKey,
+) -> StoreResult<Rotation> {
+    if !stored.encrypted {
+        return Err(StoreError::InvalidConfig(
+            "this store is not encrypted, there is nothing to rotate (if a conversion to \
+             encrypted was interrupted, finish it by starting the daemon with its store_key_file)"
+                .into(),
+        ));
+    }
+    if has_progress {
+        return Err(decrypt_interrupted());
+    }
+    let from = verify_key(stored, old)?.cipher;
+    if old.id() == new.id() {
+        return Err(StoreError::InvalidConfig(format!(
+            "the new store key (id {}) is already the key this store is encrypted with",
+            key_id_hex(&new.id())
+        )));
+    }
+    let mark = new_encrypted_store(new)?
+        .mark
+        .ok_or_else(|| StoreError::InvalidConfig("the new key produced no mark".into()))?;
+    Ok(Rotation {
+        from,
+        to: BlobCipher::sealing(new),
+        mark,
+    })
+}
+
 fn decrypt_interrupted() -> StoreError {
     StoreError::InvalidConfig(
         "this store was being decrypted and the run was interrupted, so it is half plaintext: \
@@ -203,6 +248,10 @@ fn verify_key(stored: &StoredEncryption, key: &StoreKey) -> StoreResult<Resoluti
 fn hex_of(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+#[cfg(test)]
+#[path = "store_rotation_tests.rs"]
+mod rotation_tests;
 
 #[cfg(test)]
 mod tests {

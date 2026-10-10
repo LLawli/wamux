@@ -74,6 +74,49 @@ pub async fn decrypt_engine(
     }
 }
 
+/// Re-seal every blob of an encrypted store under a new key (#166): `wamux
+/// store rotate-key`. Opens the store without serving it, checks `old` against
+/// the store's verifier, turns every account in ONE transaction (an interrupted
+/// run leaves the store whole under `old`), replaces the store's key id and
+/// verifier, then scrubs the old blobs out of the file. Returns how many
+/// accounts it rotated. The daemon must be stopped.
+pub async fn rotate_engine(
+    database_url: &str,
+    pg_max_connections: u32,
+    old: &StoreKey,
+    new: &StoreKey,
+) -> Result<usize, StoreError> {
+    match dsn_scheme(database_url) {
+        "postgres" | "postgresql" => {
+            sql::SqlStore::rotate_postgres(database_url, pg_max_connections, old, new).await
+        }
+        "sqlite" => sql::SqlStore::rotate_sqlite(database_url, old, new).await,
+        "turso" => rotate_turso(database_url, old, new).await,
+        other => Err(StoreError::InvalidConfig(format!(
+            "unsupported database_url scheme '{other}': expected one of \
+             postgres://, postgresql://, sqlite://, turso://"
+        ))),
+    }
+}
+
+#[cfg(feature = "turso")]
+async fn rotate_turso(
+    database_url: &str,
+    old: &StoreKey,
+    new: &StoreKey,
+) -> Result<usize, StoreError> {
+    turso::TursoStore::rotate(database_url, old, new).await
+}
+
+#[cfg(not(feature = "turso"))]
+async fn rotate_turso(
+    database_url: &str,
+    _old: &StoreKey,
+    _new: &StoreKey,
+) -> Result<usize, StoreError> {
+    Err(turso_feature_missing(database_url))
+}
+
 #[cfg(feature = "turso")]
 async fn decrypt_turso(database_url: &str, key: &StoreKey) -> Result<usize, StoreError> {
     turso::TursoStore::decrypt(database_url, key).await

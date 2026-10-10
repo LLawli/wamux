@@ -10,7 +10,7 @@ use super::TursoConn;
 use super::row_values::{blob, int, int32, text};
 use super::transaction::TursoTx;
 use crate::storage::blob_cipher::BlobCipher;
-use crate::storage::convert::{Direction, accounts_left, turn_blob};
+use crate::storage::convert::{Direction, Turn, accounts_left, turn_blob};
 use crate::storage::sealed_columns::{KeyColumn, RowPart, SealedColumn, sealed_columns};
 use crate::storage::statements::convert::{
     CLEAR_PROGRESS, INSERT_PROGRESS, SELECT_ACCOUNT_IDS, SELECT_PROGRESS, VACUUM_FILE,
@@ -60,8 +60,9 @@ async fn convert_account(
     is_last: bool,
 ) -> StoreResult<()> {
     let tx = TursoTx::begin(conn).await?;
+    let turn = Turn::of(direction, cipher);
     for column in sealed_columns() {
-        convert_column(&tx, cipher, direction, device_id, column).await?;
+        convert_column(&tx, &turn, device_id, column).await?;
     }
     tx.execute(INSERT_PROGRESS, vec![Value::Integer(i64::from(device_id))])
         .await?;
@@ -85,10 +86,11 @@ async fn finish_alone(conn: &TursoConn, direction: Direction) -> StoreResult<()>
     tx.commit().await
 }
 
-async fn convert_column(
+/// Turn every row of one column of one account inside `tx`. The rotation of
+/// #166 calls this for all accounts in its single transaction.
+pub(super) async fn convert_column(
     tx: &TursoTx<'_>,
-    cipher: &BlobCipher,
-    direction: Direction,
+    turn: &Turn<'_>,
     device_id: i32,
     column: &SealedColumn,
 ) -> StoreResult<()> {
@@ -99,7 +101,7 @@ async fn convert_column(
     let update = update_row(column);
     for row in &fetched {
         let (parts, stored) = read_row(row, column)?;
-        let turned = turn_blob(cipher, direction, device_id, column, &parts, &stored)?;
+        let turned = turn_blob(turn, device_id, column, &parts, &stored)?;
         let mut binds = vec![Value::Blob(turned), device.clone()];
         binds.extend(parts.iter().map(part_value));
         tx.execute(&update, binds).await?;
@@ -141,8 +143,9 @@ pub(super) async fn scrub_old_plaintext(conn: &TursoConn) -> StoreResult<()> {
         .unwrap_or(0);
     if busy != 0 {
         return Err(StoreError::Connection(
-            "the WAL could not be truncated after the conversion, so the old plaintext may \
-             still be in the -wal file: stop whatever else has the store open and run again"
+            "the WAL could not be truncated after the secret columns were rewritten, so their \
+             old bytes may still be in the -wal file: stop whatever else has the store open \
+             and run again"
                 .into(),
         ));
     }

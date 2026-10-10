@@ -1,4 +1,5 @@
-//! #165: `wamux store decrypt --yes`, through the real binary. The library tests
+//! #165: `wamux store decrypt --yes`, through the real binary (and, #166,
+//! `wamux store rotate-key`). The library tests
 //! (`store_conversion.rs`) cover the decryption itself; these cover what an
 //! operator meets: the confirmation, the key file, the exit codes and that
 //! `wamux` with no arguments still serves.
@@ -221,4 +222,96 @@ fn no_arguments_still_starts_the_daemon() {
         // not a sync point: the socket appearing is the signal, polled with a deadline; an external process offers nothing to await
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// #166: a key file for the rotation, next to the configured one.
+fn write_new_key_file(setup: &Setup, mode: u32) -> PathBuf {
+    let path = setup.dir.path().join("new-store-key");
+    fs::write(&path, format!("{}\n", KEY_B.repeat(32))).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+    path
+}
+
+#[tokio::test]
+async fn store_rotate_key_rotates_an_encrypted_sqlite_store() {
+    let setup = Setup::new();
+    setup.encrypted_store().await;
+    let key_file = setup.key_file();
+    let new_key_file = write_new_key_file(&setup, 0o600);
+    let new_path = new_key_file.to_str().unwrap();
+    let output = setup
+        .wamux(
+            &["store", "rotate-key", "--new-key-file", new_path],
+            Some(&key_file),
+        )
+        .run();
+    assert!(output.status.success(), "{}", text(&output));
+    let shown = text(&output);
+    assert!(shown.contains("rotated 2 account"), "{shown}");
+    let new_id = wamux::storage::store_key::key_id_hex(&key(KEY_B).id());
+    assert!(shown.contains(&new_id), "the new key id {new_id}: {shown}");
+
+    let refused = SqlStore::open_sqlite_keyed(&setup.url(), Some(&key(KEY_A))).await;
+    assert!(refused.is_err(), "the old key still opens the store");
+    let store = SqlStore::open_sqlite_keyed(&setup.url(), Some(&key(KEY_B)))
+        .await
+        .expect("opens with the new key");
+    assert_eq!(store.encryption_state().await, "encrypted");
+    for blob in store.blobs("sessions", "record").await {
+        assert_eq!(blob[1..5], key(KEY_B).id(), "sealed under the new key");
+    }
+}
+
+#[tokio::test]
+async fn store_rotate_key_refuses_a_new_key_file_readable_by_others() {
+    let setup = Setup::new();
+    setup.encrypted_store().await;
+    let key_file = setup.key_file();
+    let new_key_file = write_new_key_file(&setup, 0o644);
+    let new_path = new_key_file.to_str().unwrap();
+    let output = setup
+        .wamux(
+            &["store", "rotate-key", "--new-key-file", new_path],
+            Some(&key_file),
+        )
+        .run();
+    assert!(!output.status.success(), "{}", text(&output));
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(text(&output).contains(new_path), "{}", text(&output));
+    SqlStore::open_sqlite_keyed(&setup.url(), Some(&key(KEY_A)))
+        .await
+        .expect("still under the old key");
+}
+
+#[tokio::test]
+async fn store_rotate_key_without_a_key_file_refuses() {
+    let setup = Setup::new();
+    setup.encrypted_store().await;
+    let new_key_file = write_new_key_file(&setup, 0o600);
+    let new_path = new_key_file.to_str().unwrap();
+    let output = setup
+        .wamux(&["store", "rotate-key", "--new-key-file", new_path], None)
+        .run();
+    // 1, not 2: the command was understood and refused, not misread.
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("store_key_file"),
+        "{}",
+        text(&output)
+    );
+    SqlStore::open_sqlite_keyed(&setup.url(), Some(&key(KEY_A)))
+        .await
+        .expect("still under the old key");
+}
+
+#[test]
+fn store_rotate_key_without_new_key_file_exits_2() {
+    let setup = Setup::new();
+    let output = setup.wamux(&["store", "rotate-key"], None).run();
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("wamux store rotate-key --new-key-file"),
+        "the usage names the command: {}",
+        text(&output)
+    );
 }
