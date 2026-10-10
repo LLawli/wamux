@@ -4,6 +4,7 @@
 //! gRPC socket. Relay-pure: only Signal/session state is persisted (Postgres);
 //! no business message history. Auth/permissions live in a separate edge.
 
+pub mod cli;
 pub mod config;
 pub mod domain;
 pub mod error;

@@ -34,6 +34,21 @@ pub async fn sqlite() -> (SqlStore, tempfile::TempDir) {
     (store, dir)
 }
 
+/// A copy of the SQLite fixture opened WITH a store key (#165): the plaintext
+/// store a 0.1.0 daemon wrote, converted on open.
+pub async fn sqlite_converted() -> (SqlStore, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let copy = dir.path().join("wamux.db");
+    std::fs::copy(fixture_file("wamux.db"), &copy).expect("copy the sqlite fixture");
+    let url = format!("sqlite://{}?mode=rwc", copy.display());
+    // expect: a literal of 64 hex characters.
+    let key = wamux::storage::StoreKey::parse_hex(&"ab".repeat(32)).expect("hex");
+    let store = SqlStore::open_sqlite_keyed(&url, Some(&key))
+        .await
+        .expect("convert the 0f40e34 sqlite store");
+    (store, dir)
+}
+
 /// A copy of the SQLite fixture, opened by the Turso engine (#106): a store
 /// sqlx wrote, migrated and read by the other family.
 #[cfg(feature = "turso")]

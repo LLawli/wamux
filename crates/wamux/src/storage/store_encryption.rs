@@ -2,17 +2,25 @@
 //! with what (#164). Pure: the engines read the `store_encryption` row and the
 //! account count, call `resolve`, and write the mark it asks for.
 //!
-//! The decision table:
+//! The decision table (#165 added the conversion rows; the progress column is
+//! `store_conversion_progress`, see migration 0006):
 //!
-//! | state     | accounts | key   | result                                  |
-//! |-----------|----------|-------|-----------------------------------------|
-//! | plaintext | none     | no    | plaintext, passthrough                  |
-//! | plaintext | none     | yes   | NEW store: mark encrypted, sealing      |
-//! | plaintext | some     | no    | plaintext, passthrough                  |
-//! | plaintext | some     | yes   | refused, converting is #165             |
-//! | encrypted | any      | no    | refused                                 |
-//! | encrypted | any      | wrong | refused (verifier does not open)        |
-//! | encrypted | any      | right | sealing                                 |
+//! | state     | verifier | progress | accounts | key   | result                         |
+//! |-----------|----------|----------|----------|-------|--------------------------------|
+//! | plaintext | none     | none     | any      | no    | plaintext, passthrough         |
+//! | plaintext | none     | none     | none     | yes   | NEW store: mark encrypted      |
+//! | plaintext | none     | none     | some     | yes   | CONVERT: mark the key, seal    |
+//! | plaintext | set      | any      | any      | right | RESUME the conversion          |
+//! | plaintext | set      | any      | any      | wrong | refused (does not match)       |
+//! | plaintext | set      | any      | any      | no    | refused (interrupted)          |
+//! | encrypted | set      | none     | any      | no    | refused                        |
+//! | encrypted | set      | none     | any      | wrong | refused (does not match)       |
+//! | encrypted | set      | none     | any      | right | sealing                        |
+//! | encrypted | set      | some     | any      | any   | refused (decrypt interrupted)  |
+//!
+//! A verifier next to the state `plaintext` means a conversion has begun: the
+//! key is written before the first account is sealed, so a different key on
+//! the retry is caught here instead of sealing the rest under a second key.
 //!
 //! A wrong key is caught here, on the verifier, and not on the first read of
 //! some account's session minutes later.
@@ -51,6 +59,9 @@ pub(crate) struct NewMark {
 pub(crate) struct Resolution {
     pub cipher: BlobCipher,
     pub mark: Option<NewMark>,
+    /// Seal every account still plaintext before the store is used (#165).
+    /// With a `mark` the conversion is new, without one it resumes.
+    pub convert: bool,
 }
 
 impl StoredEncryption {
@@ -81,30 +92,75 @@ impl StoredEncryption {
 pub(crate) fn resolve(
     stored: &StoredEncryption,
     has_accounts: bool,
+    has_progress: bool,
     key: Option<&StoreKey>,
 ) -> StoreResult<Resolution> {
     match (stored.encrypted, key) {
-        (false, None) => Ok(passthrough()),
-        (false, Some(_)) if has_accounts => Err(StoreError::InvalidConfig(
-            "store_key_file is set but this store is not encrypted yet and already has accounts: \
-             a key cannot be turned on over existing data until the store is converted \
-             (convert is not available in this version; use a new store, or remove store_key_file)"
-                .into(),
-        )),
-        (false, Some(key)) => new_encrypted_store(key),
+        (true, _) if has_progress => Err(decrypt_interrupted()),
         (true, None) => Err(StoreError::InvalidConfig(
             "this store is encrypted: set store_key_file (WAMUX_STORE_KEY_FILE) to the key file \
              it was created with"
                 .into(),
         )),
         (true, Some(key)) => verify_key(stored, key),
+        (false, key) if stored.verifier.is_some() => resume_conversion(stored, key),
+        (false, None) => Ok(passthrough()),
+        (false, Some(key)) if has_accounts => begin_conversion(key),
+        (false, Some(key)) => new_encrypted_store(key),
     }
+}
+
+/// The cipher `wamux store decrypt` opens the blobs with (#165): the store must
+/// be encrypted and the key must open its verifier. A half-finished decrypt
+/// passes (state `encrypted`, progress rows), which is how it resumes.
+pub(crate) fn cipher_for_decrypt(
+    stored: &StoredEncryption,
+    key: &StoreKey,
+) -> StoreResult<BlobCipher> {
+    if !stored.encrypted {
+        return Err(StoreError::InvalidConfig(
+            "this store is not encrypted, there is nothing to decrypt (if a conversion to \
+             encrypted was interrupted, finish it by starting the daemon with its store_key_file)"
+                .into(),
+        ));
+    }
+    Ok(verify_key(stored, key)?.cipher)
+}
+
+fn decrypt_interrupted() -> StoreError {
+    StoreError::InvalidConfig(
+        "this store was being decrypted and the run was interrupted, so it is half plaintext: \
+         finish it with `wamux store decrypt --yes` (with the same store_key_file) before \
+         starting the daemon"
+            .into(),
+    )
+}
+
+fn resume_conversion(stored: &StoredEncryption, key: Option<&StoreKey>) -> StoreResult<Resolution> {
+    let Some(key) = key else {
+        return Err(StoreError::InvalidConfig(
+            "this store was being converted to encrypted and the run was interrupted, so it is \
+             half sealed: set store_key_file (WAMUX_STORE_KEY_FILE) to the key the conversion \
+             started with to finish it"
+                .into(),
+        ));
+    };
+    let mut resolution = verify_key(stored, key)?;
+    resolution.convert = true;
+    Ok(resolution)
+}
+
+fn begin_conversion(key: &StoreKey) -> StoreResult<Resolution> {
+    let mut resolution = new_encrypted_store(key)?;
+    resolution.convert = true;
+    Ok(resolution)
 }
 
 fn passthrough() -> Resolution {
     Resolution {
         cipher: BlobCipher::passthrough(),
         mark: None,
+        convert: false,
     }
 }
 
@@ -117,6 +173,7 @@ fn new_encrypted_store(key: &StoreKey) -> StoreResult<Resolution> {
             key_id: key.id(),
             verifier,
         }),
+        convert: false,
     })
 }
 
@@ -127,7 +184,11 @@ fn verify_key(stored: &StoredEncryption, key: &StoreKey) -> StoreResult<Resoluti
         .as_deref()
         .map(|verifier| cipher.open(&VERIFIER_CONTEXT, verifier));
     if matches!(&opened, Some(Ok(plain)) if plain == VERIFIER_PLAINTEXT) {
-        return Ok(Resolution { cipher, mark: None });
+        return Ok(Resolution {
+            cipher,
+            mark: None,
+            convert: false,
+        });
     }
     let expected = stored
         .key_id
@@ -166,34 +227,71 @@ mod tests {
 
     #[test]
     fn a_new_store_with_a_key_asks_for_the_mark() {
-        let resolved = resolve(&plaintext(), false, Some(&key("ab"))).unwrap();
+        let resolved = resolve(&plaintext(), false, false, Some(&key("ab"))).unwrap();
         assert!(resolved.cipher.is_sealing());
-        assert!(resolved.mark.is_some());
+        assert!(resolved.mark.is_some() && !resolved.convert);
     }
 
     #[test]
     fn plaintext_stays_plaintext_without_a_key() {
         for has_accounts in [false, true] {
-            let resolved = resolve(&plaintext(), has_accounts, None).unwrap();
+            let resolved = resolve(&plaintext(), has_accounts, false, None).unwrap();
             assert!(!resolved.cipher.is_sealing() && resolved.mark.is_none());
+            assert!(!resolved.convert);
         }
     }
 
     #[test]
-    fn plaintext_with_accounts_refuses_a_key() {
-        let error = resolve(&plaintext(), true, Some(&key("ab"))).err().unwrap();
-        let shown = error.to_string();
-        assert!(shown.contains("not encrypted yet") && shown.contains("convert"));
+    fn plaintext_with_accounts_and_a_key_converts_and_marks_the_key_first() {
+        let resolved = resolve(&plaintext(), true, false, Some(&key("ab"))).unwrap();
+        assert!(resolved.cipher.is_sealing());
+        assert!(resolved.mark.is_some() && resolved.convert);
+    }
+
+    #[test]
+    fn an_interrupted_conversion_resumes_with_its_key_only() {
+        let stored = StoredEncryption {
+            encrypted: false,
+            ..encrypted_under(&key("ab"))
+        };
+        let resumed = resolve(&stored, true, true, Some(&key("ab"))).unwrap();
+        assert!(resumed.convert && resumed.mark.is_none());
+        let wrong = resolve(&stored, true, true, Some(&key("cd")))
+            .err()
+            .unwrap();
+        assert!(wrong.to_string().contains("does not match"));
+        let keyless = resolve(&stored, true, true, None)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(keyless.contains("interrupted") && keyless.contains("store_key_file"));
+    }
+
+    #[test]
+    fn an_encrypted_store_with_progress_is_a_half_finished_decrypt() {
+        let stored = encrypted_under(&key("ab"));
+        for key in [None, Some(key("ab")), Some(key("cd"))] {
+            let shown = resolve(&stored, true, true, key.as_ref())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(shown.contains("interrupted") && shown.contains("wamux store decrypt"));
+        }
     }
 
     #[test]
     fn an_encrypted_store_needs_its_own_key() {
         let stored = encrypted_under(&key("ab"));
-        let keyless = resolve(&stored, true, None).err().unwrap().to_string();
+        let keyless = resolve(&stored, true, false, None)
+            .err()
+            .unwrap()
+            .to_string();
         assert!(keyless.contains("store_key_file") && keyless.contains("encrypted"));
-        let wrong = resolve(&stored, true, Some(&key("cd"))).err().unwrap();
+        let wrong = resolve(&stored, true, false, Some(&key("cd")))
+            .err()
+            .unwrap();
         assert!(wrong.to_string().contains("does not match"));
-        let right = resolve(&stored, true, Some(&key("ab"))).unwrap();
-        assert!(right.cipher.is_sealing() && right.mark.is_none());
+        let right = resolve(&stored, true, false, Some(&key("ab"))).unwrap();
+        assert!(right.cipher.is_sealing() && right.mark.is_none() && !right.convert);
     }
 }

@@ -11,10 +11,12 @@ pub mod batch_chunks;
 pub mod bincode_upgrade;
 pub mod blob_cipher;
 pub mod blob_codec;
+pub(crate) mod convert;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod engine;
 pub(crate) mod file_mode;
 pub(crate) mod protocol_rows;
+pub mod sealed_columns;
 pub mod sql;
 pub mod sqlx_error;
 pub mod statements;
@@ -46,6 +48,40 @@ pub async fn open_engine(
     pg_max_connections: u32,
 ) -> Result<Arc<dyn StorageEngine>, StoreError> {
     open_engine_keyed(database_url, pg_max_connections, None).await
+}
+
+/// Turn an encrypted store back into plaintext (#165): `wamux store decrypt`.
+/// Opens the store WITHOUT resolving a cipher (it must open an encrypted store
+/// the daemon would refuse to serve half way), requires the key to match the
+/// store's verifier, and decrypts account by account, one transaction each,
+/// resuming an interrupted run. Returns how many accounts it decrypted in this
+/// run. The daemon must be stopped: nothing else may use the store meanwhile.
+pub async fn decrypt_engine(
+    database_url: &str,
+    pg_max_connections: u32,
+    key: &StoreKey,
+) -> Result<usize, StoreError> {
+    match dsn_scheme(database_url) {
+        "postgres" | "postgresql" => {
+            sql::SqlStore::decrypt_postgres(database_url, pg_max_connections, key).await
+        }
+        "sqlite" => sql::SqlStore::decrypt_sqlite(database_url, key).await,
+        "turso" => decrypt_turso(database_url, key).await,
+        other => Err(StoreError::InvalidConfig(format!(
+            "unsupported database_url scheme '{other}': expected one of \
+             postgres://, postgresql://, sqlite://, turso://"
+        ))),
+    }
+}
+
+#[cfg(feature = "turso")]
+async fn decrypt_turso(database_url: &str, key: &StoreKey) -> Result<usize, StoreError> {
+    turso::TursoStore::decrypt(database_url, key).await
+}
+
+#[cfg(not(feature = "turso"))]
+async fn decrypt_turso(database_url: &str, _key: &StoreKey) -> Result<usize, StoreError> {
+    Err(turso_feature_missing(database_url))
 }
 
 /// `open_engine` with the store key (#164): the engine resolves it against the
@@ -87,10 +123,15 @@ async fn open_turso(
     database_url: &str,
     _key: Option<&StoreKey>,
 ) -> Result<Arc<dyn StorageEngine>, StoreError> {
-    Err(StoreError::InvalidConfig(format!(
+    Err(turso_feature_missing(database_url))
+}
+
+#[cfg(not(feature = "turso"))]
+fn turso_feature_missing(database_url: &str) -> StoreError {
+    StoreError::InvalidConfig(format!(
         "database_url '{database_url}' is a turso:// DSN, but this binary was compiled \
          without the `turso` feature: rebuild with `--features turso`"
-    )))
+    ))
 }
 
 /// The scheme of a DSN: everything before the first `:`. Returns the whole

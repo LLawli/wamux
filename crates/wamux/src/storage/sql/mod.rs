@@ -24,6 +24,7 @@ mod app_sync_sql;
 mod app_sync_store;
 mod bincode_upgrade;
 mod connect;
+mod convert;
 mod device_store;
 mod maintenance_sql;
 mod msg_secret_store;
@@ -132,6 +133,41 @@ impl SqlStore {
         run_migrations(&pool).await?;
         let cipher = store_encryption_sql::open_cipher(&pool, key).await?;
         Ok(Self { pool, cipher })
+    }
+
+    /// `wamux store decrypt` on Postgres (#165): migrate, then decrypt every
+    /// account still sealed. No `SqlStore` comes out: the store is plaintext
+    /// afterwards and the caller is a one-shot command.
+    pub async fn decrypt_postgres(
+        database_url: &str,
+        max_connections: u32,
+        key: &StoreKey,
+    ) -> StoreResult<usize> {
+        let pool = connect_postgres(database_url, max_connections)
+            .await
+            .map_err(|e| StoreError::Connection(Box::new(e)))?;
+        Self::decrypt_pool(SqlPool::Pg(pool), key).await
+    }
+
+    /// `wamux store decrypt` on SQLite (#165).
+    pub async fn decrypt_sqlite(database_url: &str, key: &StoreKey) -> StoreResult<usize> {
+        secure_sqlite_file(database_url)?;
+        let pool = connect_sqlite(database_url)
+            .await
+            .map_err(|e| StoreError::Connection(Box::new(e)))?;
+        Self::decrypt_pool(SqlPool::Sqlite(pool), key).await
+    }
+
+    async fn decrypt_pool(pool: SqlPool, key: &StoreKey) -> StoreResult<usize> {
+        run_migrations(&pool).await?;
+        let decrypted = store_encryption_sql::decrypt_store(&pool, key).await;
+        // Close before returning so the file (and its lock) is free for the next
+        // opener, the command's caller included.
+        match &pool {
+            SqlPool::Pg(pool) => pool.close().await,
+            SqlPool::Sqlite(pool) => pool.close().await,
+        }
+        decrypted
     }
 
     /// Wrap an already-connected, already-migrated pool (bins and test

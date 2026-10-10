@@ -28,6 +28,20 @@ async fn sqlite_store_written_before_unification_reads_back() {
     checks::reads_back(&store, fixture::SQLITE_ACCOUNT).await;
 }
 
+/// #165: the same store, converted by turning a key on over it. Everything the
+/// pre-unification code wrote must read back through the traits.
+#[tokio::test]
+async fn sqlite_store_written_before_unification_is_converted_and_reads_back() {
+    let (store, _dir) = fixture::sqlite_converted().await;
+    checks::reads_back(&store, fixture::SQLITE_ACCOUNT).await;
+}
+
+#[tokio::test]
+async fn sqlite_store_written_before_unification_is_converted_and_keeps_working() {
+    let (store, _dir) = fixture::sqlite_converted().await;
+    checks::keeps_working(&store, fixture::SQLITE_ACCOUNT).await;
+}
+
 #[tokio::test]
 async fn postgres_store_written_before_unification_reads_back() {
     let (store, db) = fixture::postgres().await;

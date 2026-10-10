@@ -19,6 +19,7 @@ mod app_sync_sql;
 mod app_sync_store;
 mod bincode_upgrade;
 mod connection;
+mod convert;
 mod device_store;
 mod dsn;
 mod exec;
@@ -102,6 +103,27 @@ impl TursoStore {
             .map_err(|e| StoreError::Migration(Box::new(e)))?;
         let cipher = store_encryption_sql::open_cipher(&conn, key).await?;
         Ok(Self { conn, cipher })
+    }
+
+    /// `wamux store decrypt` on a turso store (#165): migrate, decrypt every
+    /// account still sealed, and release the file before returning.
+    pub async fn decrypt(database_url: &str, key: &StoreKey) -> StoreResult<usize> {
+        let path = Path::new(turso_path(database_url)?);
+        crate::storage::file_mode::secure_store_file(path)?;
+        let conn = TursoConn::open(path).await?;
+        let decrypted = Self::decrypt_open(&conn, key).await;
+        conn.close().await?;
+        decrypted
+    }
+
+    async fn decrypt_open(conn: &TursoConn, key: &StoreKey) -> StoreResult<usize> {
+        migrations::apply_pending(conn)
+            .await
+            .map_err(|e| StoreError::Migration(Box::new(e)))?;
+        bincode_upgrade::upgrade_bincode_blobs(conn)
+            .await
+            .map_err(|e| StoreError::Migration(Box::new(e)))?;
+        store_encryption_sql::decrypt_store(conn, key).await
     }
 
     /// Close the connection and release the file, its lock included, before

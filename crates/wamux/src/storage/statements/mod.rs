@@ -11,6 +11,7 @@
 pub mod accounts;
 pub mod app_sync;
 pub mod bincode_upgrade;
+pub mod convert;
 pub mod device;
 pub mod msg_secret;
 pub mod protocol;
