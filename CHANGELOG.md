@@ -21,7 +21,27 @@ has to follow them.
   decryption failures or a session reset; Turso runs `FULL`; Postgres is durable
   with its defaults. Moving SQLite to `FULL` with group commit is #169.
 
+- **Group commit on the Turso engine** (issue #172, part 1 of #169). Writers
+  that queue for the one connection at the same moment now share a transaction
+  and one COMMIT (one fsync) instead of one each; durability is unchanged
+  (`synchronous = FULL`, nobody is answered before the COMMIT that carries their
+  write, a failed COMMIT fails every write of the batch, a failed write rolls
+  back alone through a savepoint). There is no timer: a lone writer still
+  commits on its own. Measured with the new `commit_bench` on NVMe, 30 writes
+  per account: 10 accounts went from 756 to ~5,800 writes/s and 100 accounts
+  from ~650 to ~16,000 writes/s (p99 from 460 ms to ~9 ms); one account is
+  unchanged. A batch carries at most 128 writes. The mechanism lives in
+  `storage::group_commit`, engine-neutral, for the SQLite part (#173). No wire
+  or config change; Turso stays a non-default cargo feature.
+
 ### Added
+
+- **`commit_bench`** in `wamux-tools` (issue #172): N accounts write M sessions
+  at once on any `database_url`, every write waiting for its own commit, and it
+  prints writes per second, p50/p99 latency and writes per COMMIT. It refuses a
+  path on tmpfs, where an fsync costs nothing and the numbers would hide the
+  effect (`WAMUX_BENCH_ALLOW_TMPFS=1` runs anyway and marks the report).
+
 
 - **Encryption at rest, part 3 of 3: `wamux store rotate-key`** (issue #166,
   closes #76). `wamux store rotate-key --new-key-file <path>` re-seals every
