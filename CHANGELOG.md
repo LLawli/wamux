@@ -12,6 +12,15 @@ has to follow them.
 
 ## [Unreleased]
 
+### Changed
+
+- **The durability of each storage engine is documented** (no behavior change).
+  `docs/DEPLOYMENT.md` now says what survives a crash on each: SQLite runs WAL
+  with `synchronous = NORMAL` (inherited from the whatsapp-rust reference), so a
+  power loss can drop the last commits, which for Signal state can mean
+  decryption failures or a session reset; Turso runs `FULL`; Postgres is durable
+  with its defaults. Moving SQLite to `FULL` with group commit is #169.
+
 ### Added
 
 - **Encryption at rest, part 3 of 3: `wamux store rotate-key`** (issue #166,
