@@ -14,6 +14,28 @@ has to follow them.
 
 ### Added
 
+- **Encryption at rest, part 2 of 3: converting an existing store, and
+  `wamux store decrypt`** (issue #165, under #76). Turning `store_key_file` on
+  over a store that already has accounts now converts it when the daemon starts,
+  one transaction per account, instead of refusing. An interrupted conversion
+  resumes where it stopped and never seals a row twice (a new
+  `store_conversion_progress` table, migration 0006 in both directories); until
+  it finishes, a start without the key is refused ("interrupted") and a
+  different key is refused ("does not match"). When a conversion finishes the
+  daemon scrubs the plaintext the sealing left behind: SQLite and Turso run
+  `VACUUM` and a truncating WAL checkpoint (measured: an `UPDATE` alone leaves
+  the old bytes in free pages and in the WAL), Postgres runs `VACUUM FULL` on
+  the sealed tables. Backups, Postgres WAL archives and replicas made before the
+  conversion still hold plaintext and must be discarded. Turso's `VACUUM` is
+  experimental in turso 0.8.1 and is now switched on for that engine; the test
+  checks the file stays intact for sqlx afterwards.
+  `wamux store decrypt --yes` turns an encrypted store back into plaintext
+  (the same binary and config; it refuses without `--yes`, because it writes
+  every account's keys in the clear, and without `store_key_file`). Stop the
+  daemon before converting or decrypting with another process on the same store.
+  The pre-0.2 store fixture is converted in a test and reads back. Rotation is
+  #166.
+
 - **Encryption at rest for the store, part 1 of 3** (issue #164, under #76).
   A new `store_key_file` setting (the PATH of a file with 64 hex characters,
   mode `0600`; the key itself never comes from the environment or the TOML)
