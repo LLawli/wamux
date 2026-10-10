@@ -31,6 +31,7 @@ mod msg_secret_store;
 mod prekeys_sql;
 mod protocol_batch_sql;
 mod protocol_store;
+mod rotate;
 mod signal_sql;
 mod signal_store;
 mod store_encryption_sql;
@@ -168,6 +169,45 @@ impl SqlStore {
             SqlPool::Sqlite(pool) => pool.close().await,
         }
         decrypted
+    }
+
+    /// `wamux store rotate-key` on Postgres (#166).
+    pub async fn rotate_postgres(
+        database_url: &str,
+        max_connections: u32,
+        old: &StoreKey,
+        new: &StoreKey,
+    ) -> StoreResult<usize> {
+        let pool = connect_postgres(database_url, max_connections)
+            .await
+            .map_err(|e| StoreError::Connection(Box::new(e)))?;
+        Self::rotate_pool(SqlPool::Pg(pool), old, new).await
+    }
+
+    /// `wamux store rotate-key` on SQLite (#166).
+    pub async fn rotate_sqlite(
+        database_url: &str,
+        old: &StoreKey,
+        new: &StoreKey,
+    ) -> StoreResult<usize> {
+        secure_sqlite_file(database_url)?;
+        let pool = connect_sqlite(database_url)
+            .await
+            .map_err(|e| StoreError::Connection(Box::new(e)))?;
+        Self::rotate_pool(SqlPool::Sqlite(pool), old, new).await
+    }
+
+    async fn rotate_pool(pool: SqlPool, old: &StoreKey, new: &StoreKey) -> StoreResult<usize> {
+        let rotated = match run_migrations(&pool).await {
+            Ok(()) => store_encryption_sql::rotate_store(&pool, old, new).await,
+            Err(migration) => Err(migration),
+        };
+        // Close on success and on error alike, to free the file and its lock.
+        match &pool {
+            SqlPool::Pg(pool) => pool.close().await,
+            SqlPool::Sqlite(pool) => pool.close().await,
+        }
+        rotated
     }
 
     /// Wrap an already-connected, already-migrated pool (bins and test

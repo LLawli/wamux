@@ -45,6 +45,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Ok(Command::Serve) => serve().await.map(|()| ExitCode::SUCCESS),
         Ok(Command::StoreDecrypt { yes }) => store_decrypt(yes).await.map(|()| ExitCode::SUCCESS),
+        Ok(Command::StoreRotateKey { new_key_file }) => store_rotate_key(&new_key_file)
+            .await
+            .map(|()| ExitCode::SUCCESS),
     }
 }
 
@@ -71,6 +74,30 @@ async fn store_decrypt(yes: bool) -> anyhow::Result<()> {
         .await
         .context("decrypting the store")?;
     println!("decrypted {decrypted} account(s)");
+    Ok(())
+}
+
+/// `wamux store rotate-key --new-key-file <path>` (#166).
+async fn store_rotate_key(new_key_file: &Path) -> anyhow::Result<()> {
+    let config = Config::load().context("loading config")?;
+    init_tracing(&config);
+    let Some(old) = load_store_key(&config)? else {
+        anyhow::bail!(
+            "`wamux store rotate-key` needs store_key_file (WAMUX_STORE_KEY_FILE) set to the \
+             key the store is encrypted with now"
+        );
+    };
+    let path = new_key_file.display();
+    let new = StoreKey::from_file(new_key_file)
+        .with_context(|| format!("loading the new store key from {path}"))?;
+    let rotated =
+        storage::rotate_engine(&config.database_url, config.db_max_connections, &old, &new)
+            .await
+            .context("rotating the store key")?;
+    println!(
+        "rotated {rotated} account(s) to key id {}",
+        key_id_hex(&new.id())
+    );
     Ok(())
 }
 

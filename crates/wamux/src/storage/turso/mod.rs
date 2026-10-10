@@ -30,6 +30,7 @@ mod placeholders;
 mod protocol_batch_sql;
 mod protocol_decode;
 mod protocol_store;
+mod rotate;
 mod row_values;
 mod signal_sql;
 mod signal_store;
@@ -124,6 +125,27 @@ impl TursoStore {
             .await
             .map_err(|e| StoreError::Migration(Box::new(e)))?;
         store_encryption_sql::decrypt_store(conn, key).await
+    }
+
+    /// `wamux store rotate-key` on a turso store (#166): migrate, rotate, and
+    /// release the file before returning.
+    pub async fn rotate(database_url: &str, old: &StoreKey, new: &StoreKey) -> StoreResult<usize> {
+        let path = Path::new(turso_path(database_url)?);
+        crate::storage::file_mode::secure_store_file(path)?;
+        let conn = TursoConn::open(path).await?;
+        let rotated = Self::rotate_open(&conn, old, new).await;
+        conn.close().await?;
+        rotated
+    }
+
+    async fn rotate_open(conn: &TursoConn, old: &StoreKey, new: &StoreKey) -> StoreResult<usize> {
+        migrations::apply_pending(conn)
+            .await
+            .map_err(|e| StoreError::Migration(Box::new(e)))?;
+        bincode_upgrade::upgrade_bincode_blobs(conn)
+            .await
+            .map_err(|e| StoreError::Migration(Box::new(e)))?;
+        store_encryption_sql::rotate_store(conn, old, new).await
     }
 
     /// Close the connection and release the file, its lock included, before

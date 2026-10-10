@@ -13,7 +13,9 @@ use crate::storage::convert::Direction;
 use crate::storage::statements::store_encryption::{
     HAS_ACCOUNTS, HAS_PROGRESS, MARK_CONVERTING, MARK_ENCRYPTED, SELECT_STATE,
 };
-use crate::storage::store_encryption::{Resolution, StoredEncryption, cipher_for_decrypt, resolve};
+use crate::storage::store_encryption::{
+    Resolution, StoredEncryption, cipher_for_decrypt, plan_rotation, resolve,
+};
 use crate::storage::store_key::StoreKey;
 
 /// The cipher this store's backends must use, after refusing a key that does not
@@ -39,6 +41,20 @@ pub(super) async fn decrypt_store(conn: &TursoConn, key: &StoreKey) -> Result<us
     let stored = read_stored(conn).await?;
     let cipher = cipher_for_decrypt(&stored, key)?;
     super::convert::run(conn, &cipher, Direction::Open).await
+}
+
+/// Re-seal an encrypted store under `new` (#166). The plan, which refuses before
+/// anything is written, is made from the state read here, then the rotation
+/// runs in its one transaction.
+pub(super) async fn rotate_store(
+    conn: &TursoConn,
+    old: &StoreKey,
+    new: &StoreKey,
+) -> Result<usize> {
+    let stored = read_stored(conn).await?;
+    let has_progress = exists(conn, HAS_PROGRESS).await?;
+    let rotation = plan_rotation(&stored, has_progress, old, new)?;
+    super::rotate::run(conn, &rotation).await
 }
 
 async fn read_stored(conn: &TursoConn) -> Result<StoredEncryption> {
