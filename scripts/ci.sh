@@ -61,6 +61,7 @@ turso_storage_cases() {
   # #164: sealed columns on turso, and the whole parity suite with the key on.
   must_run_tests --features turso --test store_encryption turso_
   must_run_tests --features turso --test store_conversion turso_
+  must_run_tests --features turso --test store_rotation turso_
   WAMUX_TEST_ENCRYPT=1 must_run_tests --features turso --test store_parity turso_
 }
 
@@ -211,6 +212,7 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   # #164: encryption at rest, and the parity suite again with the key on.
   must_run_tests --test store_encryption sqlite_
   must_run_tests --test store_conversion sqlite_
+  must_run_tests --test store_rotation sqlite_
   must_run_tests --test store_cli
   WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
   # #65: a store the pre-unification code wrote, opened on the unified SQL.
