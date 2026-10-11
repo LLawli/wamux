@@ -8,12 +8,13 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use wamux::storage::StorageEngine;
+use wamux::storage::sql::SqlStore;
 use wamux_tools::commit_bench::{
     ALLOW_TMPFS_VAR, BenchReport, database_file_of, fs_type_of, run_writers, tmpfs_refusal,
 };
 
 const USAGE: &str = "usage: commit_bench <database_url> [accounts=10] [writes=30] [batch_cap]\n\
-    batch_cap applies to turso:// only (it needs the `turso` feature)";
+    batch_cap applies to sqlite://, and to turso:// (it needs the `turso` feature)";
 
 struct Args {
     database_url: String,
@@ -62,21 +63,49 @@ fn store_fs_type(database_url: &str) -> Option<String> {
     fs_type_of(&dir.join("store"), &mounts)
 }
 
-#[cfg(feature = "turso")]
-async fn open_store(args: &Args) -> anyhow::Result<Arc<dyn StorageEngine>> {
-    use wamux::storage::turso::TursoStore;
-    if let (true, Some(cap)) = (args.database_url.starts_with("turso://"), args.batch_cap) {
-        return Ok(Arc::new(
-            TursoStore::open_with_batch_cap(&args.database_url, cap).await?,
-        ));
+/// A store opened with the given batch cap, or `None` when the engine named
+/// by the DSN has no cap to set. `sqlite://` takes it always (#173); `turso://`
+/// only in a build with the `turso` feature.
+async fn open_with_cap(
+    database_url: &str,
+    cap: usize,
+) -> anyhow::Result<Option<Arc<dyn StorageEngine>>> {
+    if database_url.starts_with("sqlite:") {
+        let store = SqlStore::open_sqlite_with_batch_cap(database_url, cap).await?;
+        return Ok(Some(Arc::new(store)));
     }
-    Ok(wamux::storage::open_engine(&args.database_url, 16).await?)
+    open_turso_with_cap(database_url, cap).await
+}
+
+#[cfg(feature = "turso")]
+async fn open_turso_with_cap(
+    database_url: &str,
+    cap: usize,
+) -> anyhow::Result<Option<Arc<dyn StorageEngine>>> {
+    use wamux::storage::turso::TursoStore;
+    if !database_url.starts_with("turso://") {
+        return Ok(None);
+    }
+    let store = TursoStore::open_with_batch_cap(database_url, cap).await?;
+    Ok(Some(Arc::new(store)))
 }
 
 #[cfg(not(feature = "turso"))]
+async fn open_turso_with_cap(
+    _database_url: &str,
+    _cap: usize,
+) -> anyhow::Result<Option<Arc<dyn StorageEngine>>> {
+    Ok(None)
+}
+
 async fn open_store(args: &Args) -> anyhow::Result<Arc<dyn StorageEngine>> {
-    if args.batch_cap.is_some() {
-        eprintln!("note: batch_cap is ignored without the `turso` feature");
+    if let Some(cap) = args.batch_cap {
+        if let Some(store) = open_with_cap(&args.database_url, cap).await? {
+            return Ok(store);
+        }
+        eprintln!(
+            "note: batch_cap is ignored for this database_url (sqlite:// always, turso:// with the `turso` feature)"
+        );
     }
     Ok(wamux::storage::open_engine(&args.database_url, 16).await?)
 }
