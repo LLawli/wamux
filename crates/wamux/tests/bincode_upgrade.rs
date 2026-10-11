@@ -136,9 +136,9 @@ async fn legacy_sqlite(
         "sqlite://{}?mode=rwc",
         dir.path().join("legacy.db").display()
     );
-    let pool = sql::connect_sqlite(&url).await.unwrap();
+    let pool = raw_sqlite(&url).await;
     sql::SQLITE_MIGRATOR.run(&pool).await.unwrap();
-    let accounts = SqlStore::from_pool(SqlPool::Sqlite(pool.clone()));
+    let accounts = SqlStore::from_pool(SqlPool::Sqlite(sql::connect_sqlite(&url).await.unwrap()));
     let device_id = accounts
         .create_account(Some("upgrade"))
         .await
@@ -153,8 +153,20 @@ async fn legacy_sqlite(
             .device_id;
         insert_device_sqlite(&pool, other, &[0xFF; 9]).await;
     }
+    accounts
+        .close()
+        .await
+        .expect("close the store that made the accounts");
     pool.close().await;
     (url, dir, device_id)
+}
+
+/// A plain pool on the file, for the seeding and the probes below the store
+/// (#173): the store's own readers are read-only, and these tests write.
+async fn raw_sqlite(url: &str) -> SqlitePool {
+    SqlitePool::connect(url)
+        .await
+        .expect("open the sqlite file")
 }
 
 async fn insert_device_sqlite(pool: &SqlitePool, device_id: i32, blob: &[u8]) {
@@ -233,7 +245,7 @@ async fn sqlite_one_unreadable_row_aborts_the_conversion_and_changes_nothing() {
     let chain = format!("{:?}", anyhow::Error::from(err));
     assert!(chain.contains("not readable as bincode"), "{chain}");
 
-    let pool = sql::connect_sqlite(&url).await.unwrap();
+    let pool = raw_sqlite(&url).await;
     assert_eq!(
         sqlite_marker(&pool).await,
         "bincode",
@@ -320,7 +332,7 @@ mod turso_half {
         assert!(chain.contains("not readable as bincode"), "{chain}");
 
         // Read back through sqlx: the failed open must have let go of the file.
-        let pool = sql::connect_sqlite(&url).await.unwrap();
+        let pool = raw_sqlite(&url).await;
         assert_eq!(
             sqlite_marker(&pool).await,
             "bincode",
@@ -531,7 +543,7 @@ async fn check_versions(engine: &SqlStore, before: &RealStoreBefore) -> usize {
 async fn rehearse_the_conversion_on_a_copy_of_a_real_store() {
     let url = std::env::var("WAMUX_REHEARSAL_DB").expect("set WAMUX_REHEARSAL_DB");
     refuse_a_live_store(&url);
-    let pool = sql::connect_sqlite(&url).await.unwrap();
+    let pool = raw_sqlite(&url).await;
     let before = read_real_store(&pool).await;
     pool.close().await;
 

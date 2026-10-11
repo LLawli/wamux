@@ -43,7 +43,8 @@ use wacore::store::error::StoreError;
 /// The scheme picks the engine — there is no separate `storage_backend` knob,
 /// so a config can never name one engine and point at the other's database.
 /// `pg_max_connections` applies to Postgres only; the SQLite engine pins its
-/// pool to one connection on purpose (see `sql::connect_sqlite`). `turso://`
+/// writes through one connection and reads on read-only ones, on purpose (see
+/// `sql::connect_sqlite`, #173). `turso://`
 /// needs the `turso` cargo feature (#106) and takes no options.
 pub async fn open_engine(
     database_url: &str,

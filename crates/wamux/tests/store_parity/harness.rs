@@ -51,10 +51,10 @@ where
                 .fetch_all(pool)
                 .await
         }
-        SqlPool::Sqlite(pool) => {
+        SqlPool::Sqlite(conn) => {
             sqlx::query_scalar(&sql)
                 .bind(device_id)
-                .fetch_all(pool)
+                .fetch_all(conn.read_pool())
                 .await
         }
     };
@@ -88,11 +88,11 @@ impl RawProbe for SqlStore {
                     .fetch_optional(pool)
                     .await
             }
-            SqlPool::Sqlite(pool) => {
+            SqlPool::Sqlite(conn) => {
                 sqlx::query_scalar(sql)
                     .bind(device_id)
                     .bind(id as i32)
-                    .fetch_optional(pool)
+                    .fetch_optional(conn.read_pool())
                     .await
             }
         };

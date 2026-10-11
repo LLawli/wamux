@@ -34,6 +34,7 @@ mod protocol_store;
 mod rotate;
 mod signal_sql;
 mod signal_store;
+mod sqlite_conn;
 mod store_encryption_sql;
 mod tc_token_sql;
 mod transaction;
@@ -41,8 +42,8 @@ mod transaction;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use sqlx::PgPool;
 use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{PgPool, SqlitePool};
 use uuid::Uuid;
 use wacore::store::error::{Result as StoreResult, StoreError};
 use wacore::store::traits::Backend;
@@ -50,10 +51,13 @@ use wacore::store::traits::Backend;
 use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::engine::{AccountRow, StorageEngine};
 use crate::storage::file_mode;
+use crate::storage::group_commit::{CommitStats, DEFAULT_BATCH_CAP};
 use crate::storage::statements::PING;
 use crate::storage::store_key::StoreKey;
 
-pub use connect::{connect_postgres, connect_sqlite};
+pub use connect::{connect_postgres, connect_sqlite, connect_sqlite_with_batch_cap};
+pub use sqlite_conn::SqliteConn;
+pub(crate) use sqlite_conn::end_job;
 pub(crate) use transaction::SqlTx;
 
 /// The one pool a `SqlStore` runs on. Each method matches on it to pick the
@@ -61,7 +65,7 @@ pub(crate) use transaction::SqlTx;
 #[derive(Clone)]
 pub enum SqlPool {
     Pg(PgPool),
-    Sqlite(SqlitePool),
+    Sqlite(SqliteConn),
 }
 
 /// Embedded Postgres migrations (compiled in; no DB needed at build time).
@@ -77,12 +81,23 @@ pub static SQLITE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migratio
 pub async fn run_migrations(pool: &SqlPool) -> Result<(), StoreError> {
     let migrated = match pool {
         SqlPool::Pg(pool) => PG_MIGRATOR.run(pool).await,
-        SqlPool::Sqlite(pool) => SQLITE_MIGRATOR.run(pool).await,
+        SqlPool::Sqlite(lite) => migrate_sqlite(lite).await,
     };
     migrated.map_err(|e| StoreError::Migration(Box::new(e)))?;
     bincode_upgrade::upgrade_bincode_blobs(pool)
         .await
         .map_err(|e| StoreError::Migration(Box::new(e)))
+}
+
+/// The migrator needs a connection outside a transaction, and the writer is the
+/// only connection that may change the schema (#173). It is a plain connection,
+/// not a pool; the migrator runs on it as is.
+async fn migrate_sqlite(lite: &SqliteConn) -> Result<(), sqlx::migrate::MigrateError> {
+    let mut writer = lite
+        .lock_autocommit()
+        .await
+        .map_err(|e| sqlx::migrate::MigrateError::Execute(sqlx::Error::Protocol(e.to_string())))?;
+    SQLITE_MIGRATOR.run(&mut *writer).await
 }
 
 /// The SQL engine: one pool, the `accounts` table, one `SqlBackend` per account.
@@ -116,16 +131,44 @@ impl SqlStore {
         Self::open_sqlite_keyed(database_url, None).await
     }
 
+    /// `open_sqlite` with the most jobs one COMMIT carries (#173), for the bench.
+    pub async fn open_sqlite_with_batch_cap(
+        database_url: &str,
+        batch_cap: usize,
+    ) -> StoreResult<Self> {
+        Self::open_sqlite_capped(database_url, None, batch_cap).await
+    }
+
+    /// Commit what is pending and release the database (#173). Only possible
+    /// when no backend or clone still holds the store.
+    pub async fn close(self) -> StoreResult<()> {
+        match self.pool {
+            SqlPool::Pg(pool) => {
+                pool.close().await;
+                Ok(())
+            }
+            SqlPool::Sqlite(lite) => lite.close().await,
+        }
+    }
+
     /// `open_sqlite` with the store key (#164).
     pub async fn open_sqlite_keyed(
         database_url: &str,
         key: Option<&StoreKey>,
     ) -> StoreResult<Self> {
-        secure_sqlite_file(database_url)?;
-        let pool = connect_sqlite(database_url)
+        Self::open_sqlite_capped(database_url, key, DEFAULT_BATCH_CAP).await
+    }
+
+    async fn open_sqlite_capped(
+        database_url: &str,
+        key: Option<&StoreKey>,
+        batch_cap: usize,
+    ) -> StoreResult<Self> {
+        prepare_sqlite_file(database_url)?;
+        let lite = connect_sqlite_with_batch_cap(database_url, batch_cap)
             .await
             .map_err(|e| StoreError::Connection(Box::new(e)))?;
-        Self::migrated(SqlPool::Sqlite(pool), key).await
+        Self::migrated(SqlPool::Sqlite(lite), key).await
     }
 
     /// Migrate, then settle the store's encryption state against `key` before any
@@ -152,11 +195,11 @@ impl SqlStore {
 
     /// `wamux store decrypt` on SQLite (#165).
     pub async fn decrypt_sqlite(database_url: &str, key: &StoreKey) -> StoreResult<usize> {
-        secure_sqlite_file(database_url)?;
-        let pool = connect_sqlite(database_url)
+        prepare_sqlite_file(database_url)?;
+        let lite = connect_sqlite(database_url)
             .await
             .map_err(|e| StoreError::Connection(Box::new(e)))?;
-        Self::decrypt_pool(SqlPool::Sqlite(pool), key).await
+        Self::decrypt_pool(SqlPool::Sqlite(lite), key).await
     }
 
     async fn decrypt_pool(pool: SqlPool, key: &StoreKey) -> StoreResult<usize> {
@@ -164,11 +207,9 @@ impl SqlStore {
         let decrypted = store_encryption_sql::decrypt_store(&pool, key).await;
         // Close before returning so the file (and its lock) is free for the next
         // opener, the command's caller included.
-        match &pool {
-            SqlPool::Pg(pool) => pool.close().await,
-            SqlPool::Sqlite(pool) => pool.close().await,
-        }
-        decrypted
+        let closed = Self::from_pool(pool).close().await;
+        let count = decrypted?;
+        closed.map(|()| count)
     }
 
     /// `wamux store rotate-key` on Postgres (#166).
@@ -190,11 +231,11 @@ impl SqlStore {
         old: &StoreKey,
         new: &StoreKey,
     ) -> StoreResult<usize> {
-        secure_sqlite_file(database_url)?;
-        let pool = connect_sqlite(database_url)
+        prepare_sqlite_file(database_url)?;
+        let lite = connect_sqlite(database_url)
             .await
             .map_err(|e| StoreError::Connection(Box::new(e)))?;
-        Self::rotate_pool(SqlPool::Sqlite(pool), old, new).await
+        Self::rotate_pool(SqlPool::Sqlite(lite), old, new).await
     }
 
     async fn rotate_pool(pool: SqlPool, old: &StoreKey, new: &StoreKey) -> StoreResult<usize> {
@@ -203,11 +244,9 @@ impl SqlStore {
             Err(migration) => Err(migration),
         };
         // Close on success and on error alike, to free the file and its lock.
-        match &pool {
-            SqlPool::Pg(pool) => pool.close().await,
-            SqlPool::Sqlite(pool) => pool.close().await,
-        }
-        rotated
+        let closed = Self::from_pool(pool).close().await;
+        let count = rotated?;
+        closed.map(|()| count)
     }
 
     /// Wrap an already-connected, already-migrated pool (bins and test
@@ -253,9 +292,20 @@ impl StorageEngine for SqlStore {
     async fn ping_storage(&self) -> bool {
         // A trivial round-trip: proves the pool can hand out a live connection,
         // which is exactly what readiness means here.
-        on_sql_pool!(&self.pool, |conn| {
+        let pooled = on_sql_pool!(&self.pool, |conn| {
             sqlx::query(PING).execute(conn).await.is_ok()
-        })
+        });
+        match &self.pool {
+            SqlPool::Pg(_) => pooled,
+            SqlPool::Sqlite(lite) => pooled && ping_writer(lite).await,
+        }
+    }
+
+    fn commit_stats(&self) -> Option<CommitStats> {
+        match &self.pool {
+            SqlPool::Pg(_) => None,
+            SqlPool::Sqlite(lite) => Some(lite.commit_stats()),
+        }
     }
 }
 
@@ -310,13 +360,25 @@ impl SqlBackend {
     }
 }
 
-/// Create the SQLite file 0600 before sqlx would create it with the umask's
-/// mode (#75). In-memory databases have no file.
-fn secure_sqlite_file(database_url: &str) -> StoreResult<()> {
+/// SQLite readiness has two halves (#173): the readers answered above, and the
+/// writer must answer too, since it is the one that can be stuck or broken.
+async fn ping_writer(lite: &SqliteConn) -> bool {
+    let mut writer = lite.lock().await;
+    sqlx::query(PING).execute(&mut *writer).await.is_ok()
+}
+
+/// Refuse an in-memory database, then create the SQLite file 0600 before sqlx
+/// would create it with the umask's mode (#75). The readers are other
+/// connections, and an in-memory database is private to the connection that
+/// opened it (#173): each reader would see an empty database of its own.
+fn prepare_sqlite_file(database_url: &str) -> StoreResult<()> {
     let options = SqliteConnectOptions::from_str(database_url)
         .map_err(|e| StoreError::Connection(Box::new(e)))?;
     if database_url.contains(":memory:") || database_url.contains("mode=memory") {
-        return Ok(());
+        return Err(StoreError::InvalidConfig(format!(
+            "an in-memory SQLite database is not supported ({database_url}): the readers are \
+             separate connections and each would see a database of its own; use a file"
+        )));
     }
     file_mode::secure_store_file(options.get_filename())
 }

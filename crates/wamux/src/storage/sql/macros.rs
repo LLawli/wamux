@@ -11,12 +11,18 @@
 //! (`PgQueryResult`, `SqliteQueryResult`), so bodies convert before returning
 //! (`rows_affected()`, commit inside the body).
 
-/// Run `$body` once per driver, with `$conn` bound to that driver's pool.
+/// Run `$body` once per driver, with `$conn` bound to that driver's pool. For
+/// READS: on SQLite that is the read-only pool (#173), which never waits for the
+/// batch and never sees a write that has no COMMIT yet. A write goes through
+/// `execute_sql!` (a job), never through this.
 macro_rules! on_sql_pool {
     ($pool:expr, |$conn:ident| $body:expr) => {
         match $pool {
             $crate::storage::sql::SqlPool::Pg($conn) => $body,
-            $crate::storage::sql::SqlPool::Sqlite($conn) => $body,
+            $crate::storage::sql::SqlPool::Sqlite(lite) => {
+                let $conn = lite.read_pool();
+                $body
+            }
         }
     };
 }
@@ -38,7 +44,8 @@ macro_rules! on_sql_tx {
 }
 
 /// Run one statement and return the rows affected. `in tx` runs it inside an
-/// open `SqlTx`, otherwise on the pool.
+/// open `SqlTx`, otherwise on the pool: on SQLite that is a job of the group
+/// commit (#173), answered once the COMMIT that carries it ran.
 macro_rules! execute_sql {
     (in $tx:ident, $sql:expr $(, $bind:expr)* $(,)?) => {
         on_sql_tx!($tx, |conn| {
@@ -47,10 +54,20 @@ macro_rules! execute_sql {
         .map_err($crate::storage::sqlx_error::db)
     };
     ($pool:expr, $sql:expr $(, $bind:expr)* $(,)?) => {
-        on_sql_pool!($pool, |conn| {
-            sqlx::query($sql)$(.bind($bind))*.execute(conn).await.map(|done| done.rows_affected())
-        })
-        .map_err($crate::storage::sqlx_error::db)
+        match $pool {
+            $crate::storage::sql::SqlPool::Pg(conn) => {
+                sqlx::query($sql)$(.bind($bind))*.execute(conn).await
+                    .map(|done| done.rows_affected())
+                    .map_err($crate::storage::sqlx_error::db)
+            }
+            $crate::storage::sql::SqlPool::Sqlite(lite) => {
+                let mut job = lite.begin_job().await?;
+                let ran = sqlx::query($sql)$(.bind($bind))*.execute(&mut *job).await
+                    .map(|done| done.rows_affected())
+                    .map_err($crate::storage::sqlx_error::db);
+                $crate::storage::sql::end_job(job, ran).await
+            }
+        }
     };
 }
 

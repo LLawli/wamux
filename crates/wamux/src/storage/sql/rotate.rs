@@ -39,7 +39,7 @@ pub(super) async fn run(pool: &SqlPool, rotation: &Rotation) -> StoreResult<usiz
     Ok(device_ids.len())
 }
 
-async fn swap_mark(mut tx: &mut SqlTx<'static>, rotation: &Rotation) -> StoreResult<()> {
+async fn swap_mark(mut tx: &mut SqlTx<'_>, rotation: &Rotation) -> StoreResult<()> {
     let mark = &rotation.mark;
     let swapped = execute_sql!(in tx, ROTATE_MARK, &mark.key_id[..], &mark.verifier)?;
     if swapped != 1 {

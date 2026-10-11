@@ -17,9 +17,10 @@ pub struct Config {
     /// and only in a binary built with the `turso` cargo feature; without it the
     /// daemon refuses to start). Anything else fails at startup.
     pub database_url: String,
-    /// Postgres pool size. Ignored by the SQLite engine, which pins its pool to
-    /// a single connection to serialize writes (see `storage::sql::connect_sqlite`),
-    /// and by the Turso engine, which has one connection behind a mutex.
+    /// Postgres pool size. Ignored by the SQLite engine, which has one writer
+    /// (behind the group commit) and a fixed pool of read-only connections (see
+    /// `storage::sql::connect_sqlite`, #173), and by the Turso engine, which has
+    /// one connection behind a mutex.
     pub db_max_connections: u32,
     /// Path of the file holding the store key (64 hex characters, mode 0600),
     /// which turns on encryption at rest for the key material in the store

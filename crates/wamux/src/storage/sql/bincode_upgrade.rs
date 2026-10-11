@@ -13,14 +13,19 @@ use crate::storage::statements::bincode_upgrade::{
 };
 
 /// Convert the store if `blob_format` says it is still bincode: read, plan and
-/// prove every row, write them and flip the marker, all in one transaction.
+/// prove every row, write them and flip the marker, all in one transaction. When
+/// nothing needs converting (every normal start) the transaction is rolled back
+/// on purpose, not abandoned (#173).
 pub(super) async fn upgrade_bincode_blobs(pool: &SqlPool) -> Result<(), BincodeUpgradeError> {
     let mut tx = SqlTx::begin_raw(pool)
         .await
         .map_err(upgrade_db_error("begin"))?;
     let format = read_blob_format(pool, &mut tx).await?;
     if !needs_bincode_upgrade(&format)? {
-        return Ok(());
+        return tx
+            .rollback()
+            .await
+            .map_err(upgrade_db_error("rolling back"));
     }
     let plan = plan_bincode_upgrade(read_legacy_rows(&mut tx).await?)?;
     write_plan(&mut tx, &plan).await?;
@@ -33,9 +38,9 @@ pub(super) async fn upgrade_bincode_blobs(pool: &SqlPool) -> Result<(), BincodeU
 /// The one statement written per driver here. Postgres locks the row with
 /// FOR UPDATE: two processes opening one store at once (a daemon, the test
 /// binaries) serialize here, and the second one reads 'protobuf'. SQLite has no
-/// row lock, and needs none: the pool is one connection (see `connect_sqlite`),
-/// and the file has one daemon. The SQLite form is shared with Turso
-/// (`statements::bincode_upgrade`).
+/// row lock, and needs none: the transaction is a job on the one writer (see
+/// `connect_sqlite`, #173), and the file has one daemon. The SQLite form is
+/// shared with Turso (`statements::bincode_upgrade`).
 fn select_blob_format_sql(pool: &SqlPool) -> &'static str {
     match pool {
         SqlPool::Pg(_) => "SELECT format FROM blob_format WHERE id = 1 FOR UPDATE",

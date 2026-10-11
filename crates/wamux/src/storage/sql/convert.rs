@@ -11,7 +11,7 @@
 use sqlx::{ColumnIndex, Decode, Row, Type};
 use wacore::store::error::{Result as StoreResult, StoreError};
 
-use super::{SqlPool, SqlTx};
+use super::{SqlPool, SqlTx, SqliteConn};
 use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::convert::{Direction, Turn, accounts_left, turn_blob};
 use crate::storage::sealed_columns::{KeyColumn, RowPart, SealedColumn, sealed_columns};
@@ -71,7 +71,7 @@ async fn convert_account(
 }
 
 /// The state flip and the cleared progress, in the last account's transaction.
-async fn finish(mut tx: &mut SqlTx<'static>, direction: Direction) -> StoreResult<()> {
+async fn finish(mut tx: &mut SqlTx<'_>, direction: Direction) -> StoreResult<()> {
     execute_sql!(in tx, direction.finish_statement())?;
     execute_sql!(in tx, CLEAR_PROGRESS)?;
     Ok(())
@@ -88,7 +88,7 @@ async fn finish_alone(pool: &SqlPool, direction: Direction) -> StoreResult<()> {
 /// Turn every row of one column of one account inside `tx`. The rotation of
 /// #166 calls this for all accounts in its single transaction.
 pub(super) async fn convert_column(
-    mut tx: &mut SqlTx<'static>,
+    mut tx: &mut SqlTx<'_>,
     turn: &Turn<'_>,
     device_id: i32,
     column: &SealedColumn,
@@ -108,7 +108,7 @@ pub(super) async fn convert_column(
 }
 
 async fn write_row(
-    mut tx: &mut SqlTx<'static>,
+    mut tx: &mut SqlTx<'_>,
     update: &str,
     device_id: i32,
     parts: &[RowPart],
@@ -167,14 +167,20 @@ pub(super) async fn scrub_old_plaintext(pool: &SqlPool) -> StoreResult<()> {
             }
             Ok(())
         }
-        SqlPool::Sqlite(pool) => scrub_sqlite(pool).await,
+        SqlPool::Sqlite(lite) => scrub_sqlite(lite).await,
     }
 }
 
-async fn scrub_sqlite(pool: &sqlx::SqlitePool) -> StoreResult<()> {
-    sqlx::query(VACUUM_FILE).execute(pool).await.map_err(db)?;
+/// On the writer, outside a transaction (`lock_autocommit`): VACUUM cannot run
+/// in one, and the TRUNCATE checkpoint fails in one (#173).
+async fn scrub_sqlite(lite: &SqliteConn) -> StoreResult<()> {
+    let mut conn = lite.lock_autocommit().await?;
+    sqlx::query(VACUUM_FILE)
+        .execute(&mut *conn)
+        .await
+        .map_err(db)?;
     let (busy, _log_frames, _moved) = sqlx::query_as::<_, (i64, i64, i64)>(WAL_TRUNCATE)
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
         .map_err(db)?;
     if busy != 0 {

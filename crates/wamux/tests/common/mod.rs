@@ -64,10 +64,11 @@ pub fn pg_pool(store: &SqlStore) -> &sqlx::PgPool {
     }
 }
 
-/// The SQLite pool under a `SqlStore` a test opened as SQLite.
+/// The read-only pool under a `SqlStore` a test opened as SQLite (#173): the
+/// probes only read, and a write through it fails.
 pub fn lite_pool(store: &SqlStore) -> &sqlx::SqlitePool {
     match store.pool() {
-        SqlPool::Sqlite(pool) => pool,
+        SqlPool::Sqlite(conn) => conn.read_pool(),
         SqlPool::Pg(_) => panic!("opened as sqlite, holds a postgres pool"),
     }
 }

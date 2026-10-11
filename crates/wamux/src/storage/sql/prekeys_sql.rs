@@ -2,10 +2,10 @@
 //! Kept out of `signal_store.rs`: the coverage checks read every `async fn` in
 //! `*_store.rs` as a trait method.
 
-use sqlx::{PgPool, SqlitePool};
+use sqlx::PgPool;
 use wacore::store::error::Result;
 
-use super::SqlPool;
+use super::{SqlPool, SqliteConn, end_job};
 use crate::storage::sqlx_error::db;
 use crate::storage::statements::signal::MARK_PREKEY_UPLOADED;
 
@@ -19,7 +19,7 @@ pub(super) async fn mark_uploaded(pool: &SqlPool, device_id: i32, ids: &[u32]) -
     }
     match pool {
         SqlPool::Pg(pool) => mark_uploaded_array(pool, device_id, ids).await,
-        SqlPool::Sqlite(pool) => mark_uploaded_each(pool, device_id, ids).await,
+        SqlPool::Sqlite(lite) => mark_uploaded_each(lite, device_id, ids).await,
     }
 }
 
@@ -34,16 +34,20 @@ async fn mark_uploaded_array(pool: &PgPool, device_id: i32, ids: &[u32]) -> Resu
     Ok(())
 }
 
-async fn mark_uploaded_each(pool: &SqlitePool, device_id: i32, ids: &[u32]) -> Result<()> {
-    let mut tx = pool.begin().await.map_err(db)?;
+/// One job with the loop inside: the ids commit together or not at all.
+async fn mark_uploaded_each(lite: &SqliteConn, device_id: i32, ids: &[u32]) -> Result<()> {
+    let mut job = lite.begin_job().await?;
+    let mut ran: Result<()> = Ok(());
     for id in ids {
-        sqlx::query(MARK_PREKEY_UPLOADED)
+        let marked = sqlx::query(MARK_PREKEY_UPLOADED)
             .bind(*id as i32)
             .bind(device_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .execute(&mut *job)
+            .await;
+        if let Err(error) = marked {
+            ran = Err(db(error));
+            break;
+        }
     }
-    tx.commit().await.map_err(db)?;
-    Ok(())
+    end_job(job, ran).await
 }

@@ -2,10 +2,10 @@
 //! driver, written side by side: the two engines keep themselves in shape in
 //! different ways. Kept out of `device_store.rs` for the `*_store.rs` rule.
 
-use sqlx::SqlitePool;
+use sqlx::SqliteConnection;
 use wacore::store::error::Result;
 
-use super::SqlPool;
+use super::{SqlPool, SqliteConn};
 use crate::storage::sqlx_error::db;
 
 /// SQLite: refresh planner statistics and shrink the `-wal` file. Postgres has
@@ -14,15 +14,18 @@ use crate::storage::sqlx_error::db;
 pub(super) async fn run(pool: &SqlPool) -> Result<()> {
     match pool {
         SqlPool::Pg(_) => Ok(()),
-        SqlPool::Sqlite(pool) => sqlite_upkeep(pool).await,
+        SqlPool::Sqlite(lite) => sqlite_upkeep(lite).await,
     }
 }
 
-/// Mirrors the upstream `SqliteStore::maintenance`. The pragmas run on ONE
-/// connection because `analysis_limit` is per connection and `optimize` must
-/// see it.
-async fn sqlite_upkeep(pool: &SqlitePool) -> Result<()> {
-    let mut conn = pool.acquire().await.map_err(db)?;
+/// Mirrors the upstream `SqliteStore::maintenance`. The pragmas run on the
+/// writer, which is one connection, because `analysis_limit` is per connection
+/// and `optimize` must see it. Outside any transaction (`lock_autocommit`):
+/// `wal_checkpoint(TRUNCATE)` fails inside one with "database table is locked"
+/// (#173), and the batch's open COMMIT must land before it.
+async fn sqlite_upkeep(lite: &SqliteConn) -> Result<()> {
+    let mut conn = lite.lock_autocommit().await?;
+    let conn: &mut SqliteConnection = &mut conn;
     // Caps the index rows each ANALYZE samples, so the first `optimize` over a
     // large table stays in milliseconds and is safe on a live connection.
     sqlx::query("PRAGMA analysis_limit = 400")

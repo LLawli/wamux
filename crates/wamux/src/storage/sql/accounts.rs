@@ -14,7 +14,7 @@ use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 use wacore::store::error::Result;
 
-use super::SqlPool;
+use super::{SqlPool, end_job};
 use crate::storage::engine::AccountRow;
 use crate::storage::sqlx_error::db;
 use crate::storage::statements::accounts::{DELETE_ACCOUNT, INSERT_ACCOUNT, LIST_ACCOUNTS};
@@ -53,29 +53,32 @@ impl sqlx::FromRow<'_, SqliteRow> for AccountRow {
 }
 
 /// Insert a new account; `device_id` is assigned by the IDENTITY column
-/// (Postgres) or AUTOINCREMENT (SQLite).
+/// (Postgres) or AUTOINCREMENT (SQLite). On SQLite it is a job of the batch:
+/// a write with RETURNING never goes through the read pool (#173), and the row
+/// is handed back only once the COMMIT that carries it ran.
 pub(super) async fn create_account(
     pool: &SqlPool,
     external_ref: Option<&str>,
 ) -> Result<AccountRow> {
     let uuid = Uuid::new_v4();
-    let row: sqlx::Result<AccountRow> = match pool {
-        SqlPool::Pg(pool) => {
-            sqlx::query_as(INSERT_ACCOUNT)
-                .bind(uuid)
-                .bind(external_ref)
-                .fetch_one(pool)
-                .await
-        }
-        SqlPool::Sqlite(pool) => {
-            sqlx::query_as(INSERT_ACCOUNT)
+    match pool {
+        SqlPool::Pg(pool) => sqlx::query_as(INSERT_ACCOUNT)
+            .bind(uuid)
+            .bind(external_ref)
+            .fetch_one(pool)
+            .await
+            .map_err(db),
+        SqlPool::Sqlite(lite) => {
+            let mut job = lite.begin_job().await?;
+            let inserted = sqlx::query_as(INSERT_ACCOUNT)
                 .bind(uuid.to_string())
                 .bind(external_ref)
-                .fetch_one(pool)
+                .fetch_one(&mut *job)
                 .await
+                .map_err(db);
+            end_job(job, inserted).await
         }
-    };
-    row.map_err(db)
+    }
 }
 
 /// Every account, ordered by `device_id`. No bind, so one body serves both
@@ -87,17 +90,23 @@ pub(super) async fn list_accounts(pool: &SqlPool) -> Result<Vec<AccountRow>> {
 /// Delete the account; ON DELETE CASCADE removes all scoped store rows (on
 /// SQLite only because `connect_sqlite` turns `foreign_keys` on).
 pub(super) async fn delete_account(pool: &SqlPool, uuid: Uuid) -> Result<bool> {
-    let res: sqlx::Result<u64> = match pool {
+    let deleted = match pool {
         SqlPool::Pg(pool) => sqlx::query(DELETE_ACCOUNT)
             .bind(uuid)
             .execute(pool)
             .await
-            .map(|done| done.rows_affected()),
-        SqlPool::Sqlite(pool) => sqlx::query(DELETE_ACCOUNT)
-            .bind(uuid.to_string())
-            .execute(pool)
-            .await
-            .map(|done| done.rows_affected()),
+            .map(|done| done.rows_affected())
+            .map_err(db)?,
+        SqlPool::Sqlite(lite) => {
+            let mut job = lite.begin_job().await?;
+            let ran = sqlx::query(DELETE_ACCOUNT)
+                .bind(uuid.to_string())
+                .execute(&mut *job)
+                .await
+                .map(|done| done.rows_affected())
+                .map_err(db);
+            end_job(job, ran).await?
+        }
     };
-    Ok(res.map_err(db)? > 0)
+    Ok(deleted > 0)
 }
