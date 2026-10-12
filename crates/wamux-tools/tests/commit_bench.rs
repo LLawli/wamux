@@ -129,10 +129,38 @@ fn a_small_run_reports_rate_and_latency() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.status.success(), "{shown}");
-    for expected in ["sqlite", "writes/s", "p50", "p99", "n/a"] {
+    // #173: SQLite groups its commits, so it reports them (it printed n/a before).
+    for expected in ["sqlite", "writes/s", "p50", "p99", " commits)"] {
         assert!(
             shown.contains(expected),
             "{expected:?} missing in:\n{shown}"
         );
     }
+}
+
+/// The serial baseline of #173: `batch_cap` applies to `sqlite://`, and a cap
+/// of one commits every write on its own.
+#[test]
+fn a_sqlite_run_with_a_cap_of_one_commits_every_write_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("bench.db").display());
+    let output = run_bounded(
+        Command::new(env!("CARGO_BIN_EXE_commit_bench"))
+            .args([url.as_str(), "3", "5", "1"])
+            .env(ALLOW_TMPFS_VAR, "1"),
+    );
+    let shown = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{shown}");
+    assert!(
+        shown.contains("jobs/commit:  1.00 (15 commits)"),
+        "3 accounts x 5 writes, one commit each:\n{shown}"
+    );
+    assert!(
+        !shown.contains("ignored"),
+        "the cap was not ignored:\n{shown}"
+    );
 }

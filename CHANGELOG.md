@@ -34,6 +34,30 @@ has to follow them.
   `storage::group_commit`, engine-neutral, for the SQLite part (#173). No wire
   or config change; Turso stays a non-default cargo feature.
 
+- **SQLite runs at `synchronous = FULL` with group commit** (issue #173,
+  part 2 of #169, closes #169). The sqlx SQLite engine moves from one pooled
+  connection at `NORMAL` to two handles on the same file: one writer behind the
+  group commit of #172, and a pool of 4 read-only connections. `FULL` is fixed
+  (no setting): a power loss no longer drops the last acknowledged commits, and
+  accounts that write at the same moment share one COMMIT, so the fsync is not
+  paid per write. Reads no longer wait for writes: they run on the read-only
+  pool, so they never queue behind a batch and never see a write that has no
+  COMMIT yet. A SQLite DSN in memory (`:memory:`, `mode=memory`) is now refused
+  with a clear error, since the readers are other connections. No wire, config
+  or migration change. For code that uses the library (tests, the stress bins):
+  `SqlPool::Sqlite` now carries a `SqliteConn` instead of a `SqlitePool`; read
+  through `read_pool()` and write raw SQL through `lock()`. `commit_bench` takes
+  `batch_cap` on `sqlite://` too (a cap of 1 is the serial baseline).
+- **Group commit: a writer cancelled in the middle of a COMMIT, BEGIN or RELEASE
+  no longer breaks the next write** (issue #173, both file engines). sqlx-sqlite
+  runs a queued statement even after the caller's future is dropped, so the
+  batch could believe a transaction was open that had already committed, and the
+  next write failed with "cannot commit - no transaction is active" (5 runs in
+  150 of the dropped-writers test). The statement in flight is now marked, and
+  the next user of the connection puts it back in a known state first. A COMMIT
+  whose outcome nobody saw is retried: the jobs waiting on it get Ok only from a
+  COMMIT that really ran, and an error saying the outcome is unknown otherwise.
+
 ### Added
 
 - **`commit_bench`** in `wamux-tools` (issue #172): N accounts write M sessions

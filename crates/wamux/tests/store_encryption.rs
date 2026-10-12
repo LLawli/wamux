@@ -11,7 +11,7 @@
 use bytes::Bytes;
 use wacore::store::traits::TcTokenEntry;
 use wamux::storage::StorageEngine;
-use wamux::storage::sql::SqlStore;
+use wamux::storage::sql::{SqlPool, SqlStore, SqliteConn};
 
 #[allow(dead_code)]
 mod common;
@@ -107,6 +107,15 @@ async fn sqlite_plaintext_store_without_a_key_still_works_unchanged() {
     );
 }
 
+/// The store's one writing connection (#173): its readers are read-only, so a
+/// raw tamper goes through the writer.
+fn sqlite_writer(store: &SqlStore) -> SqliteConn {
+    match store.pool() {
+        SqlPool::Sqlite(conn) => conn.clone(),
+        SqlPool::Pg(_) => panic!("opened as sqlite, holds a postgres pool"),
+    }
+}
+
 #[tokio::test]
 async fn sqlite_a_blob_moved_to_another_row_or_device_fails_to_open() {
     let dir = tempfile::tempdir().unwrap();
@@ -122,7 +131,7 @@ async fn sqlite_a_blob_moved_to_another_row_or_device_fails_to_open() {
     ba.put_session(ALICE, b"alice's").await.unwrap();
     ba.put_session(BOB, b"bob's").await.unwrap();
     bb.put_session(ALICE, b"b's own").await.unwrap();
-    let pool = common::lite_pool(&store);
+    let writer = sqlite_writer(&store);
 
     // Alice's blob copied over Bob's row, same account: another row.
     sqlx::query(
@@ -132,7 +141,7 @@ async fn sqlite_a_blob_moved_to_another_row_or_device_fails_to_open() {
     .bind(ALICE)
     .bind(a.device_id)
     .bind(BOB)
-    .execute(pool)
+    .execute(&mut *writer.lock().await)
     .await
     .unwrap();
     assert!(ba.get_session(BOB).await.is_err(), "another row opened");
@@ -149,7 +158,7 @@ async fn sqlite_a_blob_moved_to_another_row_or_device_fails_to_open() {
     .bind(ALICE)
     .bind(a.device_id)
     .bind(b.device_id)
-    .execute(pool)
+    .execute(&mut *writer.lock().await)
     .await
     .unwrap();
     assert!(

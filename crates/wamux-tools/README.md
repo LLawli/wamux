@@ -62,7 +62,7 @@ of nothing, proved nothing and exits non-zero.
 ### commit_bench
 
 - **Needs:** a database to write to, and no daemon: it opens the store itself (`sqlite://`, `postgres://`, or `turso://` when built with `--features turso`). Run it on a real disk: on tmpfs it refuses unless `WAMUX_BENCH_ALLOW_TMPFS=1`, and then the report carries a warning.
-- **Env:** `WAMUX_BENCH_ALLOW_TMPFS=1` (optional). Arguments: `<database_url> [accounts=10] [writes=30] [batch_cap]`; `batch_cap` applies to turso only. Use a new store: the accounts are created by the run.
+- **Env:** `WAMUX_BENCH_ALLOW_TMPFS=1` (optional). Arguments: `<database_url> [accounts=10] [writes=30] [batch_cap]`; `batch_cap` applies to `sqlite://` and to `turso://` (the latter needs the `turso` feature); a cap of 1 is the serial baseline, one COMMIT per write. Use a new store: the accounts are created by the run.
 - **Proves:** nothing; it is a benchmark (#172). N accounts each write M sessions at once, every write waiting for its own commit, and it prints writes per second, p50/p99 latency of a write and jobs per commit. It exits 2 on a bad argument and 1 on a refusal or a failure.
 - **Writes to WhatsApp:** nothing; it writes only to the store it is given.
 

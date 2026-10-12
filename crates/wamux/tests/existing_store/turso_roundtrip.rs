@@ -11,7 +11,7 @@ use std::path::Path;
 
 use sqlx::SqlitePool;
 use wamux::storage::StorageEngine;
-use wamux::storage::sql::{SqlPool, SqlStore};
+use wamux::storage::sql::SqlStore;
 use wamux::storage::turso::TursoStore;
 
 fn sqlite_url(path: &Path) -> String {
@@ -22,10 +22,9 @@ fn turso_url(path: &Path) -> String {
     format!("turso://{}", path.display())
 }
 
+/// Release the file before turso opens it (#173: the writer and the readers).
 async fn close_sqlite(store: SqlStore) {
-    if let SqlPool::Sqlite(pool) = store.pool() {
-        pool.close().await;
-    }
+    store.close().await.expect("close the sqlite store");
 }
 
 /// Create an account named `name`, give it one identity, and check every

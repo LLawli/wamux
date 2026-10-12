@@ -36,17 +36,22 @@ session.
 
 | Engine | Setting | A process crash | A power loss or an OS crash |
 |---|---|---|---|
-| SQLite | WAL, `synchronous = NORMAL` | loses nothing | can lose the last commits; the database stays consistent |
+| SQLite | WAL, `synchronous = FULL`, group commit | loses nothing | loses nothing that was acknowledged |
 | Turso | WAL, `synchronous = FULL` | loses nothing | loses nothing that was acknowledged |
 | Postgres | its default (`synchronous_commit = on`) | loses nothing | loses nothing that was acknowledged |
 
-SQLite's `NORMAL` was inherited from the whatsapp-rust SQLite reference, not
-chosen for this project, and it trades that last guarantee for speed: with
-`FULL` every write is its own fsync, which is what `NORMAL` avoids. Moving the
-SQLite engine to `FULL` without losing throughput, by grouping the commits of
-different accounts into one fsync, is tracked in #169. Until then, a host that
-can lose power should either run Postgres, or accept that the last few writes
-before an outage may not be on disk.
+SQLite used to run `NORMAL`, inherited from the whatsapp-rust SQLite reference,
+which can lose the last commits on power loss. It now runs `FULL` (#169, #173),
+and there is no setting to go back: nothing the daemon acknowledged is lost. What
+makes `FULL` affordable is the group commit. Every write goes through one writer
+connection, and the accounts that queue at the same moment share one transaction
+and one COMMIT (one fsync) instead of paying one each; nobody is answered before
+the COMMIT that carries their write, and a lone writer still commits on its own,
+with no timer. The reads run on a separate pool of read-only connections: they
+never wait for the batch, and they never see a write that has no COMMIT yet. A
+SQLite DSN that is in memory (`:memory:`, `mode=memory`) is refused, since the
+readers are other connections and each would see a database of its own. The
+Turso engine groups its commits the same way (#172); Postgres is unchanged.
 
 ### Turso (experimental)
 
@@ -73,12 +78,13 @@ a replacement for either of the others. What to know before choosing it:
   The daemon never opens the file any other way, and neither may anything you
   embed next to it. Never run two daemons on one file either.
 - **Durability.** The connection runs `synchronous = FULL` (turso only documents
-  OFF and FULL), the journal is WAL, and `foreign_keys` is on. That is slower on
-  every commit than the SQLite engine's `NORMAL`, in exchange for no lost commit
-  on power loss.
-- **One connection.** Every account shares it behind a mutex, like SQLite's
-  one-connection pool. There is no `BEGIN CONCURRENT` / MVCC mode: it would leave
-  the file unreadable by the `sqlite3` tool and by `sqlite://`.
+  OFF and FULL), the journal is WAL, and `foreign_keys` is on. No commit is lost
+  on power loss, the same as the SQLite engine now; the difference is that its
+  reads go through the same connection and can see the open batch.
+- **One connection.** Every account shares it behind a mutex (SQLite has one
+  writer too, plus read-only readers). There is no `BEGIN CONCURRENT` / MVCC
+  mode: it would leave the file unreadable by the `sqlite3` tool and by
+  `sqlite://`.
 - **Not stress-tested.** The store and service suites run on it; the stress
   harness does not. Prefer Postgres for many accounts.
 

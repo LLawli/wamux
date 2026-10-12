@@ -175,8 +175,12 @@ async fn rigged_sqlite() -> Rigged {
         dir.path().join("rigged.db").display()
     );
     let store = SqlStore::open_sqlite(&url).await.expect("open sqlite");
+    // Through the writer (#173): the store's readers are read-only.
+    let SqlPool::Sqlite(conn) = store.pool() else {
+        panic!("opened as sqlite, holds a postgres pool");
+    };
     sqlx::raw_sql(&sqlite_triggers())
-        .execute(common::lite_pool(&store))
+        .execute(&mut *conn.lock().await)
         .await
         .expect("triggers");
     rig(store, None, Some(dir)).await

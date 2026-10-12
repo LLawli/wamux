@@ -123,11 +123,11 @@ async fn prekey_uploaded(store: &SqlStore, id: u32) -> bool {
                 .fetch_one(pool)
                 .await
         }
-        SqlPool::Sqlite(pool) => {
+        SqlPool::Sqlite(conn) => {
             sqlx::query_scalar(sql)
                 .bind(FIXTURE_DEVICE_ID)
                 .bind(id as i32)
-                .fetch_one(pool)
+                .fetch_one(conn.read_pool())
                 .await
         }
     };

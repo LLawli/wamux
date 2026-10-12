@@ -6,7 +6,14 @@ use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{PgPool, SqlitePool};
+use sqlx::{ConnectOptions, PgPool};
+
+use super::SqliteConn;
+use super::sqlite_conn::SQLITE_READERS;
+use crate::storage::group_commit::DEFAULT_BATCH_CAP;
+
+/// Same patience on the writer and the readers.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Open a pooled connection to Postgres.
 pub async fn connect_postgres(
@@ -19,28 +26,57 @@ pub async fn connect_postgres(
         .await
 }
 
-/// Open the database file, applying the reference implementation's pragmas.
+/// Open the database file as a writer plus a read-only pool (#173), with the
+/// default batch cap.
 ///
-/// `max_connections(1)` is deliberate and not a leftover. SQLite allows one
-/// writer at a time, and sqlx opens transactions as BEGIN DEFERRED: two pooled
-/// connections upgrading to a write inside a transaction can hit SQLITE_BUSY
-/// *without* honoring `busy_timeout`, which would surface as a random store
-/// error under multi-account load. A single connection makes the process
-/// serialize its own writes instead, which is exactly what the whatsapp-rust
-/// sqlite reference achieves with its 1-permit semaphore.
+/// Why two handles and not a pool: SQLite allows one writer at a time, and sqlx
+/// opens transactions as BEGIN DEFERRED, so two connections that WRITE can hit
+/// SQLITE_BUSY *without* honoring `busy_timeout`, which would surface as a random
+/// store error under multi-account load. So exactly one connection writes (the
+/// writer, behind the group commit), and the pool is `read_only`: its
+/// connections never write, so that failure mode does not exist for them. The
+/// writer opens the file first because a read-only connection cannot create it.
 ///
-/// `foreign_keys` is likewise not cosmetic: SQLite defaults it OFF, and every
-/// store table hangs off `accounts(device_id) ON DELETE CASCADE`. Without it,
-/// deleting an account would silently orphan all of its Signal rows.
-pub async fn connect_sqlite(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
-    let options = SqliteConnectOptions::from_str(database_url)?
+/// `synchronous = FULL` was decided in #169/#173, with the group commit paying
+/// for it. The reference implementation's pragmas used NORMAL, which can lose
+/// the last commits on power loss; here nothing acknowledged is lost.
+///
+/// `foreign_keys` is not cosmetic: SQLite defaults it OFF, and every store table
+/// hangs off `accounts(device_id) ON DELETE CASCADE`. Without it, deleting an
+/// account would silently orphan all of its Signal rows.
+pub async fn connect_sqlite(database_url: &str) -> Result<SqliteConn, sqlx::Error> {
+    connect_sqlite_with_batch_cap(database_url, DEFAULT_BATCH_CAP).await
+}
+
+/// `connect_sqlite` with the most jobs one COMMIT carries (#173): the bench
+/// measures the serial baseline with a cap of 1.
+pub async fn connect_sqlite_with_batch_cap(
+    database_url: &str,
+    batch_cap: usize,
+) -> Result<SqliteConn, sqlx::Error> {
+    let writer = writer_options(database_url)?.connect().await?;
+    let readers = SqlitePoolOptions::new()
+        .max_connections(SQLITE_READERS)
+        .connect_with(reader_options(database_url)?)
+        .await?;
+    Ok(SqliteConn::new(writer, readers, batch_cap))
+}
+
+fn writer_options(database_url: &str) -> Result<SqliteConnectOptions, sqlx::Error> {
+    Ok(SqliteConnectOptions::from_str(database_url)?
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
-        .synchronous(SqliteSynchronous::Normal)
-        .busy_timeout(Duration::from_secs(30))
-        .foreign_keys(true);
-    SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
+        .synchronous(SqliteSynchronous::Full)
+        .busy_timeout(BUSY_TIMEOUT)
+        .foreign_keys(true))
+}
+
+/// No journal mode or synchronous here: those pragmas write, and the file is
+/// already WAL by the time the readers open. `create_if_missing(false)` is
+/// explicit because the test DSNs carry `?mode=rwc`.
+fn reader_options(database_url: &str) -> Result<SqliteConnectOptions, sqlx::Error> {
+    Ok(SqliteConnectOptions::from_str(database_url)?
+        .read_only(true)
+        .create_if_missing(false)
+        .busy_timeout(BUSY_TIMEOUT))
 }

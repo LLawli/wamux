@@ -19,7 +19,15 @@
 //!
 //! The module knows nothing of a driver: `BatchConn` runs the control statements
 //! and the engine runs its own statements on the guarded connection. Turso is the
-//! first engine wired to it (#172); SQLite follows (#173).
+//! first engine wired to it (#172); SQLite is the second (#173), where the
+//! batch is the writer's and the reads run on a separate read-only pool.
+//!
+//! A control statement can be awaited by a future that is then dropped. That is
+//! closed (#173): the statement being awaited is marked, and whoever takes the
+//! lock next reconciles it first (`group_commit_reconcile.rs`). It matters
+//! because sqlx-sqlite 0.8.6 runs a queued statement even when the caller is
+//! gone (`connection/worker.rs:354`), so the batch's belief and the connection
+//! could disagree.
 
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -97,6 +105,10 @@ struct BatchState<C> {
     /// `fail`; still set when the next user finds the lock means the job was
     /// dropped half way, and that user rolls the savepoint back.
     job_open: bool,
+    /// The control statement being awaited. Set before the await and cleared
+    /// after it; still set when the next user finds the lock means the future
+    /// was dropped mid-statement, and that user reconciles first (#173).
+    in_flight: Option<ControlStatement>,
 }
 
 /// Writers that queued and have not decided yet, and the wake-up for the batches
@@ -156,20 +168,26 @@ impl<C: BatchConn> BatchState<C> {
         if self.open.is_none() {
             self.begin_batch().await?;
         }
-        self.conn.control(ControlStatement::Savepoint).await?;
+        self.run_control(ControlStatement::Savepoint).await?;
         self.job_open = true;
         Ok(())
     }
 
-    /// The batch is marked open before BEGIN runs, so a future dropped mid-BEGIN
-    /// does not leave a transaction nobody knows about.
+    /// The batch is recorded only once BEGIN returned. A future dropped mid-BEGIN
+    /// leaves `in_flight` set and the next user rolls back whatever it opened.
     async fn begin_batch(&mut self) -> StoreResult<()> {
+        self.run_control(ControlStatement::Begin).await?;
         self.open = Some(OpenBatch::default());
-        let begun = self.conn.control(ControlStatement::Begin).await;
-        if begun.is_err() {
-            self.open = None;
-        }
-        begun
+        Ok(())
+    }
+
+    /// Run one control statement, marking it in flight while it is awaited.
+    /// An `Err` also means the statement finished, so the mark is cleared.
+    async fn run_control(&mut self, statement: ControlStatement) -> StoreResult<()> {
+        self.in_flight = Some(statement);
+        let outcome = self.conn.control(statement).await;
+        self.in_flight = None;
+        outcome
     }
 
     /// Undo the savepoint of a job that was dropped without `finish` or `fail`.
@@ -182,17 +200,16 @@ impl<C: BatchConn> BatchState<C> {
     }
 
     async fn rollback_job(&mut self) -> StoreResult<()> {
-        self.conn
-            .control(ControlStatement::RollbackToSavepoint)
+        self.run_control(ControlStatement::RollbackToSavepoint)
             .await?;
-        self.conn.control(ControlStatement::Release).await?;
+        self.run_control(ControlStatement::Release).await?;
         self.job_open = false;
         Ok(())
     }
 
     /// Release the savepoint and count the job; the jobs of the batch so far.
     async fn end_job(&mut self) -> StoreResult<usize> {
-        if let Err(error) = self.conn.control(ControlStatement::Release).await {
+        if let Err(error) = self.run_control(ControlStatement::Release).await {
             // A savepoint that cannot be released must not reach the COMMIT.
             let _ = self.rollback_job().await;
             return Err(error);
@@ -210,20 +227,28 @@ impl<C: BatchConn> BatchState<C> {
         if self.open.is_none() {
             return Ok(0);
         }
-        let committed = self.conn.control(ControlStatement::Commit).await;
+        let committed = self.run_control(ControlStatement::Commit).await;
         if committed.is_err()
-            && let Err(error) = self.conn.control(ControlStatement::Rollback).await
+            && let Err(error) = self.run_control(ControlStatement::Rollback).await
         {
             tracing::error!(%error, "rolling back a failed group commit failed");
         }
         let batch = self.open.take().unwrap_or_default();
-        let answer: BatchAnswer = committed.as_ref().map(|_| ()).map_err(|e| e.to_string());
-        for waiter in batch.waiters {
-            // A waiter whose caller went away has dropped its receiver: its job
-            // was committed (or failed) all the same.
-            let _ = waiter.send(answer.clone());
-        }
-        committed.map(|_| batch.jobs as u64)
+        let jobs = batch.jobs as u64;
+        answer_waiters(
+            batch,
+            committed.as_ref().map(|_| ()).map_err(|e| e.to_string()),
+        );
+        committed.map(|_| jobs)
+    }
+}
+
+/// Tell every job of a finished batch how it ended.
+fn answer_waiters(batch: OpenBatch, answer: BatchAnswer) {
+    for waiter in batch.waiters {
+        // A waiter whose caller went away has dropped its receiver: its job
+        // was committed (or failed) all the same.
+        let _ = waiter.send(answer.clone());
     }
 }
 
@@ -246,6 +271,7 @@ impl<C: BatchConn> GroupCommit<C> {
                 conn,
                 open: None,
                 job_open: false,
+                in_flight: None,
             }),
             queue: Queue {
                 pending: AtomicUsize::new(0),
@@ -263,6 +289,7 @@ impl<C: BatchConn> GroupCommit<C> {
         // must see it coming to leave the batch open for it.
         let slot = self.queue.enter();
         let mut guard = self.state.lock().await;
+        self.reconcile(&mut guard).await;
         guard.start_job().await?;
         Ok(JobGuard {
             guard,
@@ -276,6 +303,7 @@ impl<C: BatchConn> GroupCommit<C> {
     /// with writers pending the batch stays open and the read sees it.
     pub async fn lock(&self) -> ConnGuard<'_, C> {
         let mut guard = self.state.lock().await;
+        self.reconcile(&mut guard).await;
         if let Err(error) = guard.settle_abandoned().await {
             tracing::error!(%error, "rolling back an abandoned job failed");
         }
@@ -291,6 +319,7 @@ impl<C: BatchConn> GroupCommit<C> {
     /// (a WAL checkpoint, VACUUM, migrations): an open batch is committed first.
     pub async fn lock_autocommit(&self) -> StoreResult<ConnGuard<'_, C>> {
         let mut guard = self.state.lock().await;
+        self.reconcile(&mut guard).await;
         guard.settle_abandoned().await?;
         self.close_batch(&mut guard).await?;
         Ok(ConnGuard { guard })
@@ -316,11 +345,15 @@ impl<C: BatchConn> GroupCommit<C> {
     /// COMMIT the open batch, if any, and count it.
     async fn close_batch(&self, state: &mut BatchState<C>) -> StoreResult<()> {
         let jobs = state.commit_batch().await?;
+        self.count_commit(jobs);
+        Ok(())
+    }
+
+    fn count_commit(&self, jobs: u64) {
         if jobs > 0 {
             self.commits.fetch_add(1, Ordering::Relaxed);
             self.jobs.fetch_add(jobs, Ordering::Relaxed);
         }
-        Ok(())
     }
 
     /// Wait for the COMMIT of a batch someone else will run. The wait also ends
@@ -354,6 +387,7 @@ impl<C: BatchConn> GroupCommit<C> {
             return None;
         }
         let mut state = self.state.lock().await;
+        self.reconcile(&mut state).await;
         if self.pending_writers() == 0 {
             if let Err(error) = state.settle_abandoned().await {
                 tracing::error!(%error, "rolling back an abandoned job failed");
@@ -440,6 +474,17 @@ impl<C: BatchConn> DerefMut for JobGuard<'_, C> {
     }
 }
 
+#[path = "group_commit_reconcile.rs"]
+mod reconcile;
+
+#[cfg(test)]
+#[path = "group_commit_fake.rs"]
+mod fake;
+
 #[cfg(test)]
 #[path = "group_commit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "group_commit_cancel_tests.rs"]
+mod cancel_tests;

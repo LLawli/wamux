@@ -61,7 +61,7 @@ impl Raw for SqlStore {
         let sql = format!("SELECT {column} FROM {table} WHERE length({column}) > 0");
         match self.pool() {
             SqlPool::Pg(pool) => sqlx::query_scalar(&sql).fetch_all(pool).await,
-            SqlPool::Sqlite(pool) => sqlx::query_scalar(&sql).fetch_all(pool).await,
+            SqlPool::Sqlite(conn) => sqlx::query_scalar(&sql).fetch_all(conn.read_pool()).await,
         }
         .unwrap_or_else(|e| panic!("read {table}.{column}: {e}"))
     }
@@ -70,7 +70,7 @@ impl Raw for SqlStore {
         let sql = "SELECT state FROM store_encryption WHERE id = 1";
         match self.pool() {
             SqlPool::Pg(pool) => sqlx::query_scalar(sql).fetch_one(pool).await,
-            SqlPool::Sqlite(pool) => sqlx::query_scalar(sql).fetch_one(pool).await,
+            SqlPool::Sqlite(conn) => sqlx::query_scalar(sql).fetch_one(conn.read_pool()).await,
         }
         .expect("read store_encryption.state")
     }

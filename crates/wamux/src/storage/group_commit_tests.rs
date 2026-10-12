@@ -1,96 +1,17 @@
 //! #172: the batch, driven step by step over a fake connection.
 //!
-//! The fake keeps the writes of the open transaction apart from the committed
-//! ones, honors the savepoint, and can be told to fail its COMMIT, which no real
-//! engine does on demand. The interleavings are made by polling futures by hand
+//! The fake connection lives in `group_commit_fake.rs` (shared with the
+//! cancellation tests of #173): it keeps the open writes apart from the
+//! committed ones, honors the savepoint, and can be told to fail its COMMIT,
+//! which no real engine does on demand. The interleavings are made by polling futures by hand
 //! (`futures::poll!`), so every test runs the same schedule every time.
 
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use futures::poll;
-use wacore::store::error::StoreError;
 
+use super::fake::{batch, commits, committed, log};
 use super::*;
-
-#[derive(Default)]
-struct FakeDb {
-    log: Vec<&'static str>,
-    open_writes: Vec<String>,
-    committed: Vec<String>,
-    savepoint_mark: Option<usize>,
-    in_transaction: bool,
-    fail_commit: bool,
-}
-
-struct FakeConn(Arc<StdMutex<FakeDb>>);
-
-impl FakeConn {
-    /// A job's own statement: inside a transaction it waits for the COMMIT.
-    fn write(&mut self, value: &str) {
-        let mut db = self.0.lock().unwrap();
-        if db.in_transaction {
-            db.open_writes.push(value.to_string());
-        } else {
-            db.committed.push(value.to_string());
-        }
-    }
-
-    fn in_transaction(&self) -> bool {
-        self.0.lock().unwrap().in_transaction
-    }
-
-    fn open_writes(&self) -> Vec<String> {
-        self.0.lock().unwrap().open_writes.clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl BatchConn for FakeConn {
-    async fn control(&mut self, statement: ControlStatement) -> StoreResult<()> {
-        let mut db = self.0.lock().unwrap();
-        db.log.push(statement.sql());
-        match statement {
-            ControlStatement::Begin => db.in_transaction = true,
-            ControlStatement::Savepoint => db.savepoint_mark = Some(db.open_writes.len()),
-            ControlStatement::Release => db.savepoint_mark = None,
-            ControlStatement::RollbackToSavepoint => {
-                let mark = db.savepoint_mark.expect("ROLLBACK TO without a savepoint");
-                db.open_writes.truncate(mark);
-            }
-            ControlStatement::Commit if db.fail_commit => {
-                return Err(StoreError::Connection("disk full (fake)".into()));
-            }
-            ControlStatement::Commit => {
-                let writes = std::mem::take(&mut db.open_writes);
-                db.committed.extend(writes);
-                db.in_transaction = false;
-            }
-            ControlStatement::Rollback => {
-                db.open_writes.clear();
-                db.in_transaction = false;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn batch(cap: usize) -> (GroupCommit<FakeConn>, Arc<StdMutex<FakeDb>>) {
-    let db = Arc::new(StdMutex::new(FakeDb::default()));
-    (GroupCommit::new(FakeConn(db.clone()), cap), db)
-}
-
-fn log(db: &Arc<StdMutex<FakeDb>>) -> Vec<&'static str> {
-    db.lock().unwrap().log.clone()
-}
-
-fn committed(db: &Arc<StdMutex<FakeDb>>) -> Vec<String> {
-    db.lock().unwrap().committed.clone()
-}
-
-fn commits(db: &Arc<StdMutex<FakeDb>>) -> usize {
-    log(db).iter().filter(|sql| **sql == "COMMIT").count()
-}
 
 /// Long enough for any schedule here, short enough to fail a stuck batch fast.
 const PATIENCE: Duration = Duration::from_secs(5);

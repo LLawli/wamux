@@ -220,6 +220,8 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
   # #65: a store the pre-unification code wrote, opened on the unified SQL.
   must_run_tests --test existing_store sqlite_
+  # #173: group commit on the sqlx SQLite engine, under real concurrency.
+  must_run_tests --test group_commit_sqlite sqlite_
 
   stage "no-postgres: turso engine (storage cases and service suites)"
   turso_storage_cases
