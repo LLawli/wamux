@@ -25,11 +25,13 @@ use crate::services::media_service::MediaSvc;
 use crate::services::messaging_service::MessagingSvc;
 use crate::services::newsletter_service::NewsletterSvc;
 use crate::state::AccountRegistry;
+use crate::transport::peer_allowlist::{PeerAllowlist, PeerAllowlistLayer};
 use crate::transport::shutdown::Shutdown;
 
-/// The router carries our one cross-cutting layer (per-request observability);
-/// the type names that layer so callers can store the router.
-pub type ObservedRouter = Router<Stack<RequestObserveLayer, Identity>>;
+/// The router carries the cross-cutting layers (per-request observability,
+/// then the peer allowlist, #77); the type names them so callers can store the
+/// router.
+pub type ObservedRouter = Router<Stack<PeerAllowlistLayer, Stack<RequestObserveLayer, Identity>>>;
 
 /// `shutdown` ends every event subscription when it fires, which is what lets
 /// the server drain at all (#35).
@@ -43,6 +45,10 @@ pub fn build_router(
     let prometheus = crate::observe::prometheus_handle();
     let mut router = Server::builder()
         .layer(RequestObserveLayer)
+        .layer(PeerAllowlistLayer::new(PeerAllowlist::new(
+            config.allowed_uids.clone(),
+            config.allowed_gids.clone(),
+        )))
         .add_service(AccountServiceServer::new(AccountSvc::new(registry.clone())))
         .add_service(EventServiceServer::new(
             EventSvc::new(registry.clone()).with_shutdown(shutdown),

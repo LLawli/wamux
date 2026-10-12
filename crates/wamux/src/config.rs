@@ -11,6 +11,11 @@ pub struct Config {
     pub socket_mode: u32,
     /// Optional owning group name to chown the socket to.
     pub socket_group: Option<String>,
+    /// Peer uids admitted by `SO_PEERCRED` (#77). Empty, with `allowed_gids`
+    /// also empty, admits everyone who can open the socket.
+    pub allowed_uids: Vec<u32>,
+    /// Peer effective gids admitted by `SO_PEERCRED` (#77).
+    pub allowed_gids: Vec<u32>,
     /// Database DSN. The scheme picks the storage engine:
     /// `postgres://` / `postgresql://`, `sqlite://` (file path; created if
     /// absent) or `turso://<path>` (experimental, #106: a file path, no options,
@@ -64,6 +69,8 @@ impl Default for Config {
             socket_path: "/run/wamux.sock".to_string(),
             socket_mode: 0o660,
             socket_group: None,
+            allowed_uids: Vec::new(),
+            allowed_gids: Vec::new(),
             database_url: "postgres://wamux:wamux@localhost:5432/wamux".to_string(),
             db_max_connections: 16,
             store_key_file: None,
