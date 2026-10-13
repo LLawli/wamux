@@ -54,8 +54,19 @@ graceful_stop_timeout_ms = 3000
 # at shutdown; this bounds anything else. Keep it under systemd's stop timeout.
 shutdown_grace_ms = 10000
 
-# Max bytes accepted for an inbound media send (inline or URL).
+# Max bytes accepted for an inbound media send (inline streamed chunks), and the
+# largest file DownloadMedia will fetch (#79).
 media_max_bytes = 104857600
+
+# Where media transfers are staged on disk (#79). Created 0700 at startup; the
+# daemon refuses to start if it cannot be written. Files in it have no name, so
+# it always looks empty. Use a real disk, never a tmpfs or /tmp (that is RAM).
+media_spool_dir = "/var/cache/wamux"
+
+# The most all transfers in flight may hold in the spool, summed (#79). Past it
+# a transfer gets ResourceExhausted. Keep it below the free space of
+# media_spool_dir. 0 = unlimited.
+media_spool_max_bytes = 2147483648
 
 # tracing env-filter (RUST_LOG overrides this when set).
 log_level = "info,wamux=debug"

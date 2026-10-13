@@ -39,13 +39,20 @@ services:
       WAMUX_DATABASE_URL: postgres://wamux:wamux@postgres:5432/wamux
       WAMUX_SOCKET_PATH: /run/wamux/wamux.sock
       WAMUX_LOG_LEVEL: info,wamux=info
+      # The media spool (#79): transfers are staged here, on disk. Under
+      # /var/lib/wamux because the image already creates it owned by the wamux
+      # user, so a named volume there inherits that and the daemon can make
+      # `spool` inside it. Never /tmp or a tmpfs: those are RAM.
+      WAMUX_MEDIA_SPOOL_DIR: /var/lib/wamux/spool
     volumes:
       # Bind mount, not a named volume: a named volume lives under
       # /var/lib/docker and is root-only, which puts the socket out of reach of
       # a consumer running as you on this host. See docs/DEPLOYMENT.md for the
       # container-to-container variant, where a named volume IS the right call.
       - ./run:/run/wamux
+      - wamux-spool:/var/lib/wamux
     restart: unless-stopped
 
 volumes:
   wamux-pgdata:
+  wamux-spool:

@@ -7,6 +7,10 @@
 //! Env: WAMUX_REF       account external_ref (required)
 //!      WAMUX_LIVE_DEST the one chat to send to (required, @s.whatsapp.net)
 //!      WAMUX_DELIVERY_SECS  how long each send waits for its `delivered` receipt
+//!      WAMUX_VIDEO_FILE  a local video sent instead of the sample URL's. It streams from
+//!                   disk in chunks and is never held whole in memory, so it can be as
+//!                   large as the daemon's media_max_bytes (the live check of the media
+//!                   spool, #79)
 //!      WAMUX_PTT_FILE  OGG/Opus path for the ptt kind (default /tmp/wamux-ptt-test.ogg)
 //!      WAMUX_PTT_SECS  voice note duration shown in the bubble (default 3)
 //! Requires the daemon running with the account paired. The core relays to the
@@ -22,6 +26,9 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
+use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
 
 use wamux::proto::v1 as pb;
@@ -33,7 +40,9 @@ use wamux_tools::live_env::{
     account_ref_from, delivery_window_from, live_dest_from, process_env, refuse_own_number,
     socket_path_from,
 };
-use wamux_tools::media_kit::{fetch_url_capped, media_chunks, webp_sticker_bytes};
+use wamux_tools::media_kit::{
+    MEDIA_CHUNK_BYTES, fetch_url_capped, media_chunks, webp_sticker_bytes,
+};
 use wamux_tools::report::Report;
 use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 
@@ -48,8 +57,14 @@ struct InlineMedia {
     mime: &'static str,
     media_type: pb::MediaType,
     filename: &'static str,
-    data: Vec<u8>,
+    body: Body,
     ptt_seconds: Option<u32>,
+}
+
+/// Where the bytes come from: memory, or a file streamed in chunks.
+enum Body {
+    Bytes(Vec<u8>),
+    File(String),
 }
 
 /// Who sends, to whom, and how long a send waits for its receipt.
@@ -95,7 +110,10 @@ async fn main() -> anyhow::Result<ExitCode> {
     let want = |k: &str| kinds == "all" || kinds == k;
 
     if want("video") {
-        let media = download("video/mp4", pb::MediaType::Video, VIDEO_URL).await;
+        let media = match process_env("WAMUX_VIDEO_FILE") {
+            Some(path) => Ok(video_file(path)),
+            None => download("video/mp4", pb::MediaType::Video, VIDEO_URL).await,
+        };
         send_kind(&mut messaging, &mut report, &ctx, "video", media).await;
     }
     if want("audio") {
@@ -109,7 +127,7 @@ async fn main() -> anyhow::Result<ExitCode> {
                 mime: "image/webp",
                 media_type: pb::MediaType::Sticker,
                 filename: "s.webp",
-                data,
+                body: Body::Bytes(data),
                 ptt_seconds: None,
             });
         send_kind(&mut messaging, &mut report, &ctx, "sticker", media).await;
@@ -155,9 +173,20 @@ async fn download(
         mime,
         media_type,
         filename: "",
-        data,
+        body: Body::Bytes(data),
         ptt_seconds: None,
     })
+}
+
+/// A local video, sent from disk: nothing reads it here until the stream does.
+fn video_file(path: String) -> InlineMedia {
+    InlineMedia {
+        mime: "video/mp4",
+        media_type: pb::MediaType::Video,
+        filename: "",
+        body: Body::File(path),
+        ptt_seconds: None,
+    }
 }
 
 async fn voice_note() -> Result<InlineMedia, String> {
@@ -173,7 +202,7 @@ async fn voice_note() -> Result<InlineMedia, String> {
         mime: "audio/ogg; codecs=opus",
         media_type: pb::MediaType::Audio,
         filename: "",
-        data,
+        body: Body::Bytes(data),
         ptt_seconds: Some(secs),
     })
 }
@@ -195,8 +224,51 @@ async fn send_inline(
         seconds: media.ptt_seconds.unwrap_or(0),
         ..Default::default()
     };
-    let chunks = media_chunks(header, &media.data);
-    m.send_media(tokio_stream::iter(chunks))
-        .await
-        .map(tonic::Response::into_inner)
+    let frames = match media.body {
+        Body::Bytes(data) => ReceiverStream::new(queued(media_chunks(header, &data))),
+        Body::File(path) => file_chunks(header, path),
+    };
+    m.send_media(frames).await.map(tonic::Response::into_inner)
+}
+
+/// Frames already in hand, as a stream (the channel holds all of them).
+fn queued(frames: Vec<pb::SendMediaChunk>) -> mpsc::Receiver<pb::SendMediaChunk> {
+    let (tx, rx) = mpsc::channel(frames.len().max(1));
+    for frame in frames {
+        // Cannot fail: the channel was sized for every frame and rx is alive.
+        let _ = tx.try_send(frame);
+    }
+    rx
+}
+
+/// The header, then the file read `MEDIA_CHUNK_BYTES` at a time. The channel is
+/// small, so a slow daemon holds the reader back and memory stays one chunk wide.
+fn file_chunks(header: pb::SendMediaHeader, path: String) -> ReceiverStream<pb::SendMediaChunk> {
+    let (tx, rx) = mpsc::channel(4);
+    tokio::spawn(async move {
+        let head = pb::SendMediaChunk {
+            part: Some(pb::send_media_chunk::Part::Header(header)),
+        };
+        if tx.send(head).await.is_err() {
+            return;
+        }
+        let Ok(mut file) = tokio::fs::File::open(&path).await else {
+            eprintln!("cannot open {path}");
+            return;
+        };
+        loop {
+            let mut piece = vec![0u8; MEDIA_CHUNK_BYTES];
+            match file.read(&mut piece).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => piece.truncate(n),
+            }
+            let frame = pb::SendMediaChunk {
+                part: Some(pb::send_media_chunk::Part::Chunk(piece)),
+            };
+            if tx.send(frame).await.is_err() {
+                return;
+            }
+        }
+    });
+    ReceiverStream::new(rx)
 }

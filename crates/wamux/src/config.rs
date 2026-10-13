@@ -52,8 +52,16 @@ pub struct Config {
     /// their own when shutdown fires; this bounds anything else. Keep it, plus
     /// `graceful_stop_timeout_ms`, well under systemd's 90 s stop timeout.
     pub shutdown_grace_ms: u64,
-    /// Max bytes accepted for an inbound media send (inline streamed chunks).
+    /// Max bytes accepted for an inbound media send (inline streamed chunks),
+    /// and the largest `file_length` DownloadMedia will fetch (#79).
     pub media_max_bytes: u64,
+    /// Directory where media transfers are staged (#79). Created 0700 at
+    /// startup, which fails if it is not writable. Spool files are unlinked
+    /// from creation, so it always looks empty. Not on a tmpfs: that is RAM.
+    pub media_spool_dir: String,
+    /// The bytes every transfer in flight may hold in the spool, summed (#79).
+    /// A transfer that would pass it gets `ResourceExhausted`. 0 = unlimited.
+    pub media_spool_max_bytes: u64,
     /// `tracing` env-filter directive.
     pub log_level: String,
     /// Log output format: "json" for structured one-line-per-event, anything
@@ -81,6 +89,8 @@ impl Default for Config {
             graceful_stop_timeout_ms: 3000,
             shutdown_grace_ms: 10_000,
             media_max_bytes: 100 * 1024 * 1024,
+            media_spool_dir: "/var/cache/wamux".to_string(),
+            media_spool_max_bytes: 2 * 1024 * 1024 * 1024,
             log_level: "info,wamux=debug".to_string(),
             log_format: "text".to_string(),
             enable_reflection: true,

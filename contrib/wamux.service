@@ -36,6 +36,14 @@ RestartSec=10
 # where both the database and the socket live.
 StateDirectory=wamux
 
+# The media spool (#79): SendMedia, PostStatusMedia and DownloadMedia stage each
+# file on disk instead of in memory. CacheDirectory= creates %C/wamux
+# (~/.cache/wamux for a user unit, /var/cache/wamux for a system one) and makes
+# it writable under ProtectSystem=strict below. It is a real disk on purpose:
+# /tmp and /run are RAM here, which would put the files back in memory.
+CacheDirectory=wamux
+Environment=WAMUX_MEDIA_SPOOL_DIR=%C/wamux
+
 # The daemon opens one socket and talks to WhatsApp; it needs nothing else.
 NoNewPrivileges=true
 PrivateTmp=true

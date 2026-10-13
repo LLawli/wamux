@@ -4,12 +4,13 @@
 
 use wamux_types::{Jid, MediaKind, StatusMedia, StatusRevoke, StatusText};
 use whatsapp_rust::buffa::Enumeration;
-use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::FontType;
 use whatsapp_rust::{Client, Jid as LibJid, SendResult, StatusSendOptions};
 
+use crate::domain::media_transfer;
 use crate::domain::wire_defaults::nonempty_string;
 use crate::error::{WamuxError, client_err};
+use crate::spool::StagedUpload;
 
 /// Post a text status. `background_argb`/`font` relay verbatim (0 is a valid
 /// transparent background, so it is NOT mapped away). Recipients are the device
@@ -44,20 +45,17 @@ pub async fn post_status_text(
         .map_err(client_err)
 }
 
-/// Post an image or video status. Uploads the streamed bytes (same path as
+/// Post an image or video status. Uploads the spooled bytes (same path as
 /// `media_transfer::send_media`), then posts via the lib's typed status sender.
 /// `seconds` is the video duration; it is ignored for an image.
 pub async fn post_status_media(
     client: &Client,
     status: &StatusMedia,
-    data: Vec<u8>,
+    staged: StagedUpload,
 ) -> Result<SendResult, WamuxError> {
     let kind = status.kind;
     let recipients = lib_recipients(&status.recipients);
-    let upload = client
-        .upload(data, kind.media_type(), UploadOptions::new())
-        .await
-        .map_err(client_err)?;
+    let upload = media_transfer::upload_staged(client, staged, kind.media_type()).await?;
     let caption = nonempty_string(&status.caption);
     let sender = client.status();
     let result = match kind {

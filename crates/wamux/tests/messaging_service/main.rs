@@ -29,6 +29,7 @@ mod receipts;
 mod refusals;
 mod rich;
 mod sends;
+mod spool;
 mod status;
 mod statuses;
 mod typed_inputs;

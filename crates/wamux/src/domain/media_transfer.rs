@@ -1,9 +1,10 @@
 //! Upload media for sending and download received media (lazy, from descriptor).
 
+use wacore::download::MediaType;
 use wamux_types::{DownloadableMedia, Jid, MediaKind, OutgoingMedia};
 use whatsapp_rust::buffa;
 use whatsapp_rust::download::DownloadParams;
-use whatsapp_rust::upload::{UploadOptions, UploadResponse};
+use whatsapp_rust::upload::UploadResponse;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::{
     AudioMessage, DocumentMessage, ImageMessage, StickerMessage, VideoMessage,
@@ -13,20 +14,37 @@ use whatsapp_rust::{Client, SendResult};
 use crate::domain::outgoing_context::outgoing_context;
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_u32};
 use crate::error::{WamuxError, client_err};
+use crate::spool::{MediaSpool, SpooledDownload, StagedUpload};
 
 pub async fn send_media(
     client: &Client,
     to: Jid,
     media: &OutgoingMedia,
-    data: Vec<u8>,
+    staged: StagedUpload,
 ) -> Result<SendResult, WamuxError> {
-    let upload = client
-        .upload(data, media.kind.media_type(), UploadOptions::new())
-        .await
-        .map_err(client_err)?;
+    let upload = upload_staged(client, staged, media.kind.media_type()).await?;
     let message = build_media_message(media, upload.into())?;
     client
         .send_message(to.into_lib(), message)
+        .await
+        .map_err(client_err)
+}
+
+/// Upload the spooled ciphertext (#79). The reservation is held until the
+/// upload ends, success or error, because the file occupies the disk until
+/// then; the library never touches disk itself.
+pub(crate) async fn upload_staged(
+    client: &Client,
+    staged: StagedUpload,
+    media_type: MediaType,
+) -> Result<UploadResponse, WamuxError> {
+    let StagedUpload {
+        source,
+        info,
+        reservation: _held,
+    } = staged;
+    client
+        .upload_stream(source, info, media_type)
         .await
         .map_err(client_err)
 }
@@ -235,15 +253,34 @@ fn image_submessage(
     )
 }
 
-/// Lazy download from a descriptor the edge got off an inbound message event.
+/// Lazy download from a descriptor the edge got off an inbound message event,
+/// staged in the spool (#79) instead of held in memory.
+///
+/// Both refusals happen before anything is fetched: a descriptor larger than
+/// `max_bytes`, then a budget that cannot hold it. A descriptor that declares
+/// no length reserves `max_bytes`, the most a download may be. The writer
+/// refuses to outgrow that, so a CDN cannot write more than was reserved.
 pub async fn download(
     client: &Client,
+    spool: &MediaSpool,
     descriptor: &DownloadableMedia,
-) -> Result<Vec<u8>, WamuxError> {
-    client
-        .download_from_params(&download_params(descriptor))
+    max_bytes: u64,
+) -> Result<SpooledDownload, WamuxError> {
+    if descriptor.file_length > max_bytes {
+        return Err(WamuxError::ResourceExhausted(
+            "media exceeds size limit".to_string(),
+        ));
+    }
+    let reserve = match descriptor.file_length {
+        0 => max_bytes,
+        declared => declared,
+    };
+    let slot = spool.begin_download(reserve).await?;
+    let writer = client
+        .download_from_params_to_writer(&download_params(descriptor), slot.writer)
         .await
-        .map_err(client_err)
+        .map_err(client_err)?;
+    SpooledDownload::seal(writer, slot.reservation)
 }
 
 /// Build the download parameters, encrypted or not.

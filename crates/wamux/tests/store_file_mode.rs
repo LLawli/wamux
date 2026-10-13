@@ -36,6 +36,9 @@ impl Daemon {
             .current_dir(dir)
             .env("WAMUX_DATABASE_URL", dsn)
             .env("WAMUX_SOCKET_PATH", dir.join("wamux.sock"))
+            // #79: the default spool, /var/cache/wamux, is the host's; startup
+            // fails when it cannot create it.
+            .env("WAMUX_MEDIA_SPOOL_DIR", dir.join("spool"))
             .env("WAMUX_LOG_LEVEL", "info,wamux=info")
             .env("NO_COLOR", "1")
             .stdout(Stdio::from(out))

@@ -44,3 +44,24 @@ fn allowed_uids_come_from_toml() {
     assert_eq!(config.allowed_uids, [1000, 1001]);
     assert_eq!(config.allowed_gids, [967]);
 }
+
+/// #79: the media spool lives in the system cache directory by default, with a
+/// 2 GiB budget for every transfer in flight.
+#[test]
+fn media_spool_defaults() {
+    let config = Config::default();
+    assert_eq!(config.media_spool_dir, "/var/cache/wamux");
+    assert_eq!(config.media_spool_max_bytes, 2 * 1024 * 1024 * 1024);
+}
+
+#[test]
+fn media_spool_keys_come_from_toml() {
+    let config: Config = Figment::from(Serialized::defaults(Config::default()))
+        .merge(Toml::string(
+            "media_spool_dir = \"/srv/wamux/spool\"\nmedia_spool_max_bytes = 0",
+        ))
+        .extract()
+        .unwrap();
+    assert_eq!(config.media_spool_dir, "/srv/wamux/spool");
+    assert_eq!(config.media_spool_max_bytes, 0);
+}
