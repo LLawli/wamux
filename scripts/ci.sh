@@ -179,6 +179,11 @@ must_run_pkg_tests wamux-types
 stage "test sleeps are marked"
 scripts/check-test-sleeps.py
 
+# #78: the release pipeline builds from fixed inputs (actions by SHA, FROM by
+# digest, cargo --locked) and the image waits for the release. Pure text check.
+stage "release pins"
+scripts/check-release-pins.py
+
 # #68: an RPC of GroupService no socket test calls is an RPC nobody pinned. The
 # count (21) makes a new RPC fail here until it gets a test. Pure text check.
 stage "GroupService RPC coverage"

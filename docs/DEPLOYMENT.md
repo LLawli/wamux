@@ -360,3 +360,23 @@ stopped.
   backups.
 - Postgres is covered by the same mechanism; the key protects the columns, so
   restrict who can read the server anyway (see above).
+
+## Verifying a release
+
+Each release ships a tarball on the GitHub release page and an image at
+`ghcr.io/llawli/wamux:<tag>`. Both carry a build provenance attestation (#78):
+a signed statement, made by the release workflow itself, of which commit and
+which workflow run produced the artifact. The `.sha256` next to the tarball only
+proves the download matches the release page; the attestation proves where it
+came from. Check it with the GitHub CLI before you deploy:
+
+```
+gh attestation verify wamux-<version>-x86_64-unknown-linux-gnu.tar.gz -R LLawli/wamux
+gh attestation verify oci://ghcr.io/llawli/wamux:<tag> -R LLawli/wamux
+```
+
+The image is built only after the release job passed its gates (the test
+suite, the tag/version check and the release notes), so a tag that failed them
+has no image. The build is `--locked` to the tested `Cargo.lock`, and the base
+images are pinned by digest.
+

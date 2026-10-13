@@ -1,0 +1,7 @@
+# actionlint's built-in list of GitHub-hosted runner labels stops at
+# ubuntu-24.04 (1.7.12 and main as of 2026-10-13), but ubuntu-26.04 is a hosted
+# image the workflows pin on purpose (#78). Declaring it here keeps every other
+# check; delete this file once actionlint lists ubuntu-26.04 itself.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
