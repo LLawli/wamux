@@ -159,6 +159,32 @@ a replacement for either of the others. What to know before choosing it:
 - **Not stress-tested.** The store and service suites run on it; the stress
   harness does not. Prefer Postgres for many accounts.
 
+## Upgrading a store written before #31
+
+Until #31 the store kept three structured blobs (the device, the app-state
+versions and the app-state sync keys) as bincode. The one-row `blob_format`
+table records which format a store holds, and a 0.2.x daemon converts a store
+still on `bincode` to `protobuf` the first time it opens it: every row is
+converted and checked before anything is written, and the rows and the marker
+change in one transaction. It logs a warning when it converted any row. (A new
+store is created marked `bincode` and converts zero rows on its first start;
+that is logged at info, since there is nothing in it 0.3.0 could not read.)
+
+**Upgrade through 0.2.x before 0.3.** 0.2.x is the last release line that
+converts a bincode store. 0.3.0 deletes the conversion (#179) and refuses to open
+a store whose marker still reads `bincode`, naming the 0.2.x release to upgrade
+through. It never guesses the format from the bytes.
+
+Before upgrading past 0.2.x, ask the running daemon:
+
+```
+grpcurl -unix -plaintext /run/wamux.sock wamux.v1.AdminService/Check
+```
+
+`"blobFormat": "BLOB_FORMAT_PROTOBUF"` means the store is ready for 0.3. A 0.2.x
+daemon that is up always reports it, since it converts a store or refuses to
+start; the field is what lets you check without reading the database.
+
 ## The store is a secret
 
 The store holds, for every paired account, the private identity keys, the Signal

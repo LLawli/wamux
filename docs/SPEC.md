@@ -93,7 +93,8 @@ src/
   of whatsapp-rust's own sqlite backend. Field-tagged, so a field upstream adds
   decodes as its default instead of making every stored blob unreadable, as
   bincode did. `blob_format` records the format; a store still on bincode is
-  converted on open (`storage/bincode_upgrade.rs`).
+  converted on open (`storage/bincode_upgrade.rs`) by 0.2.x, the last release
+  line that does; 0.3.0 refuses one (#84, #179).
 
 ## Media
 - Send: `MediaService` not used for send; `MessagingService.SendMedia` client-streams
@@ -117,7 +118,8 @@ src/
 - Socket group ownership comes from the daemon's process group (no chown); run wamux
   as the intended group for 0660 sharing.
 - Prometheus is exposed via `AdminService.GetMetrics` (no second/TCP listener);
-  `AdminService.Check` reports daemon liveness + readiness (Postgres `SELECT 1`).
+  `AdminService.Check` reports daemon liveness + readiness (Postgres `SELECT 1`)
+  and the store's `blob_format` (#84).
 - **Reconnection is never the core's job.** The library reconnects transient drops
   with backoff; the edge owns any reconnect after a terminal exit (401/409/logout).
   The core only emits truthful connection state + a clean terminal signal.
