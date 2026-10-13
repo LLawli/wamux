@@ -13,6 +13,42 @@ Two things decide that, always:
    the socket has no authentication of its own, so anyone who can open it
    controls every account. Filesystem permissions *are* the security boundary.
 
+### How the daemon binds the socket (#77)
+
+- **It never takes over a live socket.** If something is at the path, the
+  daemon probes it first. A socket that accepts a connection means another
+  wamux is serving it, and startup fails with `another wamux is serving <path>`.
+  A regular file (or anything that is not a socket) fails startup and is left
+  untouched. Only a socket that refuses connections is stale and replaced. Any
+  other probe error (for example `EACCES`) also fails startup, because the
+  socket cannot be proven dead. The probe runs before the store opens, so a
+  second daemon never runs migrations on the live one's database.
+- **There is no permission window.** The socket is bound in a private `0700`
+  directory beside the final path (`.wamux-bind-<pid>`), given its group and
+  mode there, and renamed onto `socket_path`. The path only ever shows the
+  final mode and group, whatever the process umask.
+- **The parent directory.** Missing levels are created `0750` (before umask); a
+  parent that already exists is not touched, so a systemd `RuntimeDirectory=`
+  keeps the mode you gave it.
+- **`socket_group`** is a group name (resolved through NSS: `/etc/group`,
+  systemd-userdb, LDAP) or a number, taken as a gid. The daemon `chown`s the
+  socket to it, so its user must be a member of that group (root excepted):
+  otherwise startup fails with `not a member of group`, and a group that does
+  not exist fails with `does not exist`. Unset, the socket keeps the daemon's
+  own group.
+
+### Allowlist by peer credentials (#77)
+
+`allowed_uids` and `allowed_gids` (both empty by default) add a second gate on
+top of the file permissions. With either set, a connection is served only if
+its peer uid is in `allowed_uids` or its gid is in `allowed_gids`; any other
+gets `PermissionDenied("peer not allowed")` before any RPC runs, reflection
+included, and the daemon logs a warning with the uid and gid. There is no
+implicit uid: list the daemon's own user if it should be admitted. The gid is
+the effective gid that `SO_PEERCRED` reports at connect time, so a peer that is
+in a listed group only as a supplementary one is not admitted by
+`allowed_gids`: list its uid instead.
+
 ## Storage engine
 
 The `database_url` scheme picks the engine, and nothing else needs to change:

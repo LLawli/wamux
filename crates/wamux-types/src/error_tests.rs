@@ -123,3 +123,25 @@ fn failed_precondition_maps_to_that_status() {
         "missing phone number mapping for LID 1@lid",
     );
 }
+
+/// #77: a peer outside the `SO_PEERCRED` allowlist. The message is generic: the
+/// client learns it was refused, not which ids would pass.
+#[test]
+fn peer_not_allowed_maps_to_permission_denied() {
+    assert_status(
+        WamuxError::PeerNotAllowed {
+            uid: Some(1000),
+            gid: Some(1000),
+        },
+        Code::PermissionDenied,
+        "peer not allowed",
+    );
+    assert_status(
+        WamuxError::PeerNotAllowed {
+            uid: None,
+            gid: None,
+        },
+        Code::PermissionDenied,
+        "peer not allowed",
+    );
+}

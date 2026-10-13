@@ -36,6 +36,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 bytes = "1"
+# #77: resolves `socket_group` by name through NSS (`Group::from_name`), which
+# std does not offer. No default features: only `user` (and `fs` for the tests'
+# umask) is compiled.
+nix = { version = "0.31", default-features = false }
 sqlx = { version = "0.8", default-features = false, features = [
     "postgres",
     "sqlite",

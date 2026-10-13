@@ -206,7 +206,11 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
 
   stage "no-postgres: service suites (sqlite engine)"
   WAMUX_TEST_ENGINE=sqlite must_run_tests --test grpc_server --test event_subscription \
-    --test reflection
+    --test reflection --test peer_allowlist
+
+  # #77: the socket bind suites touch no database at all.
+  stage "no-postgres: socket bind"
+  must_run_tests --test socket_bind --test socket_bind_umask
 
   stage "no-postgres: sqlite-only storage cases"
   must_run_tests --test storage_backend sqlite_

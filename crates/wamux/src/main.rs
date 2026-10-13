@@ -109,6 +109,11 @@ async fn serve() -> anyhow::Result<()> {
     // here with a message that names the file, never the key (#164).
     let store_key = load_store_key(&config)?;
 
+    // A second daemon stops here, before the migrations below can touch the
+    // live one's store (#77). The bind probes again for the race.
+    transport::uds_listener::refuse_if_served(&config.socket_path)
+        .context("checking the socket path")?;
+
     // The DSN scheme picks the engine (postgres:// or sqlite://).
     let engine = storage::open_engine_keyed(
         &config.database_url,

@@ -14,6 +14,21 @@ has to follow them.
 
 ### Changed
 
+- **Socket bind: no takeover, no permission window, a real `socket_group`, an
+  optional peer allowlist** (issue #77; see
+  `docs/BREAKING-CHANGES-2026-10-12.md`). The daemon probes a file at
+  `socket_path` before removing it: a live socket stops startup (`another wamux
+  is serving <path>`), a non-socket is left alone and refused, and only a socket
+  that refuses connections is replaced. The probe also runs before the store
+  opens, so a second daemon cannot migrate the live one's database. The socket
+  is bound in a private directory and renamed onto the path with its final mode
+  and group, so it is never visible wider than `socket_mode` (it used to be
+  0777 minus umask until the chmod). `socket_group` now does what it says: it
+  resolves a name or a numeric gid and `chown`s the socket, failing startup if
+  the group does not exist or the user is not a member. A parent directory the
+  daemon creates is `0750`. New keys `allowed_uids` and `allowed_gids` admit
+  only those `SO_PEERCRED` peers; others get `PermissionDenied`.
+
 - **The durability of each storage engine is documented** (no behavior change).
   `docs/DEPLOYMENT.md` now says what survives a crash on each: SQLite runs WAL
   with `synchronous = NORMAL` (inherited from the whatsapp-rust reference), so a

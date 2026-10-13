@@ -5,8 +5,17 @@
 socket_path = "/run/wamux.sock"
 # Socket file mode. TOML has no octal literal; 432 == 0o660.
 socket_mode = 432
-# Informational only: the socket inherits the daemon's process group.
+# Group that owns the socket (#77): a name (looked up through NSS) or a number
+# taken as a gid. The daemon's user must be a member, or startup fails; so does
+# a group that does not exist. Unset keeps the daemon's own group.
 # socket_group = "wamux"
+# Optional allowlist by SO_PEERCRED (#77). A peer whose uid is in allowed_uids,
+# or whose effective gid is in allowed_gids, is served; any other gets
+# PermissionDenied. Both empty (the default) serve everyone who can open the
+# socket. The gid is the peer's effective gid: supplementary groups are not
+# visible.
+# allowed_uids = [1000]
+# allowed_gids = [1000]
 
 # Database DSN. The scheme picks the storage engine:
 #   postgres:// (or postgresql://)  the multi-account default

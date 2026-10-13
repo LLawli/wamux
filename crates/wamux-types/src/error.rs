@@ -38,6 +38,11 @@ pub enum WamuxError {
     #[error("resource exhausted: {0}")]
     ResourceExhausted(String),
 
+    /// The peer's `SO_PEERCRED` is in neither allowlist (#77); `None` when the
+    /// kernel gave no credentials.
+    #[error("peer not allowed: uid={uid:?}, gid={gid:?}")]
+    PeerNotAllowed { uid: Option<u32>, gid: Option<u32> },
+
     #[error("storage error")]
     Store(#[from] wacore::store::error::StoreError),
 
@@ -93,6 +98,12 @@ impl From<WamuxError> for tonic::Status {
             WamuxError::ResourceExhausted(message) => {
                 tracing::warn!(reason = %message, "resource exhausted");
                 Status::resource_exhausted(message.clone())
+            }
+            WamuxError::PeerNotAllowed { uid, gid } => {
+                // The uid and gid go to the log only: the client already knows
+                // who it is, and the message stays fixed (#77).
+                tracing::warn!(?uid, ?gid, "peer not allowed");
+                Status::permission_denied("peer not allowed")
             }
             WamuxError::Store(_) | WamuxError::Other(_) => {
                 tracing::error!(cause = %cause_chain(&err), "internal error at service boundary");
