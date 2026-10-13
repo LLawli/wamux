@@ -2,6 +2,10 @@
 //! MediaService.DownloadMedia. No pairing; assumes WAMUX_REF is paired.
 //!
 //! Env: WAMUX_REF (required), WAMUX_SOCKET_PATH.
+//!      WAMUX_RECV_FROM_ME=1  also accept the echo of media this same account sent
+//!                   (key.from_me), so one account can send a file and download it
+//!                   back through DownloadMedia (the live check of the media spool,
+//!                   #79). Without it only media from someone else is taken.
 //! Usage: recv_media [seconds]   (default 300)
 
 use std::process::ExitCode;
@@ -55,6 +59,7 @@ async fn wait_for_media(
     secs: u64,
 ) -> Option<pb::MediaDescriptor> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let accept_own = process_env("WAMUX_RECV_FROM_ME").as_deref() == Some("1");
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(Duration::from_secs(5), ev.message()).await {
             Ok(Ok(Some(env))) => {
@@ -67,7 +72,8 @@ async fn wait_for_media(
                     m.text,
                     m.media.as_ref().map(|d| d.media_type().as_str_name())
                 );
-                if m.media.is_some() {
+                let own_echo = m.key.as_ref().is_some_and(|key| key.from_me);
+                if m.media.is_some() && (accept_own || !own_echo) {
                     return m.media;
                 }
             }
