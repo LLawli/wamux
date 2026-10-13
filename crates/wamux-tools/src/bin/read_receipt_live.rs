@@ -1,9 +1,9 @@
 //! Live validation for issue #20: the read receipt, and the app-state sync that
-//! used to wear its name.
+//! is a different call.
 //!
 //! SAFETY: the destination comes from `WAMUX_LIVE_DEST` (one JID) and the bin
 //! refuses to run without it, the same guard `stress_live`, `poll_live` and
-//! `sticker_live` use. It also refuses to target its own number.
+//! `send_echo_live` use. It also refuses to target its own number.
 //!
 //! Usage: WAMUX_LIVE_DEST=<jid> read_receipt_live [seconds]   (default 240)
 //! Env: WAMUX_REF            account external_ref (required)
@@ -23,7 +23,7 @@
 //!     losing its unread badge. The other phone never sees it.
 //!
 //! Neither call answers with anything but `Empty`. That silence is the whole
-//! reason #20 went unnoticed, and it is still true after the fix: a call that
+//! reason #20 went unnoticed, and it still holds: a call that
 //! succeeds and a receipt that arrives are different claims. So both are
 //! recorded as `accepted`, never `pass`; only the prompt's delivery and the
 //! reply's arrival are asserted values.

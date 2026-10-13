@@ -28,7 +28,7 @@ fn every_newsletter_state_is_named() {
 }
 
 // A deleted channel reads `DELETED` (library doc); relayed as spelled, not
-// lowercased as it was before #128.
+// lowercased (#128).
 #[test]
 fn an_other_state_is_unknown_with_the_servers_spelling() {
     assert_eq!(

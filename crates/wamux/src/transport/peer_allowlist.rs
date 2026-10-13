@@ -1,7 +1,7 @@
 //! Optional allowlist by `SO_PEERCRED` (#77): with `allowed_uids` or
 //! `allowed_gids` set, a connection whose peer is in neither list gets
 //! `PermissionDenied` before any RPC runs. Both empty (the default) admits
-//! everyone who can open the socket, as before: the socket's mode and group
+//! everyone who can open the socket: the socket's mode and group
 //! stay the real gate.
 //!
 //! The gid is the peer's effective gid as the kernel reports it at connect

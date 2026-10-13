@@ -1,9 +1,9 @@
-//! #148 (part 1 of #141): four more chat mutations, asserted as the whole
-//! message and routed through `map_event`, so each test also proves the event
-//! no longer falls into the RawEvent catch-all. Values are the ones the user's
-//! phone sent on 2026-10-08 14:43Z to 15:25Z (read off the production
-//! subscription; jids anonymized, message ids as sent). The participant and the
-//! absent flags are hand-built: no capture had them.
+//! #148: four chat mutations, asserted as the whole message and routed through
+//! `map_event`, so each test also proves the event does not fall into the
+//! RawEvent catch-all. Values are the ones the user's phone sent on 2026-10-08
+//! 14:43Z to 15:25Z (read off the production subscription; jids anonymized,
+//! message ids as sent). The participant and the absent flags are hand-built:
+//! no capture had them.
 
 #![allow(clippy::field_reassign_with_default)] // the generated actions are built by assignment
 

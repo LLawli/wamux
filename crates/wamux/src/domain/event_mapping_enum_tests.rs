@@ -1,7 +1,7 @@
-//! #126: the event fields that were free strings or `Debug` output reach the
-//! wire as the contract's enums, and a value the library does not name keeps
-//! its original token or code. Its own file because `event_mapping_tests.rs` is
-//! already past the 500-line rule.
+//! #126: the event fields with a closed set of values reach the wire as the
+//! contract's enums, never as free strings or `Debug` output, and a value the
+//! library does not name keeps its original token or code. Its own file because
+//! `event_mapping_tests.rs` is already past the 500-line rule.
 
 use super::*;
 use wacore::types::events::{
@@ -19,8 +19,8 @@ fn connection_of(event: &Event) -> pb::ConnectionStateChanged {
     }
 }
 
-// A code the library has no variant for used to reach the edge as
-// `Unknown(416)` inside `detail`. Now it is UNKNOWN with the server's code.
+// A code the library has no variant for is UNKNOWN with the server's code, not
+// `Unknown(416)` inside `detail`.
 #[test]
 fn a_logout_with_an_unknown_code_relays_the_code() {
     let c = connection_of(&Event::LoggedOut(Box::new(
@@ -35,7 +35,7 @@ fn a_logout_with_an_unknown_code_relays_the_code() {
     assert_eq!(info.reason_code, 416);
 }
 
-// Everything the `Debug` of the ban carried, except the raw node, now travels
+// Everything the `Debug` of the ban carried, except the raw node, travels
 // typed: the reason, how long it lasts, and the server's message and link.
 #[test]
 fn a_temporary_ban_carries_reason_expiry_message_and_url() {

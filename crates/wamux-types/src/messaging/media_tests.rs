@@ -90,7 +90,7 @@ fn outgoing_media_refuses_a_download_only_kind() {
     }
 }
 
-// The kind is read before the context, as the domain read it first.
+// The kind is read before the context.
 #[test]
 fn outgoing_media_checks_the_kind_before_the_context() {
     let request = pb::SendMediaHeader {
@@ -123,7 +123,7 @@ fn downloadable_media_copies_every_field() {
     );
 }
 
-// Issue #58: DownloadMedia takes a received pack and its thumbnail.
+// DownloadMedia (#58) takes a received pack and its thumbnail.
 #[test]
 fn downloadable_media_accepts_the_pack_values() {
     let kinds = [

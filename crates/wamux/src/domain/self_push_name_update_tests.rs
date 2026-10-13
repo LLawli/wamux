@@ -1,8 +1,8 @@
-//! #153 (part 2b of #141): this account's own push name, routed through
-//! `map_event`, so each test also proves the event no longer falls into the
-//! RawEvent catch-all. The rename is the one the user made on the trabalho
-//! phone on 2026-10-08 at 19:58Z (read off the production subscription; the
-//! names are replaced, the shape is kept: a shorter name).
+//! #153: this account's own push name, routed through `map_event`, so each test
+//! also proves the event does not fall into the RawEvent catch-all. The rename
+//! is the one the user made on the trabalho phone on 2026-10-08 at 19:58Z (read
+//! off the production subscription; the names are replaced, the shape is kept:
+//! a shorter name).
 
 use wacore::types::events::{Event, SelfPushNameUpdated};
 

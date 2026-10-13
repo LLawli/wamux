@@ -1,5 +1,5 @@
 //! #133: the typed projection of a library `ContactUpdate`, asserted as the
-//! whole message. It used to cross as the library's JSON in `raw`.
+//! whole message.
 
 use std::str::FromStr;
 

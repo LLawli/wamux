@@ -30,7 +30,7 @@ fn mapped(event: &Event) -> pb::event_envelope::Event {
         .expect("the event maps to one payload")
 }
 
-// `group_jid` became `Jid group`: only the `_jid` suffix left the name.
+// The group is the field `Jid group`, with no `_jid` suffix.
 #[test]
 fn group_update_names_the_group_as_a_jid() {
     let event = Event::GroupUpdate(
@@ -43,7 +43,7 @@ fn group_update_names_the_group_as_a_jid() {
     );
     match mapped(&event) {
         PbEvent::Group(g) => {
-            // #133 dropped the constant `kind`; the oneof case names the action.
+            // The oneof case names the action; there is no `kind` (#133).
             assert_eq!(g.group, wire(GROUP_JID));
         }
         other => panic!("expected group update, got {other:?}"),
@@ -70,7 +70,7 @@ fn contact_update_names_the_contact_as_a_jid() {
 }
 
 // The echo's sender is this account's own jid, which the library may not have
-// yet. That was an empty string; it is an unset Jid now, never `Jid { "" }`.
+// yet. It is an unset Jid, never an empty string or `Jid { "" }`.
 #[test]
 fn an_echo_without_an_own_jid_leaves_sender_unset() {
     let msg = wa::Message {

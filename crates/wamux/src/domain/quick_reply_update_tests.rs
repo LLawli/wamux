@@ -1,8 +1,8 @@
-//! #149 (part 2 of #141): quick replies, routed through `map_event`, so each
-//! test also proves the event no longer falls into the RawEvent catch-all.
-//! Values are the ones the user's phone (pessoal, Business) sent on 2026-10-08
-//! 18:50Z when it created, edited and deleted a quick reply (read off the
-//! production subscription). Keywords and label ids are hand-built: the
+//! #149: quick replies, routed through `map_event`, so each test also proves
+//! the event does not fall into the RawEvent catch-all. Values are the ones
+//! the user's phone (pessoal, Business) sent on 2026-10-08 18:50Z when it
+//! created, edited and deleted a quick reply (read off the production
+//! subscription). Keywords and label ids are hand-built: the
 //! capture had none.
 
 #![allow(clippy::field_reassign_with_default)] // the generated actions are built by assignment

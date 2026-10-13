@@ -1,7 +1,7 @@
 //! Validate the InitialBootstrap history dump end-to-end: pair a FRESH account
 //! via QR with backfill ENABLED (skip_history=false), then watch the history
 //! sync the phone pushes right after linking. Registry-direct (not over the
-//! socket) because the socket pairing RPCs don't expose the backfill flag yet.
+//! socket): it runs the account in-process and needs no daemon.
 //!
 //! Opens the QR PNG with xdg-open on the first refresh; scan it with the phone.
 //!
@@ -161,7 +161,8 @@ fn count_history(tally: &mut HistoryTally, h: &pb::HistorySyncEvent) {
 }
 
 fn sync_type_name(t: i32) -> String {
-    // waproto 0.7 generates closed enums: `from_i32` replaces prost's TryFrom.
+    // waproto generates closed enums: an unknown wire value is `None` from `from_i32`, not a
+    // prost-style `TryFrom` error.
     match wa::history_sync::HistorySyncType::from_i32(t) {
         Some(v) => format!("{v:?}"),
         None => t.to_string(),

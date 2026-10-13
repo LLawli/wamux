@@ -18,13 +18,13 @@
 //! they queued.
 //!
 //! The module knows nothing of a driver: `BatchConn` runs the control statements
-//! and the engine runs its own statements on the guarded connection. Turso is the
-//! first engine wired to it (#172); SQLite is the second (#173), where the
-//! batch is the writer's and the reads run on a separate read-only pool.
+//! and the engine runs its own statements on the guarded connection. Turso is
+//! wired to it (#172), and so is SQLite (#173), where the batch is the writer's
+//! and the reads run on a separate read-only pool.
 //!
-//! A control statement can be awaited by a future that is then dropped. That is
-//! closed (#173): the statement being awaited is marked, and whoever takes the
-//! lock next reconciles it first (`group_commit_reconcile.rs`). It matters
+//! A control statement can be awaited by a future that is then dropped. The
+//! statement being awaited is marked (#173), and whoever takes the lock next
+//! reconciles it first (`group_commit_reconcile.rs`). It matters
 //! because sqlx-sqlite 0.8.6 runs a queued statement even when the caller is
 //! gone (`connection/worker.rs:354`), so the batch's belief and the connection
 //! could disagree.

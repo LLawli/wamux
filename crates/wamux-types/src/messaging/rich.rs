@@ -61,8 +61,8 @@ impl TryFrom<pb::SendContactRequest> for ContactCard {
 }
 
 /// The offer's id first: no quote, no quoted key or an empty id is
-/// `InvalidArgument("quote.quoted.id must name the offer being answered")`,
-/// as the domain answered. Then the quote's participant, then the shape
+/// `InvalidArgument("quote.quoted.id must name the offer being answered")`.
+/// Then the quote's participant, then the shape
 /// (`"no reply shape set"`).
 impl TryFrom<pb::SendInteractiveReplyRequest> for InteractiveReply {
     type Error = WamuxError;

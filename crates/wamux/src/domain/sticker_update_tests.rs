@@ -1,8 +1,8 @@
-//! #148 (part 1 of #141): sticker mutations, routed through `map_event`, so
-//! each test also proves the event no longer falls into the RawEvent
-//! catch-all. Values are the ones the user's phone sent on 2026-10-08 14:45Z
-//! (read off the production subscription); the media key, the encrypted hash
-//! and the path are fictitious, the rest as sent.
+//! #148: sticker mutations, routed through `map_event`, so each test also
+//! proves the event does not fall into the RawEvent catch-all. Values are the
+//! ones the user's phone sent on 2026-10-08 14:45Z (read off the production
+//! subscription); the media key, the encrypted hash and the path are
+//! fictitious, the rest as sent.
 
 #![allow(clippy::field_reassign_with_default)] // the generated actions are built by assignment
 

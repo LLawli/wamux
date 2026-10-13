@@ -1,6 +1,6 @@
 //! `MessageTarget`, `QuotedRef`, `OutgoingContext`, `Jid::parse_optional`
 //! (#115): what each accepts, what each refuses and with which message.
-//! #120 made every jid in them a `pb::Jid`: a required one that is unset or
+//! Every jid in them is a `pb::Jid` (#120): a required one that is unset or
 //! empty answers "missing jid", an optional one is absent.
 
 use prost::Message as _;
@@ -72,8 +72,7 @@ fn a_target_with_an_unset_participant_is_a_dm() {
     assert_eq!(target.participant, None);
 }
 
-// Decided 2026-10-05 (#120): a participant set with an empty value is still
-// the DM, as the empty string was.
+// A participant set with an empty value is still the DM (#120).
 #[test]
 fn a_participant_set_but_empty_is_a_dm() {
     let target = MessageTarget::try_from(key(PHONE, "MSG-2", "")).unwrap();
@@ -118,7 +117,7 @@ fn a_target_with_an_unset_chat_is_missing_jid() {
     );
 }
 
-// The chat is checked before the id, the order the domain read them in.
+// The chat is checked before the id.
 #[test]
 fn a_target_checks_the_chat_before_the_id() {
     assert_eq!(
@@ -127,10 +126,10 @@ fn a_target_checks_the_chat_before_the_id() {
     );
 }
 
-// Decided 2026-10-05 (#120): a retyped field took a new number. A client built
-// against the old contract sends `remote_jid` as a string under field 1; the
-// new key does not read field 1 at all, so the chat is missing rather than a
-// string's bytes misread as a `Jid` message.
+// #120: a retyped field took a new number. A client built against the old
+// contract sends `remote_jid` as a string under field 1; the new key does not
+// read field 1 at all, so the chat is missing rather than a string's bytes
+// misread as a `Jid` message.
 #[test]
 fn an_old_client_remote_jid_decodes_as_missing_chat() {
     let old_chat = PHONE.as_bytes();
@@ -147,8 +146,8 @@ fn an_old_client_remote_jid_decodes_as_missing_chat() {
     );
 }
 
-// Decided 2026-10-05: the library's parse is the one normalization, here as
-// for `to`. A `@c.us` chat reaches the wire key as `@s.whatsapp.net`.
+// The library's parse is the one normalization, here as for `to`.
+// A `@c.us` chat reaches the wire key as `@s.whatsapp.net`.
 #[test]
 fn a_legacy_target_chat_parses_as_a_phone_user() {
     let target = MessageTarget::try_from(key("5511999999999@c.us", "MSG", "")).unwrap();
@@ -206,8 +205,8 @@ fn an_unset_quote_participant_falls_back_to_the_key_participant() {
     assert_eq!(quoted.participant, Some(jid(AUTHOR)));
 }
 
-// Regression (code-review 2026-06-11): a DM quote has empty participants on
-// both the context and the key; that is the absent participant, never Some("").
+// Regression: a DM quote has empty participants on both the context and the
+// key; that is the absent participant, never Some("").
 #[test]
 fn a_dm_quote_has_no_participant() {
     let quoted = QuotedRef::from_proto(quote(Some(key(PHONE, "QUOTED-DM", "")), ""))
@@ -235,8 +234,8 @@ fn a_quote_with_a_malformed_participant_is_refused() {
     }
 }
 
-// The wire quote has no chat field, so the quoted key's chat was never read.
-// Reading it now would refuse quotes the core always relayed.
+// The wire quote has no chat field, so the quoted key's chat is never read.
+// Reading it would refuse quotes the core relays.
 #[test]
 fn a_quote_never_reads_the_quoted_chat() {
     for chat in ["", "not a jid"] {
@@ -270,7 +269,7 @@ fn an_empty_context_is_the_default() {
     );
 }
 
-// A mention relayed unparsed before #115; it is a jid, so it parses now.
+// A mention is a jid, so it parses (#115).
 #[test]
 fn a_malformed_mention_is_refused() {
     let mention = |jid: &str| vec![pb::Mention { jid: wire(jid) }];

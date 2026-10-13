@@ -1,6 +1,6 @@
-//! #151 (part 4 of #141): `<notification type="mex">`, routed through
-//! `map_event`, so each test also proves the event no longer falls into the
-//! RawEvent catch-all. The payload is hand-built: no live capture carried one.
+//! #151: `<notification type="mex">`, routed through `map_event`, so each
+//! test also proves the event does not fall into the RawEvent catch-all. The
+//! payload is hand-built: no live capture carried one.
 
 use std::str::FromStr;
 

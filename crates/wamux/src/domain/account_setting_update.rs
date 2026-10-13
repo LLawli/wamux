@@ -1,6 +1,5 @@
-//! Account-wide settings changed on a linked device (#149, part 2 of #141):
-//! link previews and the status audience. They reached the socket as RawEvent
-//! with the library's JSON.
+//! Account-wide settings changed on a linked device (#149): link previews and
+//! the status audience, as typed contract messages.
 
 use wacore::types::events::{DisableLinkPreviewsUpdate, StatusPrivacyUpdate};
 use wamux_types::relay_jid;

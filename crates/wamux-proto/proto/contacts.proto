@@ -60,7 +60,7 @@ message BusinessProfileResponse {
 }
 
 // A business profile, every field the library parses (#132). Names follow the
-// library's, so each key of the old JSON is the field of the same name.
+// library's.
 message BusinessProfile {
   Jid wid = 1;
   string description = 2;  // "" when the profile has none: the library's own default
@@ -172,8 +172,8 @@ service ContactService {
   rpc RemoveProfilePicture(AccountRef) returns (Empty);
   // The account's OWN push name (the getter that pairs with SetPushName).
   // Takes an AccountRef, not a jid: WhatsApp gives a companion device no
-  // per-contact push-name store, and the previous JidRequest shape read as
-  // "what is this contact called" while ignoring the jid (issue #1).
+  // per-contact push-name store, so a jid argument would read as "what is this
+  // contact called" while meaning nothing (issue #1).
   rpc GetPushName(AccountRef) returns (PushNameResponse);
   rpc SetPushName(SetPushNameRequest) returns (Empty);
   rpc GetAbout(JidRequest) returns (AboutResponse);

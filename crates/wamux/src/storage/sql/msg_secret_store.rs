@@ -1,7 +1,6 @@
-//! `MsgSecretStore` for the SQL family. New in whatsapp-rust 0.7, where it
-//! became a required supertrait of `Backend`. Stores the 32-byte
-//! `messageSecret` keyed by the outbound message it rode on, never the message
-//! itself.
+//! `MsgSecretStore` for the SQL family, a required supertrait of `Backend`.
+//! Stores the 32-byte `messageSecret` keyed by the outbound message it rode on,
+//! never the message itself.
 
 use async_trait::async_trait;
 use wacore::store::error::Result;

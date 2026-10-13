@@ -3,8 +3,8 @@
 //!
 //! Why all three (#35): tonic answers the shutdown signal by waiting, with no
 //! deadline, for every connection to close, and HTTP/2 lets in-flight streams
-//! finish. A `SubscribeEvents` stream never finishes on its own, so SIGTERM
-//! used to park the daemon until systemd SIGKILLed it. Now the event forwarders
+//! finish. A `SubscribeEvents` stream never finishes on its own, so left alone
+//! SIGTERM would park the daemon until systemd SIGKILLs it. The event forwarders
 //! end their streams when `Shutdown` fires, and `drain_or_deadline` caps
 //! whatever else might still hold a connection.
 

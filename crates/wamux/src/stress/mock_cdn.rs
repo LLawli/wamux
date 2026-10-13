@@ -102,9 +102,6 @@ impl MockCdn {
         lock(&self.state.bodies).insert(direct_path.to_string(), Served::File(file));
     }
 
-    /// From now on, hash each upload's body as it arrives and keep only its
-    /// length and SHA-256 (#79): `MockUpload::body` is then empty, and the
-    /// upload cannot be served back.
     /// From now on, read each upload's body whole and then hold its answer
     /// until `release_uploads` (#79). The client's upload is then in flight
     /// with every byte sent, which is a point a test can wait for:
@@ -123,6 +120,9 @@ impl MockCdn {
         self.state.uploads_waiting.load(Ordering::SeqCst)
     }
 
+    /// From now on, hash each upload's body as it arrives and keep only its
+    /// length and SHA-256 (#79): `MockUpload::body` is then empty, and the
+    /// upload cannot be served back.
     pub fn discard_upload_bodies(&self) {
         self.state
             .discard_upload_bodies

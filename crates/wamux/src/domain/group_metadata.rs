@@ -1,11 +1,10 @@
 //! A group as the library hands it over, projected onto the contract's typed
-//! `GroupMetadata` (#132, part 1 of #74). It used to cross as hand-built JSON
-//! with five fields, and hand-picking is exactly what once dropped each
-//! participant's identity (issue #1): a LID-addressed group hands back every
-//! member as a `@lid` with `phone_number` alongside, and flattening a
-//! participant to its jid string threw away the answer to "who is this @lid"
-//! for the whole roster, plus who is admin. So every field crosses, and an
-//! absent one stays unset rather than guessed.
+//! `GroupMetadata` (#132). Hand-picking fields loses each participant's
+//! identity (issue #1): a LID-addressed group hands back every member as a
+//! `@lid` with `phone_number` alongside, and flattening a participant to its
+//! jid string throws away the answer to "who is this @lid" for the whole
+//! roster, plus who is admin. So every field crosses, and an absent one stays
+//! unset rather than guessed.
 
 use wacore::iq::groups::{GroupEphemeralSettings, GroupParticipantDetails, GrowthLockInfo};
 use wamux_types::group_enums::{
@@ -173,8 +172,8 @@ fn growth_lock_of(lock: &GrowthLockInfo) -> pb::GrowthLockInfo {
     }
 }
 
-/// One pending request: the jid as the contract's `Jid` (it used to cross as
-/// the library's struct, #96) and the request time in milliseconds.
+/// One pending request: the jid as the contract's `Jid` (#96) and the request time
+/// in milliseconds.
 pub fn membership_request_of(request: &MembershipRequest) -> pb::MembershipRequest {
     pb::MembershipRequest {
         jid: relay_lib_jid(&request.jid),

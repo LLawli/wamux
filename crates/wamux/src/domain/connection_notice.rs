@@ -1,7 +1,6 @@
-//! The connection's lifecycle past its state (#150, part 3 of #141): a refused
-//! connection, an outdated build, a stream error, a takeover, an incomplete
-//! app-state sync and a build deadline. Each reached the socket as RawEvent
-//! with the library's JSON.
+//! The connection's lifecycle past its state (#150): a refused connection, an
+//! outdated build, a stream error, a takeover, an incomplete app-state sync and
+//! a build deadline.
 
 use wacore::types::events::{
     AppStateSyncFailed, ClientExpirationChanged, ClientOutdated, ConnectFailure, StreamError,

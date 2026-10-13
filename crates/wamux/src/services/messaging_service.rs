@@ -141,8 +141,8 @@ impl MessagingService for MessagingSvc {
         let to = require_typed_jid(header.to.clone())?;
 
         // The encryptor needs the type to start, so it is checked before the
-        // first byte (#79). The rest of the header converts after the bytes,
-        // as before: the order of those errors is part of the contract.
+        // first byte (#79). The rest of the header converts after the bytes:
+        // the order of those errors is part of the contract.
         let kind = MediaKind::parse_sendable(header.media_type)?;
         // Media always streams inline; the core never fetches URLs (that fetch
         // policy + SSRF surface is the edge's job).
@@ -175,8 +175,8 @@ impl MessagingService for MessagingSvc {
         let target = MessageTarget::try_from(raw_key.clone())?;
         let result = messaging::edit_message(&client, &target, &req.new_text).await?;
         self.echo(&handle, &client, &result).await;
-        // The response keeps naming the chat verbatim as the caller wrote it,
-        // as before #38; the echo names the chat the library addressed.
+        // The response keeps naming the chat verbatim as the caller wrote it;
+        // the echo names the chat the library addressed (#38).
         Ok(Response::new(pb::SendResult {
             key: Some(pb::MessageKey {
                 chat: raw_key.chat,
@@ -251,9 +251,9 @@ impl MessagingService for MessagingSvc {
         let req = request.into_inner();
         let client = client_of(&self.registry, req.account.as_ref()).await?;
         let chat = require_typed_jid(req.chat)?;
-        // Both of these were dropped on the floor before issue #20. `sender` is
-        // optional (a DM's author is the chat itself); an empty `message_ids`
-        // acknowledges nothing and the library emits no stanza.
+        // Both reach the library (#20). `sender` is optional (a DM's author is the chat
+        // itself); an empty `message_ids` acknowledges nothing and the library emits no
+        // stanza.
         let sender = Jid::parse_optional(&req.sender.unwrap_or_default().value)?;
         messaging::mark_read(&client, &chat, sender.as_ref(), &req.message_ids).await?;
         Ok(Response::new(pb::Empty {}))

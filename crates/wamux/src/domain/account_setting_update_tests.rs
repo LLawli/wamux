@@ -1,9 +1,8 @@
-//! #149 (part 2 of #141): account settings, routed through `map_event`, so
-//! each test also proves the event no longer falls into the RawEvent
-//! catch-all. The link-preview values are the ones the user's phone sent on
-//! 2026-10-08 18:49Z (read off the production subscription). The status
-//! audience is hand-built: changing it on the phone reached no app-state
-//! mutation.
+//! #149: account settings, routed through `map_event`, so each test also proves
+//! the event does not fall into the RawEvent catch-all. The link-preview values
+//! are the ones the user's phone sent on 2026-10-08 18:49Z (read off the
+//! production subscription). The status audience is hand-built: changing it on
+//! the phone reached no app-state mutation.
 
 #![allow(clippy::field_reassign_with_default)] // the generated actions are built by assignment
 

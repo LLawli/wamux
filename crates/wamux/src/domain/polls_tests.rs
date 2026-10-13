@@ -1,7 +1,6 @@
-//! `polls` (#115): the tests that lived inline, moved so the loop can seal
-//! them. Checking the secret, the poll id, the options and parsing the voters
-//! moved to `wamux-types` (`messaging/polls_tests.rs`) with the same
-//! assertions; what stays here is the pairing and the projection.
+//! `polls` (#115): the pairing and the projection. Checking the secret, the
+//! poll id, the options and parsing the voters is tested in `wamux-types`
+//! (`messaging/polls_tests.rs`).
 
 use wamux_types::{EncryptedVote, Jid};
 

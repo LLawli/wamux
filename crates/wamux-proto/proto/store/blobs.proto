@@ -7,10 +7,11 @@ syntax = "proto3";
 //   app_state_keys.key_data         AppStateSyncKeyWire
 //
 // NOT part of the gRPC contract: it is compiled separately and kept out of the
-// reflection descriptor. It replaces bincode-standard, which is positional, so
-// every field upstream appended to one of these types made every stored blob
-// unreadable (0.6 -> 0.7.0, then 0.7.0 -> main). Protobuf is field-tagged: a
-// field a blob predates decodes as its default.
+// reflection descriptor. It replaces bincode-standard in these columns
+// (src/storage/bincode_upgrade.rs converts an older store). bincode is
+// positional, so every field upstream appended to one of these types made every
+// stored blob unreadable. Protobuf is field-tagged: a field a blob predates
+// decodes as its default.
 //
 // FIELD NUMBERS ARE THE STORED FORMAT. Never renumber or reuse one; retire a
 // field with `reserved`. Adding a field upstream shows up as a compile error in

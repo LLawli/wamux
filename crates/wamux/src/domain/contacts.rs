@@ -68,8 +68,7 @@ pub async fn remove_profile_picture(client: &Client) -> Result<(), WamuxError> {
 
 pub async fn get_push_name(client: &Client) -> Result<pb::PushNameResponse, WamuxError> {
     Ok(pb::PushNameResponse {
-        // 0.7 dropped the `get_` prefix and made it sync: the device snapshot
-        // is an Arc read now, so there is nothing left to await.
+        // The device snapshot is a sync `Arc` read, so there is nothing to await.
         push_name: client.push_name(),
     })
 }
@@ -87,8 +86,8 @@ pub async fn set_push_name(client: &Client, name: &str) -> Result<(), WamuxError
 /// before any network I/O, with a bare `anyhow` (no IQ code). `client_err`
 /// would then launder that into `Client` -> `Unavailable`/503, so a plain
 /// caller mistake reads as "upstream down" at the edge. Reject it up front as
-/// InvalidArgument, mirroring the empty-input guards in wamux_types::Jid / chat_actions
-/// (E2E triage 2026-06-16). We match the lib's own rule exactly (empty only):
+/// InvalidArgument, mirroring the empty-input guards in `wamux_types::Jid`.
+/// We match the lib's own rule exactly (empty only):
 /// trimming/blank policy is the edge's call, not the core's.
 fn validate_push_name(name: &str) -> Result<(), WamuxError> {
     if name.is_empty() {

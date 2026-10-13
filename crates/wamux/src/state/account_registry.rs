@@ -143,12 +143,11 @@ impl AccountRegistry {
     }
 
     /// Watch handles inserted after this call. All-accounts event subscriptions
-    /// combine this with `list()` to get dynamic membership (Sprint 5).
+    /// combine this with `list()` to get dynamic membership.
     pub fn subscribe_created(&self) -> broadcast::Receiver<Arc<AccountHandle>> {
         self.created_tx.subscribe()
     }
 
-    /// Resolve a proto `AccountRef` (uuid or external_ref) to a handle.
     /// The ring's per-event size cap, so a caller publishing onto the same bus
     /// (issue #22's send echo) honours the same budget the event bridge does.
     pub fn replay_max_event_bytes(&self) -> u64 {
@@ -220,8 +219,8 @@ impl AccountRegistry {
         .await
         .map_err(client_err)?;
         handle.set_client(bot.client()).await;
-        // 0.7: `Bot::run()` blocks the calling task and is infallible; `spawn()`
-        // is the background form and consumes the Bot, so there is no longer a
+        // `Bot::run()` blocks the calling task and is infallible; `spawn()`
+        // is the background form and consumes the Bot, so there is no
         // Bot value for the supervisor to hold alive.
         let bot_handle = bot.spawn();
 
@@ -266,7 +265,7 @@ impl AccountRegistry {
         if !client.is_connected() {
             return Err(WamuxError::NotConnected);
         }
-        // 0.7 made logout infallible: it fires the IQ best-effort and always
+        // Logout is infallible: it fires the IQ best-effort and always
         // tears the local session down, so there is no failure left to report.
         // The `is_connected` guard above is what still gives the edge a
         // `NotConnected` instead of a silent no-op.

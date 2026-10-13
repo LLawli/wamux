@@ -1,7 +1,6 @@
 //! App-state chat mutations, projected onto the contract's typed
-//! `AppStateUpdate` (#134, part 3 of #74). They used to cross as the library's
-//! JSON in `raw`, built by one generic helper for all six; each library
-//! struct now has its own concrete function.
+//! `AppStateUpdate` (#134). Each library struct has its own concrete function,
+//! no generic helper.
 
 use wacore::types::events::{
     ArchiveUpdate, ClearChatUpdate, DeleteChatUpdate, DeleteMessageForMeUpdate, LockChatUpdate,
@@ -149,7 +148,7 @@ pub fn delete_chat_update_of(update: &DeleteChatUpdate) -> pb::AppStateUpdate {
     )
 }
 
-/// #148 (part 1 of #141): the chat lock, as the action carries it.
+/// #148: the chat lock, as the action carries it.
 pub fn lock_chat_update_of(update: &LockChatUpdate) -> pb::AppStateUpdate {
     let action = Action::Lock(pb::LockChange {
         locked: update.action.locked,

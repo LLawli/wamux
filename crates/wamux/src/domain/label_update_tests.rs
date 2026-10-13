@@ -1,9 +1,9 @@
-//! #149 (part 2 of #141): labels, routed through `map_event`, so each test
-//! also proves the event no longer falls into the RawEvent catch-all. Values
-//! are the ones the user's phone (pessoal, Business) sent on 2026-10-08 18:47Z
-//! to 18:51Z when it created, renamed and deleted a chat list and moved chats
-//! in and out of it (read off the production subscription; jids anonymized).
-//! The message label is hand-built: the app no longer labels messages.
+//! #149: labels, routed through `map_event`, so each test also proves the event
+//! does not fall into the RawEvent catch-all. Values are the ones the user's
+//! phone (pessoal, Business) sent on 2026-10-08 18:47Z to 18:51Z when it
+//! created, renamed and deleted a chat list and moved chats in and out of it
+//! (read off the production subscription; jids anonymized). The message label
+//! is hand-built: the app no longer labels messages.
 
 #![allow(clippy::field_reassign_with_default)] // the generated actions are built by assignment
 

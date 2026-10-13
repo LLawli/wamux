@@ -1,5 +1,5 @@
 //! #164: `store_key_file` is a PATH, from the TOML or the environment, and unset
-//! by default (a plaintext store, as before).
+//! by default (a plaintext store).
 
 use figment::Figment;
 use figment::providers::{Format, Serialized, Toml};

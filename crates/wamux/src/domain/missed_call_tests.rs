@@ -1,6 +1,6 @@
-//! #151 (part 4 of #141): a call that must not ring, routed through
-//! `map_event`, so each test also proves the event no longer falls into the
-//! RawEvent catch-all. It crosses as a CallEvent whose action is `missed`.
+//! #151: a call that must not ring, routed through `map_event`, so each test
+//! also proves the event does not fall into the RawEvent catch-all. It crosses
+//! as a CallEvent whose action is `missed`.
 
 use std::str::FromStr;
 

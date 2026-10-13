@@ -25,7 +25,7 @@ enum MediaFrame {
     /// Boxed: the headers are hundreds of bytes next to a byte chunk's 24.
     Header(Box<MediaHeader>),
     Bytes(Vec<u8>),
-    /// A chunk with no `part` set: ignored, as before the merge.
+    /// A chunk with no `part` set: skipped after the header, refused as the first chunk.
     Empty,
 }
 

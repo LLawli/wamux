@@ -1,5 +1,4 @@
-//! Quick replies changed on a linked device (#149, part 2 of #141). The
-//! library event reached the socket as RawEvent with the library's JSON.
+//! Quick replies changed on a linked device (#149).
 
 use wacore::types::events::QuickReplyUpdate;
 

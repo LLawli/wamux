@@ -1,9 +1,9 @@
-//! #151 (part 4 of #141): someone's devices or identity key, routed through
-//! `map_event`, so each test also proves the event no longer falls into the
-//! RawEvent catch-all. The add is the one the production subscription carried
-//! on 2026-10-09 at 12:29Z, the remove the one #135 captured (jids anonymized,
-//! the signed bytes replaced by a stand-in of the same role). Both measured
-//! `key_index.timestamp` in seconds.
+//! #151: someone's devices or identity key, routed through `map_event`, so each
+//! test also proves the event does not fall into the RawEvent catch-all. The
+//! add is the one the production subscription carried on 2026-10-09 at 12:29Z,
+//! the remove the one #135 captured (jids anonymized, the signed bytes replaced
+//! by a stand-in of the same role). Both measured `key_index.timestamp` in
+//! seconds.
 
 use std::str::FromStr;
 

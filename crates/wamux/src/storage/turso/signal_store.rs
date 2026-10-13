@@ -1,5 +1,6 @@
 //! `SignalStore` for the turso family, method for method the sql family's
-//! (#106). All key material is stored as raw bytes, no transform.
+//! (#106). Key material is the lib's raw bytes with no codec, sealed under the
+//! store key when one is set (`seal_at` / `open_at`, #164).
 
 use std::sync::Arc;
 

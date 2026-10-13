@@ -1,6 +1,7 @@
 //! #96: the library rewrites a 409 on the description set into
-//! `GroupError::DescriptionConflict`, which has no source, so `client_err` found
-//! no code and the edge saw Unavailable without `wa-code`. The code comes back.
+//! `GroupError::DescriptionConflict`, which has no source, so `client_err` must
+//! recognise it by type, or the edge would see Unavailable without `wa-code`.
+//! The code must come back.
 
 use whatsapp_rust::features::GroupError;
 

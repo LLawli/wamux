@@ -52,7 +52,7 @@ pub struct NewPoll {
 }
 
 /// Creator, poll id (`"empty poll_id"`), secret (`"message_secret must be 32
-/// bytes, got <n>"`), in the order the domain checked them.
+/// bytes, got <n>"`), in that order.
 impl TryFrom<pb::SendPollVoteRequest> for PollVoteCast {
     type Error = WamuxError;
 
@@ -114,8 +114,8 @@ impl TryFrom<pb::PollVote> for EncryptedVote {
     }
 }
 
-/// The three checks a vote and a tally share, in the order the domain made
-/// them: creator, poll id, secret.
+/// The three checks a vote and a tally share, in order: creator, poll id,
+/// secret.
 fn vote_identity(
     creator: Option<pb::Jid>,
     poll_id: String,

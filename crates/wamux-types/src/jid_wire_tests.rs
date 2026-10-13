@@ -30,8 +30,8 @@ fn required_wire_parses_a_jid() {
     );
 }
 
-/// Decided 2026-10-05: the message `to` and `chat` already answered, now for
-/// every required jid field (they answered "empty jid" as strings).
+/// Every required jid field, `to` and `chat` included, answers "missing jid"
+/// when unset.
 #[test]
 fn required_wire_unset_is_missing_jid() {
     assert_eq!(
@@ -70,8 +70,8 @@ fn optional_wire_unset_is_none() {
     assert_eq!(Jid::from_optional_wire(None).unwrap(), None);
 }
 
-/// Decided 2026-10-05: a client that always fills the message with its
-/// default still means "no participant", as the empty string did.
+/// A client that always fills the message with its default still means "no
+/// participant".
 #[test]
 fn optional_wire_empty_is_none() {
     assert_eq!(Jid::from_optional_wire(wire("")).unwrap(), None);
@@ -163,8 +163,7 @@ fn newsletter_required_wire_unset_or_empty_is_missing_jid() {
     );
 }
 
-/// The three channel RPCs that refused another server keep refusing it, with
-/// the message they always gave.
+/// The channel RPCs refuse a jid on another server, naming the value.
 #[test]
 fn newsletter_required_wire_refuses_another_server() {
     assert_eq!(

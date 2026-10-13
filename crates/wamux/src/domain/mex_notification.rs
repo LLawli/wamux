@@ -1,5 +1,4 @@
-//! `<notification type="mex">`, a server GraphQL update (#151, part 4 of
-//! #141). It reached the socket as RawEvent with the library's JSON.
+//! `<notification type="mex">`, a server GraphQL update (#151).
 
 use wacore::types::events::MexNotification;
 use wamux_types::relay_optional_lib_jid;

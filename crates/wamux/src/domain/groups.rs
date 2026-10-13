@@ -165,13 +165,12 @@ pub async fn set_description(
         .map_err(|e| WamuxError::InvalidArgument(e.to_string()))?;
     client
         .groups()
-        // 0.7 types the third argument as `PreviousDescription`, the server's
+        // The third argument is a `PreviousDescription`, the server's
         // optimistic-concurrency token. `Resolve` (the lib default) reads the
         // current description id first; it is the only variant that is correct
         // when the caller holds no metadata, and the RPC gives the edge no way
         // to pass one. `Absent` would 409 on any group that already has a
-        // description, so it is not the safe literal translation of the old
-        // `None` it looks like.
+        // description.
         .set_description(
             group.as_lib(),
             Some(description),
@@ -185,8 +184,8 @@ pub async fn get_metadata(
     client: &Client,
     group: &GroupJid,
 ) -> Result<pb::GroupMetadataResponse, WamuxError> {
-    // main split 0.7.0's `get_metadata` into `fetch_metadata` (protocol data
-    // only) plus an opt-in `resolve_participant_addresses` backfill (#30). The
+    // The library splits this into `fetch_metadata` (protocol data only) plus
+    // an opt-in `resolve_participant_addresses` backfill (#30). The
     // roster is one of the few places the server volunteers a username/PN pair
     // at all (issue #1), so GetGroupMetadata keeps asking for both.
     let mut metadata = client
@@ -248,14 +247,13 @@ pub async fn leave(client: &Client, group: &GroupJid) -> Result<(), WamuxError> 
 
 /// List the groups the account participates in (summary + projected metadata).
 ///
-/// main renamed `get_participating` to `list_participating`, but the new one
-/// answers slim `GroupOverview`s with no participants and no description
-/// (#30): using it here would degrade ListGroups. So this issues the full
-/// `GroupParticipatingIq` itself, converts each group with `GroupMetadata::
-/// from`, and backfills phone numbers the same way `get_metadata` does (issue
-/// #1) -- 0.7.0's `get_participating` did that backfill internally; main only
-/// does it when asked, and dropping it would lose identities the edge relies
-/// on. The future this builds is still non-Send, so it runs isolated.
+/// The library's own `list_participating` answers slim `GroupOverview`s with no
+/// participants and no description (#30): using it here would degrade
+/// ListGroups. So this issues the full `GroupParticipatingIq` itself, converts
+/// each group with `GroupMetadata::from`, and backfills phone numbers the same
+/// way `get_metadata` does (issue #1). The backfill is opt-in in the library,
+/// and dropping it would lose identities the edge relies on. The future this
+/// builds is non-Send, so it runs isolated.
 pub async fn list_participating(client: Arc<Client>) -> Result<Vec<pb::GroupSummary>, WamuxError> {
     let groups = crate::domain::isolate::run_isolated(move || async move {
         let response = client.execute(GroupParticipatingIq::new()).await?;
@@ -278,7 +276,7 @@ pub async fn list_participating(client: Arc<Client>) -> Result<Vec<pb::GroupSumm
 
 /// ListGroups' projection: one summary per group, sorted by subject, each
 /// carrying the full typed metadata (roster included). An absent subject is
-/// "", as 0.7.0 parsed it. Pure, so the contract is testable without a client.
+/// "". Pure, so the contract is testable without a client.
 pub fn group_summaries(groups: Vec<whatsapp_rust::GroupMetadata>) -> Vec<pb::GroupSummary> {
     let mut summaries: Vec<pb::GroupSummary> = groups
         .iter()

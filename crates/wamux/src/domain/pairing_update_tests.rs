@@ -1,7 +1,7 @@
-//! #150 (part 3 of #141): the pairing events past QR, code, success and
-//! error. The mappings go through `map_event`, so each test also proves the
-//! event no longer falls into the RawEvent catch-all; the stream's end is the
-//! pure rule PairWithQr and PairWithCode apply to every update.
+//! #150: the pairing events past QR, code, success and error. The mappings go
+//! through `map_event`, so each test also proves the event does not fall into
+//! the RawEvent catch-all; the stream's end is the pure rule PairWithQr and
+//! PairWithCode apply to every update.
 
 use std::time::Duration;
 

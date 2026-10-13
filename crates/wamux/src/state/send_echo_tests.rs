@@ -1,5 +1,5 @@
-//! `send_echo` (#115): the tests that lived inline, moved so the loop can seal
-//! them. Unchanged: they never took a `pb::*` input.
+//! `send_echo` (#22): an echo is held to the same replay-ring size cap as a
+//! relayed event (#80).
 
 use crate::proto::v1 as pb;
 use crate::proto::v1::event_envelope::Event as WireEvent;

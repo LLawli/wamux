@@ -90,7 +90,8 @@ const POSTED_TO: &str = "is posted to";
 const WAS_POSTED_TO: &str = "was posted to";
 
 /// A status with no recipients encrypts for nobody; the lib refuses it with an
-/// error that read as Unavailable (#101), so the shape check lives here.
+/// error that would reach the caller as Unavailable (#101), so the shape check
+/// lives here.
 /// `verb` keeps the revoke's past tense ("the status was posted to").
 fn require_recipients(values: &[pb::Jid], verb: &str) -> Result<Vec<Jid>, WamuxError> {
     if values.is_empty() {

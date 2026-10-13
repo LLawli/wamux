@@ -44,8 +44,8 @@ pub const GET_BASE_KEY: &str = "SELECT base_key FROM base_keys
              WHERE address = $1 AND message_id = $2 AND device_id = $3";
 pub const DELETE_BASE_KEY: &str =
     "DELETE FROM base_keys WHERE address = $1 AND message_id = $2 AND device_id = $3";
-/// The keepalive sweep calls this every cycle; the trait default was Ok(0),
-/// so base_keys grew without bound.
+/// The keepalive sweep calls this every cycle; the trait default is Ok(0), so
+/// without this statement base_keys would grow without bound.
 pub const DELETE_EXPIRED_BASE_KEYS: &str =
     "DELETE FROM base_keys WHERE created_at < $1 AND device_id = $2";
 

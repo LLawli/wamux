@@ -44,9 +44,9 @@ pub async fn build_bot(
     };
 
     let mut builder = Bot::builder()
-        // 0.7 split the setter: `with_backend` takes an owned `impl Backend`
-        // and boxes it, so an already-shared `Arc<dyn Backend>` (what the
-        // engine hands us, one per account) goes through the `_arc` form.
+        // `with_backend` takes an owned `impl Backend` and boxes it, so an
+        // already-shared `Arc<dyn Backend>` (what the engine hands us, one per
+        // account) goes through the `_arc` form.
         .with_backend_arc(backend)
         .with_transport_factory(transport)
         .with_http_client(media_http_client())
@@ -119,8 +119,8 @@ fn reject_non_loopback_under_stress(ws_url: Option<&str>) -> anyhow::Result<()> 
 
 /// The Noise certificate policy for a client that will connect to `ws_url`.
 ///
-/// Since upstream #1441/#1444 (#30) skipping the chain check is a per-client
-/// runtime policy, not a cargo feature that disabled it for the whole build.
+/// Skipping the chain check is a per-client runtime policy (upstream
+/// #1441/#1444, #30), not a cargo feature that disables it for the whole build.
 /// This is the one place wamux chooses it, welded to the loopback guard:
 ///
 /// - a normal build always answers `NoiseCertPolicy::Strict`, whatever the URL;

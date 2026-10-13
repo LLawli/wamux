@@ -1,5 +1,4 @@
-//! `send_rich` (#115): the tests that lived inline, moved so the loop can seal
-//! them. Same assertions; the input is the domain's `ContactCard`.
+//! `send_rich` (#115): the input is the domain's `ContactCard`.
 
 use wamux_types::{ContactCard, Jid, MessageId, QuotedRef};
 

@@ -1,7 +1,6 @@
-//! `interactive_reply` (#28, #115). Same assertions as before #115; the input
-//! is the domain's `InteractiveReply`. The cases about reading the request (a
-//! reply with no quote, an idless quote, no shape) moved with that reading to
-//! `wamux-types` (`messaging/rich_tests.rs`), with the same assertions.
+//! `interactive_reply` (#28, #115). The input is the domain's `InteractiveReply`.
+//! The cases about reading the request (a reply with no quote, an idless quote,
+//! no shape) live in `wamux-types` (`messaging/rich_tests.rs`).
 
 use wamux_types::{InteractiveReply, Jid, MessageId, QuotedRef, ReplyChoice};
 use whatsapp_rust::buffa::Message as _;

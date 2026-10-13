@@ -1,5 +1,5 @@
-//! `WamuxError` and its mapping to `tonic::Status` (#63, #114), moved here
-//! from the daemon so every layer shares one error type.
+//! `WamuxError` and its mapping to `tonic::Status` (#63, #114), shared by
+//! every layer, so it lives in this crate.
 //!
 //! This file is the ONE place a `Status` is constructed
 //! (`scripts/check-status-sites.py`): domain and services return
@@ -52,8 +52,7 @@ pub enum WamuxError {
     /// Upstream WhatsApp server refused the request with an IQ error stanza
     /// (e.g. `<error code="403"/>`) or a fatal MEX (GraphQL) error carrying a
     /// code (#56). Code + text relay verbatim so the boundary can map
-    /// auth-shaped codes honestly instead of a blanket Unavailable
-    /// (edge-review-insights.md achado #3).
+    /// auth-shaped codes honestly instead of a blanket Unavailable.
     #[error("whatsapp server rejected the request: code={code}, text='{text}'")]
     WaServer { code: u16, text: String },
 
@@ -134,12 +133,12 @@ fn cause_chain(err: &dyn std::error::Error) -> String {
 }
 
 /// Honest relay of an upstream IQ rejection: the request DID reach WhatsApp
-/// and was refused, so auth-shaped codes must not read as "core down" (the
-/// edge turned them into 503). Unmapped codes keep the legacy Unavailable.
+/// and was refused, so auth-shaped codes must not read as "core down" (Unavailable,
+/// which the edge answers as 503). Unmapped codes stay Unavailable.
 ///
-/// The raw upstream code/text also ride as `wa-code`/`wa-text` trailers
-/// (code-review 2026-06-11): the edge composes policy on the structured
-/// primitive; the prose message is for humans and free to change.
+/// The raw upstream code/text also ride as `wa-code`/`wa-text` trailers:
+/// the edge composes policy on the structured primitive; the prose message is
+/// for humans and free to change.
 fn wa_server_status(code: u16, text: &str, message: String) -> tonic::Status {
     use tonic::metadata::MetadataValue;
     use tonic::{Code, Status};

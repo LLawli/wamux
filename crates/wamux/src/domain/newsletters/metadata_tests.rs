@@ -59,8 +59,7 @@ fn known_variants_relay_as_enum_values() {
 }
 
 // Upstream #1557 keeps a value it does not model in the server's spelling;
-// since #128 the contract carries it verbatim next to UNKNOWN (it used to
-// lowercase it).
+// the contract carries it verbatim next to UNKNOWN, not lowercased (#128).
 #[test]
 fn an_unmodelled_state_or_verification_is_unknown_verbatim() {
     let mut meta = metadata();
@@ -110,7 +109,7 @@ fn absent_optional_fields_stay_at_proto3_defaults() {
 
 // #56: the library's NotFound is the contract's NotFound, not the Unavailable
 // every other library error defaults to. #116: and the message names the
-// channel, where "account ... not found" named the wrong thing.
+// channel, not "account ... not found".
 #[test]
 fn a_missing_channel_is_not_found() {
     let err = newsletter_err(NewsletterError::NotFound(

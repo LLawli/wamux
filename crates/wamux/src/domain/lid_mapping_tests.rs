@@ -1,5 +1,4 @@
-//! `lid_mapping` (#116): the tests that lived inline, moved so the loop can
-//! seal them. Same assertions; a query is the domain's `LidPnQuery`.
+//! `lid_mapping` (#116): a query is the domain's `LidPnQuery`.
 
 use wacore::store::traits::LidPnMappingEntry;
 use wamux_types::LidPnQuery;
@@ -59,8 +58,8 @@ fn a_miss_keeps_the_query_and_carries_no_mapping() {
     assert!(result.mapping.is_none());
 }
 
-// Decided 2026-10-05: the answer echoes the query as the caller wrote it, so
-// a legacy spelling comes back as it went, not as the parse prints it.
+// The answer echoes the query as the caller wrote it, so a legacy spelling
+// comes back as it went, not as the parse prints it.
 #[test]
 fn a_miss_echoes_the_query_as_sent() {
     let result = lid_pn_result(&query("5511999000111@c.us"), None);

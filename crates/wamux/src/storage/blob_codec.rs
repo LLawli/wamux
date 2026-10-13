@@ -6,10 +6,10 @@
 //!
 //! The three structured columns are protobuf (`proto/store/blobs.proto`, #31),
 //! converted here at the storage boundary so the wacore types stay untouched.
-//! They used to be bincode-standard, which is positional: every field upstream
-//! appended made every stored blob unreadable until a one-shot migration
-//! linked the old wacore next to the new one. Protobuf is field-tagged, so a
-//! field a blob predates now decodes as its default.
+//! Not bincode-standard, the format `bincode_upgrade` converts from: bincode is
+//! positional, so every field upstream adds would make every stored blob
+//! unreadable. Protobuf is field-tagged, so a field a blob predates decodes as
+//! its default.
 //!
 //! The decode builds each wacore struct with a struct literal and never with
 //! `..Default::default()`. That is deliberate twice over: `Device::default()`

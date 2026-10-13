@@ -1,8 +1,8 @@
-//! #153 (part 2b of #141): a saved contact deleted on a linked device, routed
-//! through `map_event`, so each test also proves the event no longer falls
-//! into the RawEvent catch-all. The removal is the one the user made on the
-//! pessoal phone on 2026-10-08 at 19:59:05Z (read off the production
-//! subscription; jid anonymized). It carried no action timestamp.
+//! #153: a saved contact deleted on a linked device, routed through
+//! `map_event`, so each test also proves the event does not fall into the
+//! RawEvent catch-all. The removal is the one the user made on the pessoal
+//! phone on 2026-10-08 at 19:59:05Z (read off the production subscription; jid
+//! anonymized). It carried no action timestamp.
 
 use std::str::FromStr;
 

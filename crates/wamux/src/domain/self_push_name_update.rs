@@ -1,5 +1,4 @@
-//! This account's own push name changed (#153, part 2b of #141). The library
-//! event reached the socket as RawEvent with the library's JSON.
+//! This account's own push name changed (#153).
 
 use wacore::types::events::SelfPushNameUpdated;
 

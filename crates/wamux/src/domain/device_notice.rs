@@ -1,5 +1,4 @@
-//! Someone's devices or identity key changed (#151, part 4 of #141). Both
-//! reached the socket as RawEvent with the library's JSON.
+//! Someone's devices or identity key changed (#151).
 
 use wacore::stanza::devices::KeyIndexInfo;
 use wacore::types::events::{

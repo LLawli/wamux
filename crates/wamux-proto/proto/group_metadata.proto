@@ -4,9 +4,8 @@ package wamux.v1;
 
 import "common.proto";
 
-// #132 (part 1 of #74): a group as the library hands it over, every field of
-// whatsapp-rust's `GroupMetadata`. It used to cross as JSON inside `bytes`,
-// with five of these fields picked by hand.
+// A group as the library hands it over, every field of whatsapp-rust's
+// `GroupMetadata` (#132).
 //
 // Rules for every message in this file:
 // - A field the library leaves out is unset, never 0 or "": `optional` on a

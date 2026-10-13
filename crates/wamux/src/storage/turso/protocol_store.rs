@@ -287,8 +287,8 @@ impl ProtocolStore for TursoBackend {
     }
 
     async fn delete_expired_base_keys(&self, cutoff_timestamp: i64) -> Result<u32> {
-        // The keepalive sweep calls this every cycle; the trait default was Ok(0),
-        // so base_keys grew without bound.
+        // The keepalive sweep calls this every cycle; the trait default is Ok(0),
+        // so base_keys would grow without bound.
         let binds = binds![cutoff_timestamp, self.device_id];
         let deleted = self.conn.execute(DELETE_EXPIRED_BASE_KEYS, binds).await?;
         Ok(deleted as u32)

@@ -131,7 +131,7 @@ fn status_media_refuses_a_non_status_kind() {
     }
 }
 
-// The kind is read before the recipients, the order the domain used.
+// The kind is read before the recipients.
 #[test]
 fn status_media_refuses_a_malformed_recipient() {
     let message = invalid_argument(StatusMedia::try_from(media_header(

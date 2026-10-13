@@ -1,6 +1,5 @@
-//! A call that must not ring (#151, part 4 of #141): today an offer replayed
-//! from the offline queue. It reached the socket as RawEvent with the
-//! library's JSON; it crosses as the `missed` action of a CallEvent.
+//! A call that must not ring (#151): today an offer replayed from the offline
+//! queue. It crosses as the `missed` action of a CallEvent.
 
 use wacore::types::call::{MissedCall, MissedReason};
 use wamux_types::relay_lib_jid;

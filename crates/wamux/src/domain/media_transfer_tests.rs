@@ -1,7 +1,6 @@
-//! `media_transfer` (#115): the tests that lived inline, moved so the loop can
-//! seal them. Same assertions; the header is the domain's `OutgoingMedia` and
-//! the descriptor its `DownloadableMedia`. The `MediaKind` parse tests take the
-//! wire's enum value since #127; reading a descriptor's kind moved to
+//! `media_transfer` (#115): the header is the domain's `OutgoingMedia` and the
+//! descriptor its `DownloadableMedia`. The `MediaKind` parse tests take the
+//! wire's enum value (#127); reading a descriptor's kind is tested in
 //! `wamux-types` (`messaging/media_tests.rs`).
 
 use wacore::download::MediaType;
@@ -387,9 +386,9 @@ fn ephemeral_image_sets_context_expiration() {
     assert_eq!(context.expiration, Some(86_400));
 }
 
-// Regression (code-review 2026-06-11): SendMediaHeader.quote and .mentions
-// were silently dropped — only ephemeral reached the ContextInfo. A media
-// reply must carry the quote exactly like the text path does.
+// Regression: a media header's quote and mentions (`OutgoingMedia.context`)
+// must reach the ContextInfo, not only ephemeral. A media reply must carry the
+// quote exactly like the text path does.
 #[test]
 fn media_quote_and_mentions_relay_into_context() {
     let message = build_media_message(

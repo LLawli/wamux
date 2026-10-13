@@ -154,7 +154,7 @@ impl MockWaServer {
     /// match with `<iq type=result>` wrapping `body` (#68). `"*"` in
     /// `iq_type` or `child_tag` matches any value; an IQ without a child has
     /// tag `""`. The newest matching answer wins; an IQ nothing matches still
-    /// gets a bare result, as before.
+    /// gets a bare result.
     pub fn answer_iq(
         &self,
         xmlns: &str,

@@ -35,12 +35,11 @@ fn group(id: &str, subject: Option<&str>, members: usize) -> GroupMetadata {
     }
 }
 
-// ListGroups keeps its 0.7.0 shape on main (#30): upstream's new
-// `list_participating` returns overviews with no participants and no
-// description, so the core issues the full `GroupParticipatingIq` and projects
-// full metadata exactly as before. This pins the projection: sorted by subject,
-// the participant count, and the whole typed metadata with the roster in it
-// (#132: it was JSON).
+// ListGroups projects full metadata (#30): upstream's `list_participating`
+// returns overviews with no participants and no description, so the core
+// issues the full `GroupParticipatingIq`. This pins the projection: sorted by
+// subject, the participant count, and the whole typed metadata with the roster
+// in it.
 #[test]
 fn group_summaries_project_full_metadata_sorted_by_subject() {
     let zeta_group = group("120363000000000002@g.us", Some("Zeta"), 3);
@@ -57,9 +56,9 @@ fn group_summaries_project_full_metadata_sorted_by_subject() {
     assert_eq!(zeta.metadata, Some(group_metadata_of(&zeta_group)));
 }
 
-// `GroupSummary.subject` stays a plain string (#132 left it as it was): an
-// absent subject lists as "", while the typed metadata beside it keeps the
-// absence (unset `subject`).
+// `GroupSummary.subject` stays a plain string (#132): an absent subject lists
+// as "", while the typed metadata beside it keeps the absence (unset
+// `subject`).
 #[test]
 fn a_group_without_a_subject_lists_with_an_empty_one() {
     let summaries = group_summaries(vec![group("120363000000000003@g.us", None, 0)]);

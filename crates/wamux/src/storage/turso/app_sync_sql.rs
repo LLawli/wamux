@@ -55,9 +55,9 @@ pub(super) async fn delete_macs_in(
 }
 
 /// The new version, the removed MACs and the added MACs in ONE transaction.
-/// Three separate writes let a crash between them leave the new version next to
-/// the old MACs, and the next patch's ltHash was then computed from the wrong
-/// set. Removals run before additions, as the trait default did.
+/// The trait default's three separate writes let a crash between them leave the
+/// new version next to the old MACs, and the next patch's ltHash is then computed
+/// from the wrong set. Removals run before additions, as in the trait default.
 pub(super) async fn commit_patch(
     conn: &TursoConn,
     cipher: &BlobCipher,

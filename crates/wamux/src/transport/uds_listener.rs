@@ -66,7 +66,7 @@ const CREATED_PARENT_MODE: u32 = 0o750;
 ///
 /// The socket is bound in `<parent>/.wamux-bind-<pid>/s`, given its group and
 /// mode there, and renamed onto `path`, so the path only ever shows the final
-/// mode and group (#77; bind-then-chmod left a window at 0777 minus umask).
+/// mode and group (#77; bind-then-chmod would leave a window at 0777 minus umask).
 /// The group is resolved first so a bad name creates nothing. A listening
 /// socket keeps accepting across the rename.
 pub fn bind(path: &str, mode: u32, group: Option<&str>) -> Result<UnixListenerStream, BindError> {
@@ -86,8 +86,8 @@ pub fn bind(path: &str, mode: u32, group: Option<&str>) -> Result<UnixListenerSt
 
 /// The probe `bind` runs, on its own: `main` calls it before opening the store,
 /// so a second daemon stops before it runs migrations on the live one's store
-/// (#77; the #173 incident was a newer binary migrating a store under an older
-/// daemon). Absent or stale (refuses connections) is `Ok`; nothing is removed.
+/// (#77, #173: a newer binary must never migrate a store an older daemon is still
+/// serving). Absent or stale (refuses connections) is `Ok`; nothing is removed.
 pub fn refuse_if_served(path: &str) -> Result<(), BindError> {
     probe(path).map(|_| ())
 }

@@ -1,11 +1,10 @@
-//! Media-descriptor mapping tests, split out of event_mapping_tests.rs to
-//! keep both files under the 500-line rule.
+//! Media-descriptor mapping tests, split out of event_mapping_tests.rs, which
+//! is past the 500-line rule.
 
 use super::tests::mapped_media;
 use super::*;
 
-/// The descriptor's enum value for each sub-message's kind (#127: was the
-/// lowercase token itself).
+/// The descriptor's enum value for each sub-message's kind (#127).
 fn wire_of(kind: &str) -> pb::MediaType {
     match kind {
         "image" => pb::MediaType::Image,
@@ -89,9 +88,9 @@ fn media_descriptor_relays_key_material() {
     assert_eq!(media.file_sha256, [6u8, 7]);
 }
 
-// Issue #58: a received pack used to map to an event with no descriptor, so an
-// edge could see it arrived and could not open it. Its ZIP now rides `media`,
-// its caption rides `caption`, and the rest rides `sticker_pack`.
+// Issue #58: a received pack carries a descriptor, or an edge could see it
+// arrived and could not open it. Its ZIP rides `media`, its caption rides
+// `caption`, and the rest rides `sticker_pack`.
 #[test]
 fn a_sticker_pack_maps_to_its_archive_and_summary() {
     use wa::message::StickerPackMessage;

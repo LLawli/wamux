@@ -1,9 +1,9 @@
-//! #107: what `run_isolated` touches must outlive it. It used to run each call
-//! on a throwaway current-thread runtime: a socket opened inside stayed bound
-//! to that runtime's dead I/O driver (Postgres connections left in the pool
-//! then held every later acquire until `acquire_timeout`), and a task the
-//! library `tokio::spawn`ed died with it. Multi-thread, like the daemon's
-//! `#[tokio::main]`.
+//! #107: what `run_isolated` touches must outlive it, so the future
+//! gets no runtime of its own. On a throwaway current-thread runtime a socket
+//! opened inside would stay bound to that runtime's dead I/O driver (Postgres
+//! connections left in the pool would then hold every later acquire until
+//! `acquire_timeout`), and a task the library `tokio::spawn`s would die with it.
+//! Multi-thread, like the daemon's `#[tokio::main]`.
 
 use std::time::Duration;
 

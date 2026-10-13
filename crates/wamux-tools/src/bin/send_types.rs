@@ -16,8 +16,7 @@
 //! Requires the daemon running with the account paired. The core relays to the
 //! JID verbatim (no routing); this client targets @s.whatsapp.net.
 //!
-//! NOT the legacy server, which is what this bin used to send and what its
-//! comment used to recommend. Issue #4 measured the cost: the legacy spelling
+//! NOT the legacy server. Issue #4 measured the cost: the legacy spelling
 //! parses as `Server::Legacy`, the send path stops treating the recipient as a
 //! phone user, no session is built, and the stanza ships encrypted for nobody
 //! -- while still answering with a real message id and a server ack. A send
@@ -159,7 +158,7 @@ async fn send_kind(
     }
 }
 
-/// The core no longer fetches URLs; the client (acting as the edge) downloads
+/// The core never fetches URLs; the client (acting as the edge) downloads
 /// the bytes itself and streams them inline.
 async fn download(
     mime: &'static str,

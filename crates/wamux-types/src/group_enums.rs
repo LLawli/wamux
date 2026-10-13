@@ -1,4 +1,4 @@
-//! The library's group enums as the contract's enums (#132, part 1 of #74).
+//! The library's group enums as the contract's enums (#132).
 //!
 //! Every one of these library enums is a closed set, so each `match` has no
 //! wildcard arm: a variant added upstream fails the build at the bump instead

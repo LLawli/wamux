@@ -1,7 +1,6 @@
-//! The daemon's command line (#165). `wamux` with no arguments serves, as it
-//! always has; `wamux store decrypt --yes` (#165) and `wamux store rotate-key
-//! --new-key-file <path>` (#166) are the operator commands. No parsing crate: a
-//! few words and a flag.
+//! The daemon's command line (#165). `wamux` with no arguments serves;
+//! `wamux store decrypt --yes` (#165) and `wamux store rotate-key --new-key-file <path>`
+//! (#166) are the operator commands. No parsing crate: a few words and a flag.
 
 use std::path::PathBuf;
 

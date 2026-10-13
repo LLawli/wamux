@@ -36,7 +36,7 @@ pub struct OutgoingContext {
     pub ephemeral_seconds: u32,
 }
 
-/// Checked in the order the domain read them: chat, participant, id.
+/// Checked in this order: chat, participant, id.
 /// `InvalidArgument("missing jid")` / `("invalid jid '<v>': ..")` for the chat
 /// (unset or empty is missing), `("invalid jid '<v>': ..")` for a malformed
 /// participant (unset or empty is a DM, #120), `("empty message id")` for the id.
@@ -55,7 +55,7 @@ impl TryFrom<pb::MessageKey> for MessageTarget {
 
 impl QuotedRef {
     /// A request's optional quote. No context, or a context with no `quoted`
-    /// key, is no quote (as it always was). A key with an empty id is
+    /// key, is no quote. A key with an empty id is
     /// `InvalidArgument("empty quote.quoted.id; expected the id of the quoted
     /// message")`. The participant is the context's own when it is set and not
     /// empty (#120), else the quoted key's. The quoted key's `chat` is never
@@ -69,8 +69,7 @@ impl QuotedRef {
                 "empty quote.quoted.id; expected the id of the quoted message".to_string(),
             ));
         }
-        // The context's own participant wins; the key's is the fallback, as the
-        // wire builder always read them.
+        // The context's own participant wins; the key's is the fallback.
         let context_participant = quote.as_ref().and_then(|quote| quote.participant.clone());
         let participant: Option<Jid> = match Jid::from_optional_wire(context_participant)? {
             Some(own) => Some(own),

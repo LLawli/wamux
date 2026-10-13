@@ -39,7 +39,8 @@ struct Directory {
 
 /// Everything the peer-aware mock shares with its connection tasks: who the
 /// client is, who is served, and the stanzas recorded. A server from plain
-/// `start()` has an empty one and behaves as it always did.
+/// `start()` has an empty one: no `lid` in its `<success>`, no offline end, no
+/// contact notification and no computed IQ answer.
 #[derive(Default)]
 pub(super) struct PeerWorld {
     own_lid: Option<Jid>,
@@ -151,7 +152,8 @@ impl MockWaServer {
     /// answers the client's `<active>` IQ and then sends
     /// `<ib><offline count="0"/></ib>`. Without that, the library holds every
     /// first encrypted send for its 60 s offline-delivery timeout
-    /// (`ensure_e2e_sessions_resolved`). `start()` is unchanged.
+    /// (`ensure_e2e_sessions_resolved`). `start()` sends no `lid` and no
+    /// `<ib><offline>`.
     pub async fn start_as(identity: MockIdentity) -> anyhow::Result<Self> {
         Self::start_with(PeerWorld::as_identity(&identity)?).await
     }
@@ -201,7 +203,8 @@ impl MockWaServer {
     }
 
     /// Register the three computed answers once, on the first peer or group.
-    /// Not at start: a plain `start()` server must keep answering as before.
+    /// Not at start: until a peer or group is served, a plain `start()` server answers
+    /// `usync`, prekey and `w:g2` IQs with a bare result or the test's own `answer_iq`.
     fn install_peer_rules(&self) {
         if self.world().rules_installed.swap(true, Ordering::SeqCst) {
             return;

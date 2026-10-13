@@ -1,6 +1,5 @@
 //! One entry of the primary device's call log, synced through app state
-//! (#153, part 2b of #141). The library event reached the socket as RawEvent
-//! with the library's JSON.
+//! (#153).
 
 use wacore::types::events::CallLogSync;
 use wamux_types::{relay_jid, relay_lib_jid};
