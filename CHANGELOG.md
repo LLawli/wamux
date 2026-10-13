@@ -14,6 +14,18 @@ has to follow them.
 
 ### Changed
 
+- **Bounded defaults: metric labels and the replay ring** (issue #80; see
+  `docs/BREAKING-CHANGES-2026-10-13-bounded-defaults.md`). The `method` label of
+  `wamux_grpc_requests_total` and `wamux_grpc_request_duration_seconds` is the
+  method only for a path the daemon serves (read from the descriptor set, plus
+  reflection) and `unknown` otherwise, so made-up paths cannot create series;
+  the log keeps the label and adds the raw path, cut at 128 characters, for an
+  unknown one. `replay_max_event_bytes` now defaults to 256 KiB (was 0, no cap):
+  a bigger event is delivered live but not replayable. The send echo and the
+  event bridge share one ring gate. **Breaking:** a dashboard that filtered by an
+  invalid path uses `method="unknown"`; set `replay_max_event_bytes = 0` for the
+  old unbounded ring.
+
 - **Media is spooled to disk instead of held in memory** (issue #79; see
   `docs/BREAKING-CHANGES-2026-10-13.md`). SendMedia and PostStatusMedia encrypt
   each chunk into an unnamed file under the new `media_spool_dir` (default

@@ -27,6 +27,7 @@ mod jid_fields;
 mod media;
 mod receipts;
 mod refusals;
+mod replay;
 mod rich;
 mod sends;
 mod spool;

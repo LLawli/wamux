@@ -7,7 +7,7 @@ use tonic::transport::server::Router;
 use tower::layer::util::{Identity, Stack};
 
 use crate::config::Config;
-use crate::observe::RequestObserveLayer;
+use crate::observe::{KnownMethods, RequestObserveLayer};
 use crate::proto::v1::account_service_server::AccountServiceServer;
 use crate::proto::v1::admin_service_server::AdminServiceServer;
 use crate::proto::v1::contact_service_server::ContactServiceServer;
@@ -47,7 +47,7 @@ pub fn build_router(
     // No I/O here: the directory was prepared at startup (#79).
     let spool = MediaSpool::new(&config.media_spool_dir, config.media_spool_max_bytes);
     let mut router = Server::builder()
-        .layer(RequestObserveLayer)
+        .layer(RequestObserveLayer::new(KnownMethods::wamux()))
         .layer(PeerAllowlistLayer::new(PeerAllowlist::new(
             config.allowed_uids.clone(),
             config.allowed_gids.clone(),

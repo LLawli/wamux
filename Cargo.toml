@@ -19,6 +19,8 @@ unsafe_code = "forbid"
 tonic = "0.14"
 tonic-prost = "0.14"
 prost = "0.14"
+# #80: decodes the descriptor set into the known gRPC methods (metric labels).
+prost-types = "0.14"
 tonic-prost-build = "0.14"
 prost-build = "0.14"
 protoc-bin-vendored = "3"

@@ -7,6 +7,7 @@ use tonic::transport::Channel;
 use wacore_binary::Node;
 use wamux::config::Config;
 use wamux::proto::v1 as pb;
+use wamux::proto::v1::event_service_client::EventServiceClient;
 use wamux::proto::v1::media_service_client::MediaServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux::stress::app_state_fixture::{OpenedPatch, open_app_state_patch};
@@ -40,6 +41,8 @@ pub struct Fixture {
     pub messages: MessagingServiceClient<Channel>,
     /// DownloadMedia on the same socket, for the spool tests (#79).
     pub media: MediaServiceClient<Channel>,
+    /// SubscribeEvents on the same socket, for the replay ring tests (#80).
+    pub events: EventServiceClient<Channel>,
     pub account: pb::AccountRef,
     pub peer: MockPeer,
     pub other: MockPeer,
@@ -88,7 +91,8 @@ pub async fn fixture_with(test: &str, config: Config) -> Fixture {
         cdn,
         logged,
         messages: MessagingServiceClient::new(channel.clone()),
-        media: MediaServiceClient::new(channel),
+        media: MediaServiceClient::new(channel.clone()),
+        events: EventServiceClient::new(channel),
         account,
         peer,
         other,
