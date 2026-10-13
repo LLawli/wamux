@@ -226,9 +226,16 @@ Ten more minutes of grep would have caught each one.
   in `server.rs`, not copy-pasted into every RPC method.
 
 ## Comments
-- Keep your own comments. Don't strip them on refactor: they carry provenance.
-- Write WHY, not WHAT. Reference issue numbers / commit SHAs for any line driven by a
-  bug, a protocol quirk, or a tokio/tonic constraint.
+- A comment states an invariant, a constraint or a reason: why the code is this way, what
+  would break if it changed, what was measured on the wire. Write WHY, not WHAT.
+- Keep the reason on refactor. Don't strip a comment that still explains the code.
+- An issue number is a pointer ("see #56"), not the explanation: the reason is still
+  written out next to it. Reference one for any line driven by a bug, a protocol quirk,
+  or a tokio/tonic constraint.
+- History goes to the commit message and the CHANGELOG, not the code: what the code used
+  to do, which version changed what, which part of which issue added it, who reviewed it.
+  `scripts/check-comment-provenance.py` fails CI on review provenance in the sources.
+- A comment that describes code that no longer exists is a bug, and is reviewed like one.
 - The subtle stuff is what earns a one-line note: why a lock is `tokio::sync` not `std`,
   why an error maps to *this* `Status` code, why the socket mode is what it is, why a
   stream yields instead of collecting.

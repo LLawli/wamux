@@ -73,9 +73,23 @@ pass. Beyond that, from `CLAUDE.md`:
 - No `.unwrap()` on anything reachable from a request. Map the error to a
   `tonic::Status`. `unwrap` is allowed only on startup invariants, with a
   comment saying why it holds.
-- Comments say **why**, not what. Keep existing ones on refactor: they carry
-  provenance. Reference an issue or commit for anything driven by a protocol
-  quirk or a bug.
+- Comments say **why**, not what. See [Comments](#comments) below.
+
+## Comments
+
+- **A comment states an invariant, a constraint or a reason:** why the code is
+  this way, what would break if it changed, or what was measured on the wire.
+  Keep that reason when you refactor the code around it.
+- **An issue reference is a pointer, not the explanation.** "See #56" next to
+  the reason is fine; "#56" in place of the reason is not. Reference an issue
+  or commit for anything driven by a protocol quirk or a bug.
+- **History goes to the commit message and the CHANGELOG, not the code.** What
+  the code used to do, which version changed what, which part of which issue
+  added it, and who reviewed it. A history comment goes stale silently.
+  `scripts/check-comment-provenance.py` fails CI on review provenance
+  (`code-review 2026-...`, `edge-review`) in the sources.
+- **A comment that describes code that no longer exists is a bug,** and is
+  reviewed like one.
 
 ## Tests
 
