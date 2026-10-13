@@ -51,10 +51,13 @@ use uuid::Uuid;
 use wacore::store::error::{Result as StoreResult, StoreError};
 use wacore::store::traits::Backend;
 
+use crate::storage::StoreBlobFormat;
 use crate::storage::blob_cipher::BlobCipher;
+use crate::storage::blob_format::store_blob_format;
 use crate::storage::engine::{AccountRow, StorageEngine};
 use crate::storage::group_commit::{CommitStats, DEFAULT_BATCH_CAP};
 use crate::storage::statements::PING;
+use crate::storage::statements::bincode_upgrade::SELECT_BLOB_FORMAT;
 use crate::storage::store_key::StoreKey;
 
 pub use connection::TursoConn;
@@ -195,6 +198,15 @@ impl StorageEngine for TursoStore {
             device_id,
             cipher: self.cipher.clone(),
         })
+    }
+
+    async fn blob_format(&self) -> StoreResult<StoreBlobFormat> {
+        let row = self
+            .conn
+            .fetch_optional(SELECT_BLOB_FORMAT, Vec::new())
+            .await?;
+        let marker = row.map(|row| row_values::text(&row, 0)).transpose()?;
+        store_blob_format(marker)
     }
 
     async fn ping_storage(&self) -> bool {

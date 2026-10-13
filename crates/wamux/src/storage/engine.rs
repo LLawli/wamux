@@ -15,6 +15,7 @@ use uuid::Uuid;
 use wacore::store::error::Result as StoreResult;
 use wacore::store::traits::Backend;
 
+use super::blob_format::StoreBlobFormat;
 use super::group_commit::CommitStats;
 
 /// One row of the wamux-specific `accounts` table: canonical UUID and optional
@@ -58,6 +59,10 @@ pub trait StorageEngine: Send + Sync + 'static {
     /// Trivial round-trip for the readiness probe. Returns `false` rather than
     /// an error: AdminService wants `ready=false`, never a `Status`.
     async fn ping_storage(&self) -> bool;
+
+    /// What the `blob_format` marker says right now (#84), read on every call:
+    /// the health probe reports the store as it is, not as it was at open.
+    async fn blob_format(&self) -> StoreResult<StoreBlobFormat>;
 
     /// How many COMMITs carried how many writes (#172), for the engines that
     /// group commits; `None` for the others. The benchmark and the tests read it.

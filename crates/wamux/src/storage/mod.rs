@@ -11,6 +11,7 @@ pub mod batch_chunks;
 pub mod bincode_upgrade;
 pub mod blob_cipher;
 pub mod blob_codec;
+pub mod blob_format;
 pub(crate) mod convert;
 /// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod engine;
@@ -30,6 +31,7 @@ pub mod turso;
 mod engine_dispatch_tests;
 
 pub use blob_cipher::{BlobCipher, BlobContext};
+pub use blob_format::StoreBlobFormat;
 pub use engine::{AccountRow, StorageEngine};
 pub use group_commit::CommitStats;
 pub use store_key::{StoreKey, StoreKeyError};

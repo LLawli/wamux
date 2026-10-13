@@ -8,10 +8,20 @@ message MetricsResponse {
   string prometheus = 1; // rendered Prometheus exposition text
 }
 
+// The format the store's structured blobs are in (the `blob_format` marker,
+// #31). 0.2.x is the last release line that converts a bincode store; 0.3.0
+// refuses one (#84), so check this reads PROTOBUF before upgrading past 0.2.
+enum BlobFormat {
+  BLOB_FORMAT_UNSPECIFIED = 0; // the store did not answer, or the marker is unknown
+  BLOB_FORMAT_BINCODE = 1;
+  BLOB_FORMAT_PROTOBUF = 2;
+}
+
 message HealthResponse {
   bool serving = 1;   // liveness: the daemon is up and answering this RPC
   bool ready = 2;     // readiness: Postgres is reachable (SELECT 1 ok)
   string version = 3; // wamux crate version
+  BlobFormat blob_format = 4; // read from the store on every Check (#84)
 }
 
 // Admin/observability surface. Exposed via RPC over the socket (no TCP listener).

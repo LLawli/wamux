@@ -89,7 +89,8 @@ figment = { version = "0.10", features = ["toml", "env"] }
 dashmap = "6"
 bytes.workspace = true
 # Reads a store written before #31 (bincode-standard blobs) so
-# storage::bincode_upgrade can convert it to protobuf. Delete with that module.
+# storage::bincode_upgrade can convert it to protobuf. 0.2.x is the last line
+# that converts; 0.3.0 deletes this dependency with that module (#84, #179).
 bincode = { version = "2", features = ["serde"] }
 serde_json = "1"
 http.workspace = true
