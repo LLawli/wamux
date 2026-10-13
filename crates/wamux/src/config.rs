@@ -3,6 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Default `replay_max_event_bytes` (#80): above every event but history sync
+/// seen live (largest 146 KiB of 327 147), so nothing real drops out of the
+/// replay window; with a 256-event ring it bounds an account's ring at 64 MiB.
+pub const DEFAULT_REPLAY_MAX_EVENT_BYTES: u64 = 256 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Unix socket path the gRPC server binds.
@@ -38,8 +43,10 @@ pub struct Config {
     /// Per-account live broadcast channel capacity (slow subscribers lag past it
     /// and receive a `gap` marker; see `EventService`).
     pub broadcast_capacity: usize,
-    /// Largest event (encoded bytes) still kept in the replay ring. 0 = no cap.
-    /// History-sync blobs are excluded from the ring regardless of this.
+    /// Largest event (encoded bytes) still kept in the replay ring. Default
+    /// `DEFAULT_REPLAY_MAX_EVENT_BYTES` (256 KiB, #80); 0 = no cap. Bigger
+    /// events are still delivered live, just not replayable. History-sync
+    /// blobs are excluded from the ring regardless of this.
     pub replay_max_event_bytes: u64,
     /// Max accounts the core will keep connected at once (fd/resource budget).
     /// 0 = unlimited. `Connect` past this returns `ResourceExhausted`.
@@ -84,7 +91,7 @@ impl Default for Config {
             store_key_file: None,
             event_ring_capacity: 256,
             broadcast_capacity: 1024,
-            replay_max_event_bytes: 0,
+            replay_max_event_bytes: DEFAULT_REPLAY_MAX_EVENT_BYTES,
             max_connected_accounts: 200,
             graceful_stop_timeout_ms: 3000,
             shutdown_grace_ms: 10_000,

@@ -53,6 +53,8 @@ wamux-types.workspace = true
 tonic.workspace = true
 tonic-reflection = "0.14"
 prost.workspace = true
+# #80: the known-method set for metric labels, from the descriptor set.
+prost-types.workspace = true
 
 tokio.workspace = true
 tokio-stream.workspace = true
@@ -125,3 +127,5 @@ flate2 = "1"
 hyper-util.workspace = true
 # #77: the socket tests read the user's groups and set the process umask.
 nix = { workspace = true, features = ["user", "fs"] }
+# #80: calls made-up gRPC paths in the metric label test.
+tonic-prost.workspace = true

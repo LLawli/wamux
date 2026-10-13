@@ -13,6 +13,7 @@ use uuid::Uuid;
 use wamux_types::AccountRef;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
+use crate::config::DEFAULT_REPLAY_MAX_EVENT_BYTES;
 use crate::domain::bot_factory::build_bot;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
@@ -41,7 +42,7 @@ impl Default for RegistryTuning {
         Self {
             ring_capacity: 256,
             broadcast_capacity: 1024,
-            replay_max_event_bytes: 0,
+            replay_max_event_bytes: DEFAULT_REPLAY_MAX_EVENT_BYTES,
             max_connected_accounts: 0,
             graceful_stop_timeout: Duration::from_millis(3000),
             ws_url_override: None,

@@ -19,11 +19,11 @@
 
 use std::sync::Arc;
 
-use prost::Message as _;
 use wamux_types::{Jid, MessageId};
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use super::account_handle::AccountHandle;
+use super::event_bridge::replayable;
 use crate::domain::event_mapping::map_sent;
 use crate::domain::messaging::sent_message_key;
 use crate::proto::v1 as pb;
@@ -56,18 +56,11 @@ pub async fn publish_sent(
     };
     // Replayable on the same terms as any other event: a consumer that
     // reconnects and replays the ring is precisely the one that missed this.
-    if fits_the_ring(&envelope, replay_max_event_bytes) {
+    if replayable(&envelope, replay_max_event_bytes) {
         handle.ring.push(envelope.clone()).await;
     }
     // "No receivers" is normal: send-only clients and unsubscribed accounts.
     let _ = handle.events_tx.send(envelope);
-}
-
-/// The same size gate `event_bridge::replayable` applies. Media echoes carry no
-/// bytes (the descriptor points at the CDN), so an echo is small; the cap is
-/// honoured anyway so one rule governs the ring.
-fn fits_the_ring(envelope: &pb::EventEnvelope, max_bytes: u64) -> bool {
-    max_bytes == 0 || envelope.encoded_len() as u64 <= max_bytes
 }
 
 fn now_millis() -> i64 {

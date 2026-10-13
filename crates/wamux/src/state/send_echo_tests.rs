@@ -1,9 +1,9 @@
 //! `send_echo` (#115): the tests that lived inline, moved so the loop can seal
 //! them. Unchanged: they never took a `pb::*` input.
 
-use super::fits_the_ring;
 use crate::proto::v1 as pb;
 use crate::proto::v1::event_envelope::Event as WireEvent;
+use crate::state::event_bridge::replayable as fits_the_ring;
 
 fn envelope(payload_len: usize) -> pb::EventEnvelope {
     pb::EventEnvelope {

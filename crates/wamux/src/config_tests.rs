@@ -65,3 +65,15 @@ fn media_spool_keys_come_from_toml() {
     assert_eq!(config.media_spool_dir, "/srv/wamux/spool");
     assert_eq!(config.media_spool_max_bytes, 0);
 }
+
+/// #80: the replay ring caps an entry at 256 KiB by default, and the registry's
+/// own default agrees, so a bin or test that builds a registry without a config
+/// gets the same cap the daemon does.
+#[test]
+fn replay_max_event_bytes_defaults_to_256_kib() {
+    assert_eq!(Config::default().replay_max_event_bytes, 256 * 1024);
+    assert_eq!(
+        crate::state::RegistryTuning::default().replay_max_event_bytes,
+        Config::default().replay_max_event_bytes
+    );
+}

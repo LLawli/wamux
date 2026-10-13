@@ -53,8 +53,10 @@ pub async fn dispatch(ctx: EventCtx, event: Arc<Event>, _client: Arc<Client>) {
     }
 }
 
-/// Whether an event belongs in the bounded replay ring.
-fn replayable(envelope: &EventEnvelope, max_bytes: u64) -> bool {
+/// Whether an event belongs in the bounded replay ring. The one gate for every
+/// writer of the ring (the bridge and the send echo), so the rule cannot drift
+/// (#80).
+pub(crate) fn replayable(envelope: &EventEnvelope, max_bytes: u64) -> bool {
     if matches!(envelope.event, Some(WireEvent::HistorySync(_))) {
         return false;
     }
