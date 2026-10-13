@@ -98,6 +98,8 @@ chacha20poly1305 = "0.11"
 sha2 = "0.11"
 # #77: `socket_group` by name (NSS) and the chown that sets it.
 nix = { workspace = true, features = ["user"] }
+# #79: unnamed spool files (`tempfile_in`, O_TMPFILE) for media transfers.
+tempfile = "3"
 
 wacore.workspace = true
 whatsapp-rust.workspace = true
@@ -120,7 +122,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"
 # History-sync fixtures have to compress their payload: 0.7 keeps the chunk
 # zlib-compressed behind LazyHistorySync instead of handing over raw bytes.
 flate2 = "1"
-tempfile = "3"
 hyper-util.workspace = true
 # #77: the socket tests read the user's groups and set the process umask.
 nix = { workspace = true, features = ["user", "fs"] }

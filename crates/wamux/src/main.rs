@@ -14,7 +14,7 @@ use wamux::cli::{self, Command};
 use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage::{StoreKey, store_key::key_id_hex};
-use wamux::{server, storage, transport};
+use wamux::{server, spool, storage, transport};
 
 /// The store key named by `store_key_file`, if any. Logs the key id (a hash
 /// prefix, not the key) so an operator can tell which key is in use.
@@ -113,6 +113,11 @@ async fn serve() -> anyhow::Result<()> {
     // live one's store (#77). The bind probes again for the race.
     transport::uds_listener::refuse_if_served(&config.socket_path)
         .context("checking the socket path")?;
+
+    // Media transfers are staged on disk (#79). A spool that cannot be written
+    // fails here, naming the path, not on the first SendMedia.
+    spool::prepare_spool_dir(Path::new(&config.media_spool_dir))
+        .context("preparing the media spool directory")?;
 
     // The DSN scheme picks the engine (postgres:// or sqlite://).
     let engine = storage::open_engine_keyed(

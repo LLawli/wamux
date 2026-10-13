@@ -14,6 +14,7 @@ pub mod observe;
 pub use wamux_proto as proto;
 pub mod server;
 pub mod services;
+pub mod spool;
 pub mod state;
 pub mod storage;
 /// Stress-test harness (mock WhatsApp WSS server). Off by default; never part of

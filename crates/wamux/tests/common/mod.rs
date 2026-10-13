@@ -431,16 +431,26 @@ pub async fn serve_registry(registry: Arc<AccountRegistry>) -> Channel {
 }
 
 /// `serve_registry` with a config of the test's choosing (#71: a small
-/// `media_max_bytes`). The socket path and reflection are always the test's.
+/// `media_max_bytes`). The socket path and reflection are always the test's,
+/// and so is the media spool unless the test named one (#79): the default,
+/// `/var/cache/wamux`, is the host's.
 pub async fn serve_registry_with(registry: Arc<AccountRegistry>, config: Config) -> Channel {
     // Leaked on purpose, like the engine dir above: the socket has to outlive
     // the server task and the process is about to exit anyway.
     let dir = Box::leak(Box::new(tempfile::tempdir().expect("tempdir")));
     let socket = dir.path().join("wamux.sock");
     let socket_str = socket.to_str().expect("utf-8 socket path").to_string();
+    let media_spool_dir = if config.media_spool_dir == Config::default().media_spool_dir {
+        let spool = dir.path().join("spool");
+        std::fs::create_dir(&spool).expect("spool dir");
+        spool.to_str().expect("utf-8 spool path").to_string()
+    } else {
+        config.media_spool_dir.clone()
+    };
     let config = Config {
         socket_path: socket_str.clone(),
         enable_reflection: false,
+        media_spool_dir,
         ..config
     };
     let stream = transport::uds_listener::bind(&socket_str, 0o660, None).expect("bind");

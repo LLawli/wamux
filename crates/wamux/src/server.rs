@@ -24,6 +24,7 @@ use crate::services::group_service::GroupSvc;
 use crate::services::media_service::MediaSvc;
 use crate::services::messaging_service::MessagingSvc;
 use crate::services::newsletter_service::NewsletterSvc;
+use crate::spool::MediaSpool;
 use crate::state::AccountRegistry;
 use crate::transport::peer_allowlist::{PeerAllowlist, PeerAllowlistLayer};
 use crate::transport::shutdown::Shutdown;
@@ -43,6 +44,8 @@ pub fn build_router(
     // Render handle for AdminService.GetMetrics; also installs the global
     // recorder the observability layer below feeds.
     let prometheus = crate::observe::prometheus_handle();
+    // No I/O here: the directory was prepared at startup (#79).
+    let spool = MediaSpool::new(&config.media_spool_dir, config.media_spool_max_bytes);
     let mut router = Server::builder()
         .layer(RequestObserveLayer)
         .layer(PeerAllowlistLayer::new(PeerAllowlist::new(
@@ -56,8 +59,13 @@ pub fn build_router(
         .add_service(MessagingServiceServer::new(MessagingSvc::new(
             registry.clone(),
             config.media_max_bytes,
+            spool.clone(),
         )))
-        .add_service(MediaServiceServer::new(MediaSvc::new(registry.clone())))
+        .add_service(MediaServiceServer::new(MediaSvc::new(
+            registry.clone(),
+            spool,
+            config.media_max_bytes,
+        )))
         .add_service(GroupServiceServer::new(GroupSvc::new(registry.clone())))
         .add_service(NewsletterServiceServer::new(NewsletterSvc::new(
             registry.clone(),

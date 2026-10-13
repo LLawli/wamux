@@ -7,6 +7,7 @@ use tonic::transport::Channel;
 use wacore_binary::Node;
 use wamux::config::Config;
 use wamux::proto::v1 as pb;
+use wamux::proto::v1::media_service_client::MediaServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux::stress::app_state_fixture::{OpenedPatch, open_app_state_patch};
 use wamux::stress::{MockCdn, MockIdentity, MockPeer, MockWaServer};
@@ -37,6 +38,8 @@ pub struct Fixture {
     pub cdn: MockCdn,
     pub logged: LoggedIn,
     pub messages: MessagingServiceClient<Channel>,
+    /// DownloadMedia on the same socket, for the spool tests (#79).
+    pub media: MediaServiceClient<Channel>,
     pub account: pb::AccountRef,
     pub peer: MockPeer,
     pub other: MockPeer,
@@ -45,6 +48,16 @@ pub struct Fixture {
 }
 
 pub async fn fixture(test: &str) -> Fixture {
+    let config = Config {
+        media_max_bytes: MEDIA_LIMIT,
+        ..Config::default()
+    };
+    fixture_with(test, config).await
+}
+
+/// `fixture` with a config of the test's choosing (#79: the spool directory,
+/// its budget and the size limit).
+pub async fn fixture_with(test: &str, config: Config) -> Fixture {
     let mock = MockWaServer::start_as(MockIdentity {
         lid: OWN_LID.to_string(),
     })
@@ -68,17 +81,14 @@ pub async fn fixture(test: &str) -> Fixture {
     let prefix = common::test_prefix("messaging_service", test);
     let logged = common::logged_in_companion(&mock, &prefix).await;
     await_login_presence(&mock).await;
-    let config = Config {
-        media_max_bytes: MEDIA_LIMIT,
-        ..Config::default()
-    };
     let channel = common::serve_registry_with(logged.registry.clone(), config).await;
     let account = account_ref(&logged.handle.uuid.to_string());
     Fixture {
         mock,
         cdn,
         logged,
-        messages: MessagingServiceClient::new(channel),
+        messages: MessagingServiceClient::new(channel.clone()),
+        media: MediaServiceClient::new(channel),
         account,
         peer,
         other,

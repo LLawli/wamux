@@ -8,9 +8,11 @@
 //! for them, and there are exactly two.
 
 use tonic::{Status, Streaming};
+use wacore::download::MediaType;
 
 use crate::error::WamuxError;
 use crate::proto::v1 as pb;
+use crate::spool::{MediaSpool, StagedUpload};
 
 /// The header of either upload stream.
 pub(super) enum MediaHeader {
@@ -105,12 +107,27 @@ impl MediaChunks {
         }
     }
 
-    /// Gather the inline byte chunks (after the header) up to the byte limit.
-    pub(super) async fn collect_bytes(&mut self, max_bytes: u64) -> Result<Vec<u8>, Status> {
-        let mut data = Vec::new();
+    /// Encrypt the inline byte chunks (after the header) into the spool, up
+    /// to the byte limit on the plaintext (#79). Memory stays one chunk wide:
+    /// the whole file is never held, and the budget is asked chunk by chunk,
+    /// so a stream that does not fit is refused mid-stream with nothing sent.
+    pub(super) async fn stage_upload(
+        &mut self,
+        spool: &MediaSpool,
+        media_type: MediaType,
+        max_bytes: u64,
+    ) -> Result<StagedUpload, Status> {
+        let mut upload = spool.begin_upload(media_type)?;
+        let mut received: u64 = 0;
         while let Some(frame) = self.next_frame().await? {
             match frame {
-                MediaFrame::Bytes(bytes) => data.extend_from_slice(&bytes),
+                MediaFrame::Bytes(bytes) => {
+                    received += bytes.len() as u64;
+                    if received > max_bytes {
+                        return Err(size_limit_exceeded().into());
+                    }
+                    upload.push(bytes).await?;
+                }
                 MediaFrame::Header(_) => {
                     return Err(WamuxError::InvalidArgument(
                         "unexpected second header".to_string(),
@@ -119,12 +136,11 @@ impl MediaChunks {
                 }
                 MediaFrame::Empty => {}
             }
-            if data.len() as u64 > max_bytes {
-                return Err(
-                    WamuxError::ResourceExhausted("media exceeds size limit".to_string()).into(),
-                );
-            }
         }
-        Ok(data)
+        Ok(upload.finish().await?)
     }
+}
+
+fn size_limit_exceeded() -> WamuxError {
+    WamuxError::ResourceExhausted("media exceeds size limit".to_string())
 }

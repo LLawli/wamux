@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use tonic::{Request, Response, Status, Streaming};
 use wamux_types::{
-    ContactCard, InteractiveReply, Jid, MessageId, MessageTarget, NewPoll, OutgoingMedia,
-    OutgoingText, PollVoteCast, PollVotesToTally, PresenceState, StatusMedia, StatusRevoke,
-    StatusText,
+    ContactCard, InteractiveReply, Jid, MediaKind, MessageId, MessageTarget, NewPoll,
+    OutgoingMedia, OutgoingText, PollVoteCast, PollVotesToTally, PresenceState, StatusMedia,
+    StatusRevoke, StatusText,
 };
 use whatsapp_rust::SendResult;
 
@@ -20,19 +20,22 @@ use crate::domain::messaging::{
 use crate::domain::{chat_actions, interactive_reply, media_transfer, polls, send_rich, status};
 use crate::proto::v1 as pb;
 use crate::proto::v1::messaging_service_server::MessagingService;
+use crate::spool::MediaSpool;
 use crate::state::AccountRegistry;
 use crate::state::send_echo::publish_sent;
 
 pub struct MessagingSvc {
     registry: Arc<AccountRegistry>,
     media_max_bytes: u64,
+    spool: MediaSpool,
 }
 
 impl MessagingSvc {
-    pub fn new(registry: Arc<AccountRegistry>, media_max_bytes: u64) -> Self {
+    pub fn new(registry: Arc<AccountRegistry>, media_max_bytes: u64, spool: MediaSpool) -> Self {
         Self {
             registry,
             media_max_bytes,
+            spool,
         }
     }
 }
@@ -137,14 +140,17 @@ impl MessagingService for MessagingSvc {
         let (handle, client) = account_of(&self.registry, header.account.as_ref()).await?;
         let to = require_typed_jid(header.to.clone())?;
 
+        // The encryptor needs the type to start, so it is checked before the
+        // first byte (#79). The rest of the header converts after the bytes,
+        // as before: the order of those errors is part of the contract.
+        let kind = MediaKind::parse_sendable(header.media_type)?;
         // Media always streams inline; the core never fetches URLs (that fetch
         // policy + SSRF surface is the edge's job).
-        let data = chunks.collect_bytes(self.media_max_bytes).await?;
-
-        // Converted after the bytes: the kind was read in the domain, after
-        // the stream, and the order of the errors is part of the contract.
+        let staged = chunks
+            .stage_upload(&self.spool, kind.media_type(), self.media_max_bytes)
+            .await?;
         let media = OutgoingMedia::try_from(header)?;
-        let result = media_transfer::send_media(&client, to, &media, data).await?;
+        let result = media_transfer::send_media(&client, to, &media, staged).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
@@ -421,10 +427,14 @@ impl MessagingService for MessagingSvc {
             .await?
             .into_status()?;
         let (handle, client) = account_of(&self.registry, header.account.as_ref()).await?;
-        // Same inline-only contract as SendMedia: the core fetches no URLs.
-        let data = chunks.collect_bytes(self.media_max_bytes).await?;
+        // Same contract as SendMedia: inline only, type checked before the
+        // bytes (#79).
+        let kind = MediaKind::parse_status(header.media_type)?;
+        let staged = chunks
+            .stage_upload(&self.spool, kind.media_type(), self.media_max_bytes)
+            .await?;
         let post = StatusMedia::try_from(header)?;
-        let result = status::post_status_media(&client, &post, data).await?;
+        let result = status::post_status_media(&client, &post, staged).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
 
