@@ -1,8 +1,9 @@
 //! AdminService: the daemon's observability surface, exposed over the socket
 //! (no TCP listener). `GetMetrics` renders the Prometheus registry fed by the
-//! per-request layer plus live account gauges; `Check` reports liveness +
-//! readiness (Postgres reachable). Health here is about the daemon itself, not
-//! per-account WhatsApp state (that rides the event stream).
+//! per-request layer plus live account gauges; `Check` reports liveness,
+//! readiness (storage reachable) and the store's `blob_format` marker, read live
+//! (#84). Health here is about the daemon itself, not per-account WhatsApp state
+//! (that rides the event stream).
 
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use tonic::{Request, Response, Status};
 use crate::proto::v1 as pb;
 use crate::proto::v1::admin_service_server::AdminService;
 use crate::state::AccountRegistry;
+use crate::storage::{StorageEngine, StoreBlobFormat};
 
 pub struct AdminSvc {
     registry: Arc<AccountRegistry>,
@@ -58,10 +60,25 @@ impl AdminService for AdminSvc {
         // Readiness probes storage with a trivial round-trip; failure is not an
         // RPC error (the caller wants `ready=false`, not a Status).
         let ready = self.registry.storage().ping_storage().await;
+        let blob_format = reported_blob_format(self.registry.storage().as_ref()).await;
         Ok(Response::new(pb::HealthResponse {
             serving: true,
             ready,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            blob_format: blob_format as i32,
         }))
+    }
+}
+
+/// The store's `blob_format` on the wire (#84). A store that does not answer,
+/// or a marker this build does not know, is `Unspecified`: health never fails.
+async fn reported_blob_format(storage: &dyn StorageEngine) -> pb::BlobFormat {
+    match storage.blob_format().await {
+        Ok(StoreBlobFormat::Bincode) => pb::BlobFormat::Bincode,
+        Ok(StoreBlobFormat::Protobuf) => pb::BlobFormat::Protobuf,
+        Err(error) => {
+            tracing::warn!(%error, "health check could not read the blob_format marker (#84)");
+            pb::BlobFormat::Unspecified
+        }
     }
 }

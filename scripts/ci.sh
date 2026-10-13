@@ -55,6 +55,7 @@ turso_storage_cases() {
   must_run_tests --features turso --lib storage::
   must_run_tests --features turso --test storage_backend turso_
   must_run_tests --features turso --test bincode_upgrade turso_
+  must_run_tests --features turso --test bincode_upgrade_notice turso_
   must_run_tests --features turso --test store_parity turso_
   must_run_tests --features turso --test existing_store turso_
   must_run_tests --features turso --test store_file_mode turso_
@@ -215,6 +216,7 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   stage "no-postgres: sqlite-only storage cases"
   must_run_tests --test storage_backend sqlite_
   must_run_tests --test bincode_upgrade sqlite_
+  must_run_tests --test bincode_upgrade_notice sqlite_
   must_run_tests --test store_parity sqlite_
   # #164: encryption at rest, and the parity suite again with the key on.
   must_run_tests --test store_encryption sqlite_

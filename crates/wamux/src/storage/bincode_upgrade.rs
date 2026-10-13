@@ -24,8 +24,10 @@
 //!   persisted field, key material included.
 //! - **Counts only in logs and errors.** These blobs are Signal key material.
 //!
-//! Delete this module, the `bincode` dependency and the check in the engines'
-//! `run_migrations` once every deployed store reports `protobuf`.
+//! Lifetime (#84, #179): 0.2.x is the last line that converts. 0.3.0 deletes
+//! this module, the `bincode` dependency, the audit ignore and the check in the
+//! engines' `run_migrations`, and refuses a store that is still bincode. An
+//! operator confirms the store is ready through `HealthResponse.blob_format`.
 
 mod legacy_device;
 #[cfg(test)]
@@ -41,6 +43,7 @@ use super::blob_codec::{
     decode_app_state_sync_key, decode_device, decode_hash_state, encode_app_state_sync_key,
     encode_device, encode_hash_state,
 };
+use super::blob_format::{StoreBlobFormat, parse_blob_format};
 
 /// `blob_format.format` before and after the conversion.
 pub const BLOB_FORMAT_BINCODE: &str = "bincode";
@@ -213,11 +216,7 @@ fn round_trip(row: &str, cause: String) -> BincodeUpgradeError {
 
 /// What the marker says to do. `Ok(false)`: already protobuf, nothing to do.
 pub fn needs_bincode_upgrade(format: &str) -> Result<bool, BincodeUpgradeError> {
-    match format {
-        BLOB_FORMAT_BINCODE => Ok(true),
-        BLOB_FORMAT_PROTOBUF => Ok(false),
-        other => Err(BincodeUpgradeError::UnknownFormat(other.to_string())),
-    }
+    Ok(parse_blob_format(format)? == StoreBlobFormat::Bincode)
 }
 
 /// Wraps a raw driver error (`sqlx::Error`, `turso::Error`) with what was being
@@ -234,10 +233,27 @@ where
 
 /// One line per conversion, counts only.
 pub fn log_upgrade(plan: &BincodeUpgradePlan) {
-    tracing::info!(
-        devices = plan.devices.len(),
-        app_state_versions = plan.versions.len(),
-        app_state_keys = plan.sync_keys.len(),
-        "store blobs converted from bincode to protobuf (#31)"
+    let counts = (
+        plan.devices.len(),
+        plan.versions.len(),
+        plan.sync_keys.len(),
+    );
+    // A fresh store is marked bincode by migration 0003/0004 and converts zero
+    // rows: nothing for 0.3.0 to refuse, so no warning (#84).
+    if counts == (0, 0, 0) {
+        tracing::info!("store blobs converted from bincode to protobuf (#31): no rows");
+        return;
+    }
+    warn_upgrade_path(counts);
+}
+
+/// warn, not info: the operator who sees this line still has time to act, and
+/// 0.3.0 will not read a store that was not converted by a 0.2.x (#84).
+fn warn_upgrade_path((devices, versions, keys): (usize, usize, usize)) {
+    tracing::warn!(
+        devices,
+        app_state_versions = versions,
+        app_state_keys = keys,
+        "store blobs converted from bincode to protobuf (#31); wamux 0.3.0 no longer reads a bincode store, so upgrade through a 0.2.x release first (#84)"
     );
 }

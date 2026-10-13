@@ -15,7 +15,8 @@ ignore = [
     # Not a vulnerability: an advisory about maintenance. Since #31 the store
     # writes protobuf, and bincode is only READ, once, to convert a store
     # written before that (storage/bincode_upgrade.rs), on data this daemon
-    # wrote itself. Revisit: delete the entry together with that module and the
-    # dependency, once every deployed store reports blob_format = 'protobuf'.
+    # wrote itself. 0.2.x is the last line that converts: 0.3.0 deletes this
+    # entry together with that module and the dependency, and refuses a store
+    # that is still bincode (#84, #179).
     "RUSTSEC-2025-0141",
 ]

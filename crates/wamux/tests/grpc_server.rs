@@ -97,6 +97,11 @@ async fn admin_health_and_metrics_over_socket() {
     assert!(health.serving);
     assert!(health.ready);
     assert_eq!(health.version, env!("CARGO_PKG_VERSION"));
+    // #84: a store this build opened is protobuf, on every engine.
+    assert_eq!(
+        pb::BlobFormat::try_from(health.blob_format),
+        Ok(pb::BlobFormat::Protobuf)
+    );
 
     // Metrics: real Prometheus render. Gauges are set synchronously in the
     // handler; the per-request counter is fed by the observability layer when a

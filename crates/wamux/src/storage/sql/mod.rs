@@ -48,11 +48,14 @@ use uuid::Uuid;
 use wacore::store::error::{Result as StoreResult, StoreError};
 use wacore::store::traits::Backend;
 
+use crate::storage::StoreBlobFormat;
 use crate::storage::blob_cipher::BlobCipher;
+use crate::storage::blob_format::store_blob_format;
 use crate::storage::engine::{AccountRow, StorageEngine};
 use crate::storage::file_mode;
 use crate::storage::group_commit::{CommitStats, DEFAULT_BATCH_CAP};
 use crate::storage::statements::PING;
+use crate::storage::statements::bincode_upgrade::SELECT_BLOB_FORMAT;
 use crate::storage::store_key::StoreKey;
 
 pub use connect::{connect_postgres, connect_sqlite, connect_sqlite_with_batch_cap};
@@ -287,6 +290,12 @@ impl StorageEngine for SqlStore {
             device_id,
             self.cipher.clone(),
         ))
+    }
+
+    async fn blob_format(&self) -> StoreResult<StoreBlobFormat> {
+        // A plain read outside any transaction, so no FOR UPDATE (#84).
+        let marker = scalar_optional_sql!(String, &self.pool, SELECT_BLOB_FORMAT)?;
+        store_blob_format(marker)
     }
 
     async fn ping_storage(&self) -> bool {
