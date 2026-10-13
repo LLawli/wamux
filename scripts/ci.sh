@@ -179,6 +179,11 @@ must_run_pkg_tests wamux-types
 stage "test sleeps are marked"
 scripts/check-test-sleeps.py
 
+# #85: a comment states the reason, not the review that asked for the code. Pure
+# text check over the sources, so both modes run it.
+stage "no review provenance in comments"
+scripts/check-comment-provenance.py
+
 # #78: the release pipeline builds from fixed inputs (actions by SHA, FROM by
 # digest, cargo --locked) and the image waits for the release. Pure text check.
 stage "release pins"
