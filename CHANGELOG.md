@@ -99,6 +99,13 @@ has to follow them.
 
 ### Added
 
+- **`AdminService.Check` reports the store's blob format** (issue #84). New
+  `HealthResponse.blob_format` (enum `BlobFormat`: `BLOB_FORMAT_BINCODE`,
+  `BLOB_FORMAT_PROTOBUF`, or `BLOB_FORMAT_UNSPECIFIED` when the store does not
+  answer), read from the store's `blob_format` marker on every call. Check that it
+  reads `BLOB_FORMAT_PROTOBUF` before upgrading past 0.2.x. Additive: an edge that
+  ignores the field is unaffected.
+
 - **`commit_bench`** in `wamux-tools` (issue #172): N accounts write M sessions
   at once on any `database_url`, every write waiting for its own commit, and it
   prints writes per second, p50/p99 latency and writes per COMMIT. It refuses a
@@ -720,6 +727,15 @@ has to follow them.
     reuses a historical number, or when the applied history is edited. The
     historical offset is its one named exception.
   - The rule is written in CLAUDE.md.
+
+### Deprecated
+
+- **Converting a bincode store** (issue #84, follow-up #179). 0.2.x is the last
+  release line that converts a store written before #31 (bincode blobs) to
+  protobuf when it opens it; 0.3.0 deletes the conversion and refuses such a
+  store. A conversion that touched any row now logs a warning saying so (a new
+  store's zero-row conversion stays at info). Upgrade through 0.2.x before 0.3;
+  see "Upgrading a store written before #31" in `docs/DEPLOYMENT.md`.
 
 ### Fixed
 
