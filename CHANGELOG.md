@@ -14,6 +14,18 @@ has to follow them.
 
 ### Changed
 
+- **Media is spooled to disk instead of held in memory** (issue #79; see
+  `docs/BREAKING-CHANGES-2026-10-13.md`). SendMedia and PostStatusMedia encrypt
+  each chunk into an unnamed file under the new `media_spool_dir` (default
+  `/var/cache/wamux`) and upload from it; DownloadMedia decrypts into one, checks
+  it, and streams it from there. Memory per transfer no longer depends on the
+  file size. Spool files are opened unlinked, so the directory stays empty. New
+  `media_spool_max_bytes` (default 2 GiB, 0 = unlimited) bounds what all
+  transfers hold together: past it a transfer gets `ResourceExhausted`.
+  **Breaking:** the spool directory must be writable or startup fails;
+  DownloadMedia refuses a file above `media_max_bytes` before fetching; an
+  invalid media type is refused before the bytes. `contrib/wamux.service` gains
+  `CacheDirectory=wamux`.
 - **Socket bind: no takeover, no permission window, a real `socket_group`, an
   optional peer allowlist** (issue #77; see
   `docs/BREAKING-CHANGES-2026-10-12.md`). The daemon probes a file at
