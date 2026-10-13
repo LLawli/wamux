@@ -4,7 +4,9 @@
 # the daemon. See docs/DEPLOYMENT.md for how the Unix socket leaves the
 # container - it is the whole interface, so it needs more than a `ports:` line.
 
-FROM rust:bookworm AS build
+# Base images by digest and the build --locked (#78): the image we ship is built
+# from the inputs CI tested, not from whatever the tags point at today.
+FROM rust:bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS build
 WORKDIR /src
 
 # The pinned nightly (the one upstream whatsapp-rust builds on, #30) is
@@ -23,10 +25,10 @@ COPY crates ./crates
 # production image. protoc is vendored by wamux-proto's build.rs, so nothing to install.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release -p wamux --bin wamux && \
+    cargo build --release --locked -p wamux --bin wamux && \
     cp target/release/wamux /usr/local/bin/wamux
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime
 
 # Must match the UID that will consume the socket on the host. The socket is
 # 0660, so a mismatch here is the difference between a working setup and a

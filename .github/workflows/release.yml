@@ -4,17 +4,25 @@ on:
   push:
     tags: ["v*.*.*"]
 
-permissions:
-  contents: write
+# Nothing is granted by default (#78): each job asks for exactly what it needs,
+# so a new job or a compromised step starts with no token scopes at all.
+permissions: {}
 
 jobs:
   release:
     name: tarball + GitHub release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+      # Provenance (#78): the OIDC token signs the attestation and
+      # attestations: write stores it, so `gh attestation verify` can tie the
+      # tarball to this workflow run.
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache: true
 
@@ -35,6 +43,27 @@ jobs:
       - name: release notes from CHANGELOG
         run: scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > dist/notes.md
 
+      # Appended here, after the CHANGELOG section, so the notes stay a plain
+      # file the publish step reads. The image is built by a later job (#78), so
+      # it appears minutes after the release itself.
+      - name: verification instructions
+        run: |
+          tarball=$(cd dist && echo *.tar.gz)
+          {
+            printf '\n## Verify\n\n'
+            printf 'Both artifacts carry a build provenance attestation. The container image is published by a job that starts only after this release succeeds, so it can appear a few minutes later.\n\n'
+            printf '```\n'
+            printf 'gh attestation verify %s -R %s\n' "$tarball" "$GITHUB_REPOSITORY"
+            printf 'gh attestation verify oci://ghcr.io/%s:%s -R %s\n' "${GITHUB_REPOSITORY,,}" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY"
+            printf '```\n'
+          } >> dist/notes.md
+
+      # Provenance for the tarball (#78). After the build, before the publish:
+      # a release is never visible without its attestation.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,28 +75,35 @@ jobs:
 
   image:
     name: ghcr image
-    runs-on: ubuntu-latest
+    # The image must not exist unless the gates passed (#78): without this the
+    # job ran in parallel with `release` and published even when the gates
+    # failed.
+    needs: release
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # GHCR rejects an uppercase path, and the owner here is "LLawli", so the
       # repository slug cannot be used verbatim.
       - name: image name
         id: name
-        run: echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: push
         with:
           context: .
           push: true
@@ -82,3 +118,11 @@ jobs:
             WAMUX_GID=10001
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Provenance for the pushed digest, not a tag (#78): a tag can move, the
+      # digest is what a consumer pulls and `gh attestation verify` checks.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.name.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

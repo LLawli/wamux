@@ -1,0 +1,26 @@
+# Pins go stale without update PRs (#78): actions by SHA, FROM by digest and
+# the lockfile all need a bot to move them on purpose.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  # A cargo PR must also regenerate THIRD-PARTY-LICENSES.md
+  # (scripts/gen-third-party.py; scripts/check-third-party.sh in ci.sh), or the
+  # license stage fails. The whatsapp-rust crates are one git rev that moves as
+  # a family (#30): grouping everything in one monthly PR keeps that bump whole.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo-all:
+        patterns:
+          - "*"

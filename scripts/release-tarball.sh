@@ -24,7 +24,9 @@ if [[ "$manifest_version" != "$VERSION" ]]; then
 fi
 
 echo "building wamux $VERSION for $TARGET"
-cargo build --release -p wamux --bin wamux
+# --locked: the release must build the dependency tree CI tested, so a stale
+# Cargo.lock fails here instead of shipping unreviewed versions (#78).
+cargo build --release --locked -p wamux --bin wamux
 
 rm -rf "${OUTDIR:?}/${NAME}"
 mkdir -p "${OUTDIR}/${NAME}/contrib" "${OUTDIR}/${NAME}/docs"
