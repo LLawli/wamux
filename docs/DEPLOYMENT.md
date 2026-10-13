@@ -49,6 +49,41 @@ the effective gid that `SO_PEERCRED` reports at connect time, so a peer that is
 in a listed group only as a supplementary one is not admitted by
 `allowed_gids`: list its uid instead.
 
+## The media spool (#79)
+
+SendMedia, PostStatusMedia and DownloadMedia stage each file on disk, so the
+memory a transfer takes does not depend on its size. An upload is encrypted
+into the spool a chunk at a time (the plaintext never touches disk) and then
+sent to the CDN from there. A download is decrypted into the spool, checked,
+and only then streamed to the client.
+
+```toml
+media_spool_dir = "/var/cache/wamux"   # WAMUX_MEDIA_SPOOL_DIR
+media_spool_max_bytes = 2147483648     # WAMUX_MEDIA_SPOOL_MAX_BYTES, 0 = unlimited
+media_max_bytes = 104857600            # WAMUX_MEDIA_MAX_BYTES, caps one upload and one download
+```
+
+- **The directory is required and must be writable.** The daemon creates the
+  missing levels as `0700` at startup, proves it can create a file there, and
+  stops with the path if it cannot. The shipped unit sets `CacheDirectory=wamux`
+  and points the key at it; `docker-compose.yml` uses a volume.
+- **Files have no name.** They are opened unlinked (`O_TMPFILE`), so the
+  directory looks empty during and after every transfer, and a crash leaves
+  nothing behind to clean up.
+- **Never on a tmpfs.** `/tmp` and `/run` are RAM on most systems; a spool there
+  puts the files back in memory and defeats the point. Check `df -h
+  $(dirname <dir>)`: the filesystem must be a real disk.
+- **Sizing.** `media_spool_max_bytes` is the most all transfers in flight may
+  hold together. A download reserves its declared `file_length` before fetching
+  (`media_max_bytes` when the descriptor declares none); an upload reserves as
+  its chunks arrive, plaintext length plus up to 26 bytes of padding and MAC.
+  Past the budget a transfer gets `ResourceExhausted` ("media spool budget
+  exhausted"); an upload refused mid-stream sends nothing. Pick the budget
+  below the free space of the spool's filesystem, and at least a few times
+  `media_max_bytes` if you expect concurrent transfers.
+- **A download above `media_max_bytes` is refused** (`ResourceExhausted`, "media
+  exceeds size limit") before anything is fetched.
+
 ## Storage engine
 
 The `database_url` scheme picks the engine, and nothing else needs to change:
