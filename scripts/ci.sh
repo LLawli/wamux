@@ -325,6 +325,12 @@ stage "stress tests (messaging service)"
 must_run_tests --features stress --test messaging_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test messaging_service
 
+# The media spool's memory gate (#79): 64 MiB sent and downloaded must grow the
+# process's peak RSS by under 24 MiB. A test binary of its own, because VmHWM
+# belongs to the process; one engine is enough, the spool does not touch storage.
+stage "stress tests (media spool RSS)"
+must_run_tests --features stress --test media_spool_rss
+
 # The store file is a secret (#75): the real daemon creates it 0600 under a
 # permissive umask and warns about a loose one. No database, no account.
 stage "store file mode"
