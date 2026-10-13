@@ -39,8 +39,13 @@ event_ring_capacity = 256
 broadcast_capacity = 1024
 
 # Largest event (encoded bytes) still kept in the replay ring; 0 = no cap.
+# Bigger events are still delivered live, they just cannot be replayed.
 # History-sync blobs are always excluded from the ring (they are bulk, not live).
-replay_max_event_bytes = 0
+# Default 262144 (256 KiB) (#80). Measured on 327 147 real envelopes: outside
+# history sync the largest was 146 KiB and none went above 256 KiB, so nothing
+# real drops out of the replay window. With a 256-event ring this bounds one
+# account's ring at 64 MiB; without the cap one event could be megabytes.
+replay_max_event_bytes = 262144
 
 # Max accounts kept connected at once (fd/resource budget); 0 = unlimited.
 # Connect past this returns ResourceExhausted. The edge owns connect policy.
