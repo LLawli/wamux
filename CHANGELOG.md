@@ -728,6 +728,24 @@ has to follow them.
     historical offset is its one named exception.
   - The rule is written in CLAUDE.md.
 
+### Security
+
+- **The release pipeline publishes only what passed its gates, from fixed
+  inputs, with provenance** (issue #78). The image job now needs the release
+  job, so a tag that fails `scripts/ci.sh --no-postgres`, the tag/version check
+  or the CHANGELOG check publishes no image and no `:latest`. Every action in
+  both workflows is pinned by full commit SHA (the tag in a comment), and every
+  job runs on `ubuntu-26.04` instead of `ubuntu-latest`. The Docker build and
+  `scripts/release-tarball.sh` build `--locked`, and both `FROM` lines are
+  pinned by digest. `.github/dependabot.yml` opens update PRs for the actions,
+  the base images and the crates. The tarball and the image carry a build
+  provenance attestation; check them with `gh attestation verify` (see
+  "Verifying a release" in `docs/DEPLOYMENT.md`). `scripts/check-release-pins.py`
+  fails CI when any of this regresses. The actions also move to their Node 24
+  majors (`actions/checkout` v7, the Docker actions v4/v7,
+  `setup-rust-toolchain` v2); `rustsec/audit-check` has no Node 24 release yet
+  and keeps its Node 20 warning.
+
 ### Deprecated
 
 - **Converting a bincode store** (issue #84, follow-up #179). 0.2.x is the last
