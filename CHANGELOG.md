@@ -14,6 +14,18 @@ has to follow them.
 
 ### Changed
 
+- **The migration guides are in English** (issue #82).
+  `docs/BREAKING-CHANGES-2026-06-11.md`, `docs/BREAKING-CHANGES-2026-09-02.md`
+  and `docs/DEFERRED.md` were the last documents in Portuguese, so an edge
+  author who does not read it could not follow the migrations. Same file names,
+  same content: code, field names and the proto copies are untouched, only the
+  prose and the Portuguese comments in two proto snippets are translated.
+  `CONTRIBUTING.md` now says documentation, code comments, commit messages and
+  issues are written in English, and a new `scripts/ci.sh` stage,
+  `scripts/check-doc-language.py`, fails on common Portuguese words in Markdown
+  prose and in `.rs`/`.proto` comments (string literals are test data and stay
+  out of it).
+
 - **The docs describe the daemon that exists** (issue #81). README, `docs/PRD.md`
   and `docs/SPEC.md` were read end to end against the code and corrected: the
   store is Postgres or SQLite (Turso behind the `turso` feature), connection is
