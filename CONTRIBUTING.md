@@ -107,3 +107,6 @@ pass. Beyond that, from `CLAUDE.md`:
 Conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `ci:`, `chore:`),
 scoped to one logical change. The body should say **why**, not restate the
 diff. Run the gates before pushing.
+
+Documentation, code comments, commit messages and issues are written in English.
+`scripts/check-doc-language.py` fails CI on Portuguese in docs and comments.
