@@ -14,8 +14,9 @@ in a **separate edge project (out of scope here)**. A socket client picks which
 account(s)' events to receive (one / all / none = send-only).
 
 **Relay-pure.** The core persists ONLY whatsapp-rust's Signal/session/device state
-(Postgres), never business message history. See `docs/PRD.md` and `docs/SPEC.md` for
-the product/spec, and `docs/crate-notes/` for the verbatim whatsapp-rust API map.
+(Postgres or SQLite, or Turso behind the `turso` cargo feature), never business message
+history. See `docs/PRD.md` and `docs/SPEC.md` for the product/spec, and `docs/crate-notes/`
+for the verbatim whatsapp-rust API map.
 
 **Toolchain.** Pinned **nightly** (`rust-toolchain.toml`), aligned with the nightly upstream
 `whatsapp-rust` builds on. The lib itself is pinned to a git `rev` on main, not a crates.io

@@ -380,3 +380,192 @@ suite, the tag/version check and the release notes), so a tag that failed them
 has no image. The build is `--locked` to the tested `Cargo.lock`, and the base
 images are pinned by digest.
 
+## Native (systemd)
+
+The simplest case: daemon and consumer are the same user on the same host, so
+permissions take care of themselves.
+
+```sh
+cargo build --release -p wamux --bin wamux
+mkdir -p ~/.local/bin ~/.config/systemd/user
+cp target/release/wamux ~/.local/bin/
+cp contrib/wamux.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now wamux
+```
+
+The unit uses `StateDirectory=wamux`, so the SQLite database and the socket
+both land in `~/.local/state/wamux/`, and `CacheDirectory=wamux` for the
+[media spool](#the-media-spool-79), which lands in `~/.cache/wamux/`. The
+consumer connects to `~/.local/state/wamux/wamux.sock`.
+
+For a system-wide install, follow the comment at the top of the unit: put it in
+`/etc/systemd/system/`, add `User=` and `Group=`, and replace `%h` with an
+absolute path. The same directives then give `/var/lib/wamux/` and
+`/var/cache/wamux/`. A consumer running as another user reaches the socket
+through its group: set `socket_group` (`WAMUX_SOCKET_GROUP`) to a group both
+users belong to, see
+[How the daemon binds the socket](#how-the-daemon-binds-the-socket-77).
+
+In the system-wide unit, the socket sits next to the database, in a state
+directory that systemd creates `0755`. For a consumer of another user, move the
+socket out of it (`RuntimeDirectory=wamux`, `RuntimeDirectoryMode=0750`, `Group=` the shared
+group, `Environment=WAMUX_SOCKET_PATH=%t/wamux/wamux.sock`) and set
+`StateDirectoryMode=0700`, as [The store is a secret](#the-store-is-a-secret)
+asks. A user unit cannot serve another user: its `%t` is private to its owner.
+
+## Docker, consumer on the host
+
+This is what `docker-compose.yml` sets up: Postgres behind the daemon, the
+socket bind-mounted out to `./run` on the host, and the media spool on the
+`wamux-spool` named volume (`WAMUX_MEDIA_SPOOL_DIR=/var/lib/wamux/spool`).
+
+```sh
+mkdir -p run
+docker compose up -d --build
+# socket at ./run/wamux.sock
+```
+
+**Create `./run` before the first start.** It is gitignored, so a fresh clone
+does not have it, and Docker creates a missing bind-mount source owned by root.
+The daemon binds in a private directory it creates next to the socket, so in a
+root-owned `./run` startup stops with `binding unix socket`, caused by
+`create private bind directory for /run/wamux/wamux.sock` and
+`Permission denied`. If Docker already created it,
+`sudo chown "$(id -u):$(id -g)" run` (this works when the image's UID is yours,
+see below).
+
+**The UID has to match, and this is the step people get wrong.** The image
+creates a `wamux` user whose UID is a build argument: the Dockerfile defaults it
+to `10001`, and the compose file passes `${WAMUX_UID:-1000}` (the GID likewise).
+`./run` must be writable by that UID. If your host user is not 1000, the daemon
+cannot create its bind directory in your `./run`: startup stops with the same
+`create private bind directory` / `Permission denied` error, and the container
+restarts in a loop (`docker compose logs wamux`). Fix it at build time, so the
+daemon runs as you:
+
+```sh
+WAMUX_UID=$(id -u) WAMUX_GID=$(id -g) docker compose up -d --build
+```
+
+If the stack already started under another UID, remove the spool volume first
+(`docker compose down`, then `docker volume rm <project>_wamux-spool`; not
+`down -v`, which also deletes `wamux-pgdata`). It holds nothing durable, but it
+keeps the old owner, and the new user would stop at
+`the media spool directory /var/lib/wamux/spool is not writable`.
+
+The published image (`ghcr.io/llawli/wamux`) runs as `10001:10001`. Give `./run`
+to that uid (`sudo chown 10001:10001 run`), and keep the compose file's
+`WAMUX_MEDIA_SPOOL_DIR`: the image sets only `WAMUX_SOCKET_PATH`, and the default
+spool, `/var/cache/wamux`, cannot be created by that user. A host consumer of
+that image then runs as uid or gid 10001, or you rebuild.
+
+A **bind mount** is used rather than a named volume on purpose: a named volume
+lives under `/var/lib/docker`, which only root can traverse, so the socket in it
+is out of reach of a normal user on the host whatever its own owner and mode.
+
+## Docker, consumer in another container
+
+Here a **named volume is the right choice**: the socket never needs to be
+visible on the host, and both containers see it at the same path. A new named
+volume starts as a copy of the image's `/run/wamux`, which the Dockerfile
+creates owned by the `wamux` user, so nothing has to be created by hand.
+
+```yaml
+services:
+  wamux:
+    # ...as in docker-compose.yml, but:
+    volumes:
+      - wamux-socket:/run/wamux
+      - wamux-spool:/var/lib/wamux
+
+  my-edge:
+    image: my-edge:latest
+    depends_on: [wamux]
+    # The wamux user's UID and GID, or the 0660 socket is unreachable. The same
+    # expression as the build args, so the two cannot drift apart.
+    user: "${WAMUX_UID:-1000}:${WAMUX_GID:-1000}"
+    environment:
+      WAMUX_SOCKET: /run/wamux/wamux.sock
+    volumes:
+      - wamux-socket:/run/wamux
+
+volumes:
+  wamux-pgdata:
+  wamux-socket:
+  wamux-spool:
+```
+
+Both containers must agree on UID/GID, and exporting `WAMUX_UID` and
+`WAMUX_GID` sets both: the compose file passes them as build args and `my-edge`
+reads them for `user:`. Export your consumer's uid and gid before
+`docker compose up -d --build`. With the published image
+(`image: ghcr.io/llawli/wamux:<tag>` in place of `build:`), which runs as
+`10001`, export `WAMUX_UID=10001 WAMUX_GID=10001`. Do not pass `--build-arg`
+alone: the consumer's `user:` would not follow it.
+`depends_on` only orders the starts: the socket appears after the daemon has
+opened its store, so the consumer retries its first connect.
+
+Both named volumes copy the image's ownership once, when they are created. If
+the stack already started under another UID, run `docker compose down` and
+`docker volume rm` both `<project>_wamux-socket` and `<project>_wamux-spool`
+before rebuilding (not `down -v`, which also deletes `wamux-pgdata`, the store).
+
+## Troubleshooting
+
+**`permission denied` connecting to the socket.** The connect itself is
+refused, so it is the owner and mode of the socket or of a directory above it.
+Check both: `ls -l ./run/wamux.sock` (or wherever `socket_path` points) and
+`ls -ld` on its parent. A parent the daemon created is `0750` less the umask
+(so `0700` under the shipped unit and the image), with the daemon's own group,
+not `socket_group`, so a consumer that shares only `socket_group` cannot reach
+the socket: create the directory yourself (or with `RuntimeDirectory=`) with
+that group. With Docker, if the socket's UID is not yours, give `./run` back to
+yourself, remove the spool volume and rebuild with
+`WAMUX_UID=$(id -u) WAMUX_GID=$(id -g)`, as in
+[Docker, consumer on the host](#docker-consumer-on-the-host). Adding your user
+to the socket's group (its `socket_group`, or the daemon's own group) works
+only when the directories above the socket let that group through; log in again
+for the new group to apply.
+
+**`PermissionDenied` "peer not allowed" from every RPC.** The connect worked,
+and the [peer allowlist](#allowlist-by-peer-credentials-77) refused the caller;
+the daemon logs a warning with its uid and gid. Add the consumer's uid to
+`allowed_uids`: `allowed_gids` only matches its effective gid.
+
+**`path must be shorter than SUN_LEN`** at startup, under `binding unix socket`
+and `bind <path>`. A Unix socket path holds at most 107 bytes (the kernel's
+108-byte `sun_path`, less the closing NUL), and the daemon fails to bind rather
+than truncating. The path it binds is the staging one,
+`<dir>/.wamux-bind-<pid>/s`, up to 22 bytes past the directory, so a directory
+longer than about 85 bytes fails even when `socket_path` itself fits; clients
+need the final path within the limit too. Use a short path:
+`/run/wamux/wamux.sock`, not a deeply nested one.
+
+**Socket file exists but nothing answers.** A socket left by an unclean
+shutdown. The daemon unlinks it on a clean stop and replaces a socket that
+refuses connections at startup, so a leftover means the process died, or never
+got as far as binding (that comes after the store opens). Check the logs
+(`journalctl --user -u wamux`, `journalctl -u wamux` for a system unit,
+`docker compose logs wamux`) before deleting
+anything; the next start replaces it on its own. A start that finds a live
+socket stops with `another wamux is serving <path>` instead (see
+[How the daemon binds the socket](#how-the-daemon-binds-the-socket-77)).
+
+**Startup stops at `preparing the media spool directory`.** The
+[spool](#the-media-spool-79) could not be created
+(`cannot create the media spool directory <path>`) or written
+(`the media spool directory <path> is not writable`). Its default,
+`/var/cache/wamux`, is not writable by a normal user, nor by the image's `wamux`
+user, so a daemon started by hand outside the unit, or the image run without the
+compose file's environment, points `media_spool_dir`
+(`WAMUX_MEDIA_SPOOL_DIR`) at a directory it owns, on a real disk. The same goes
+for `socket_path`, whose default `/run/wamux.sock` needs write access to `/run`.
+
+**`ready=false` from `AdminService.Check`.** The daemon is serving but storage
+is not answering: Postgres is down or unreachable, or a SQLite or Turso
+connection stopped answering. `serving` stays true because the RPC layer is
+fine; the two fields are separate for exactly this reason. The probe is a
+`SELECT 1` (on SQLite, on a reader and on the writer), so it proves the store
+answers, not that a write would succeed.
+

@@ -3,7 +3,7 @@
 
 # Unix socket the gRPC server binds.
 socket_path = "/run/wamux.sock"
-# Socket file mode. TOML has no octal literal; 432 == 0o660.
+# Socket file mode: 432 == 0o660. TOML also accepts 0o660; env vars need decimal.
 socket_mode = 432
 # Group that owns the socket (#77): a name (looked up through NSS) or a number
 # taken as a gid. The daemon's user must be a member, or startup fails; so does
@@ -26,10 +26,13 @@ socket_mode = 432
 # e.g. database_url = "sqlite:///var/lib/wamux/wamux.db"
 #      database_url = "turso:///var/lib/wamux/wamux.db"
 database_url = "postgres://wamux:wamux@localhost:5432/wamux"
-# Postgres pool size. Ignored under sqlite:// (which pins the pool to one
-# connection so the process serializes its own writes) and under turso://
+# Postgres pool size. Ignored under sqlite:// (one writer connection behind
+# the group commit, plus a fixed pool of read-only ones) and under turso://
 # (one connection behind a mutex).
 db_max_connections = 16
+# Path of the store key file (64 hex characters, mode 0600); set, it turns on
+# encryption at rest. See "Encryption at rest" in docs/DEPLOYMENT.md.
+# store_key_file = "/etc/wamux/store-key"
 
 # Per-account in-memory replay ring (events kept for quick reconnect).
 event_ring_capacity = 256
@@ -79,10 +82,9 @@ log_level = "info,wamux=debug"
 # Log output format: "json" (structured, for ingestion) or "text" (default).
 log_format = "text"
 
-# gRPC reflection (handy with grpcurl in dev).
+# gRPC reflection, so grpcurl can list and describe the services. On by
+# default; set false to turn it off.
 enable_reflection = true
 
 # Note: there is no DM-routing knob. The core relays to whatever recipient JID
-# the client sends, verbatim. To dodge the library's PN->LID upgrade (1:1 message
-# gets an id but never delivers on some companion accounts), the EDGE sends the
-# legacy "<number>@c.us" JID instead of "<number>@s.whatsapp.net".
+# the client sends, verbatim.
