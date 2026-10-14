@@ -4,9 +4,9 @@
 //! sqlx-sqlite 0.8.6 queues a statement on its worker thread and runs it even
 //! when the caller's future is gone (`connection/worker.rs:354`), so the batch
 //! can believe a transaction is open that already committed, or a savepoint
-//! exists that was already released. The #172 module only narrowed that window.
-//! An engine that runs nothing once the future is gone has the mirror case: the
-//! batch believes a statement ran that did not.
+//! exists that was already released. An engine that runs nothing once the
+//! future is gone has the mirror case: the batch believes a statement ran that
+//! did not.
 //!
 //! `BatchState::in_flight` marks the statement being awaited. Whoever takes the
 //! lock next calls `GroupCommit::reconcile` before anything else. Every state

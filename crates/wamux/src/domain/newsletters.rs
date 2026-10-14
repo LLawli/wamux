@@ -1,11 +1,11 @@
 //! Channel (`@newsletter`) metadata and history, relayed over `client.newsletter()`.
 //!
-//! Issue #6: a channel's name existed on WhatsApp's side and never crossed the
-//! contract. An inbound newsletter message carries an empty `push_name` and a
-//! `sender` equal to the newsletter jid, history sync brings no name, and
-//! `GroupService` does not cover them — so a consumer could only ever address
-//! these rows by jid. Nothing new is implemented against WhatsApp here; the
-//! library already asks, the core just relays the answer.
+//! A channel's name lives only on WhatsApp's side (#6): an inbound newsletter
+//! message carries an empty `push_name` and a `sender` equal to the newsletter
+//! jid, history sync brings no name, and `GroupService` does not cover them, so
+//! without this a consumer could address these rows only by jid. Nothing new is
+//! implemented against WhatsApp here; the library already asks, the core just
+//! relays the answer.
 
 use wamux_types::newsletter_enums::{edit_attribute_of, poll_type_of};
 use wamux_types::{Jid, NewsletterHistoryQuery, NewsletterJid, relay_jid, relay_lib_jid};
@@ -21,25 +21,24 @@ use crate::domain::wire_time::{millis_from_seconds, saturating_i64};
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
-// WHY METADATA AND HISTORY GO THROUGH THE LIBRARY NOW (issue #56, 2026-09-28).
+// WHY METADATA AND HISTORY GO THROUGH THE LIBRARY, NOT OUR OWN QUERIES (issue #56).
 //
-// Both RPCs used to issue their own queries (metadata since #38, history since
-// #40), because the library's parse lost what the server sent. Upstream fixed
-// each reason: the state/verification case and folding (#1546 → #1557), the
-// history `type`/`polltype` tokens (#1548 → #1558), and a missing channel plus
-// one id-less list entry (#1560 → #1561). #56 was found while checking the
-// last one: the server answers a JID with no channel behind it with
-// `{ "id": null, "state": { "type": "NON_EXISTING" } }`, not `null`, and the
-// core's own `is_null()` check relayed that as an empty `Newsletter`.
+// The library's parse keeps what the server sent: upstream fixed the
+// state/verification case and folding (#1546 → #1557), the history
+// `type`/`polltype` tokens (#1548 → #1558), and a missing channel plus one
+// id-less list entry (#1560 → #1561). On that last one the server answers a
+// JID with no channel behind it with
+// `{ "id": null, "state": { "type": "NON_EXISTING" } }`, not `null`, so a
+// `null` check alone would relay an empty `Newsletter`.
 //
-// What the library still does differently from the old projection, accepted
+// Where the library reads the answer differently from the raw JSON, accepted
 // on purpose (the user's call on 2026-09-28):
 //
 //   - a role it has no variant for is `None`, so it relays as UNSPECIFIED (WA
 //     Web drops it the same way);
 //   - an absent state reads `Active` and an absent verification `Unverified`,
-//     so they relay as ACTIVE / UNVERIFIED instead of UNSPECIFIED. Confirmed
-//     again when they became enums (#128, 2026-10-06).
+//     so they relay as ACTIVE / UNVERIFIED instead of UNSPECIFIED, enums
+//     included (#128).
 //
 // Measured the same day on production, read-only: 9 subscribed channels on
 // `pessoal` (none on `trabalho`), through both the list and one get each.
@@ -47,11 +46,10 @@ use crate::proto::v1 as pb;
 // zero rows affected. If a consumer ever needs those distinctions, the fix is
 // upstream (`NewsletterRole::Other`, optional state), not a query of our own.
 //
-// History: the one remaining difference is an answer without `<messages>`,
-// which the library reads as an error where the old path answered an empty
-// page. WA Web's parser marks `<messages>` required and throws too
-// (`SmaxParsingFailure`), so the library is the one that matches the server's
-// contract. A missing channel is an IQ 404, which relays as NotFound.
+// History: an answer without `<messages>` is an error in the library, not an
+// empty page. WA Web's parser marks `<messages>` required and throws too
+// (`SmaxParsingFailure`), so the library matches the server's contract. A
+// missing channel is an IQ 404, which relays as NotFound.
 
 pub async fn list_subscribed(client: &Client) -> Result<pb::NewsletterList, WamuxError> {
     let found = client

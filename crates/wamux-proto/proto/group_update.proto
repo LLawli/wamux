@@ -5,8 +5,7 @@ package wamux.v1;
 import "common.proto";
 import "group_metadata.proto";
 
-// #133 (part 2 of #74): the payloads of `GroupUpdate.action` and of
-// `ContactUpdate.action`, which used to cross as the library's JSON in `raw`.
+// The payloads of `GroupUpdate.action` and of `ContactUpdate.action` (#133).
 // The rules of group_metadata.proto hold here: absent is unset, a point in
 // time is int64 milliseconds, a value of unverified unit crosses verbatim.
 
@@ -130,15 +129,15 @@ message GroupUnlinked {
 
 // A member suggested a group for the community (#146). The suggestion is
 // `stanza`'s `<sub_group_suggestion>` child: its jid, creator, subject,
-// description and participant count. Was `Empty` before; the field number of
-// the case is unchanged and an old reader skips the new field.
+// description and participant count. The case keeps the number it had as an
+// `Empty`, so an old reader skips the new field.
 message GroupSubGroupSuggestionCreated {
   StanzaNode stanza = 1;  // the whole `<created_sub_group_suggestion>`
 }
 
 // A suggestion ended (#146). Each `<sub_group_suggestion>` child of `stanza`
-// names its group and a `reason` (`cancelled`, `approved`, ...). Was `Empty`
-// before, see GroupSubGroupSuggestionCreated.
+// names its group and a `reason` (`cancelled`, `approved`, ...). Same wire
+// compatibility as GroupSubGroupSuggestionCreated.
 message GroupSubGroupSuggestionsRevoked {
   StanzaNode stanza = 1;  // the whole `<revoked_sub_group_suggestions>`
 }

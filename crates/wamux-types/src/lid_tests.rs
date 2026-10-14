@@ -25,7 +25,7 @@ fn a_lid_query_keeps_the_text_as_sent() {
     assert_eq!(query.jid, Jid::parse("100000000000002@lid").unwrap());
 }
 
-// Decided 2026-10-05: the answer echoes the query as the caller wrote it,
+// The answer echoes the query as the caller wrote it,
 // while the lookup uses the jid the library's parse gives.
 #[test]
 fn a_legacy_query_keeps_its_spelling_and_parses_canonical() {

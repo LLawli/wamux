@@ -1,12 +1,11 @@
-//! `contacts` (#116): the tests that lived inline, moved so the loop can seal
-//! them. Unchanged: they never took an identifier.
+//! `contacts` (#116): the push-name guard.
 
 use super::validate_push_name;
 use crate::error::WamuxError;
 
-// E2E triage 2026-06-16: an empty push name must fail fast as
-// InvalidArgument (the lib rejects it pre-network with a bare anyhow that
-// client_err would otherwise mislabel as Unavailable/503 at the edge).
+// An empty push name must fail fast as InvalidArgument (the lib rejects it
+// pre-network with a bare anyhow that client_err would otherwise mislabel as
+// Unavailable/503 at the edge).
 #[test]
 fn empty_push_name_is_invalid_argument() {
     let err = validate_push_name("").expect_err("empty name must be rejected");

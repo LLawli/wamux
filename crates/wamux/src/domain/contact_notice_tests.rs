@@ -1,10 +1,10 @@
-//! #151 (part 4 of #141): what the server says about a contact, routed through
-//! `map_event`, so each test also proves the event no longer falls into the
-//! RawEvent catch-all. The picture and disappearing-mode values are the ones
-//! the trabalho account produced on 2026-10-09 at 12:29Z to 12:30Z, read off
-//! the production subscription (jids anonymized). The others are hand-built in
-//! the shapes the library's handlers fill (`handlers/notification/` at
-//! 6f07e3a): no live capture carried them.
+//! #151: what the server says about a contact, routed through `map_event`, so
+//! each test also proves the event does not fall into the RawEvent catch-all.
+//! The picture and disappearing-mode values are the ones the trabalho account
+//! produced on 2026-10-09 at 12:29Z to 12:30Z, read off the production
+//! subscription (jids anonymized). The others are hand-built in the shapes the
+//! library's handlers fill (`handlers/notification/` at 6f07e3a): no live
+//! capture carried them.
 
 use std::str::FromStr;
 

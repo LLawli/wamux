@@ -51,9 +51,9 @@ pub(crate) async fn upload_staged(
 
 /// The upload fields the outgoing sub-messages need, owned by wamux.
 ///
-/// `UploadResponse` became `#[non_exhaustive]` in whatsapp-rust 0.7 with no
-/// public constructor, so it can no longer be built outside the crate: the
-/// builders below would be untestable if they took it directly. Naming the six
+/// `UploadResponse` is `#[non_exhaustive]` (since whatsapp-rust 0.7) with no
+/// public constructor, so it cannot be built outside the crate: the builders
+/// below would be untestable if they took it directly. Naming the six
 /// fields the core actually relays also keeps a new upstream field from
 /// silently widening what the core copies onto the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,10 +73,9 @@ pub(crate) struct MediaUpload {
     /// audio/video builders, never in the shared macro, because
     /// `streamingSidecar` exists on only those two waproto messages.
     ///
-    /// Issue #18: dropping this shipped audio and voice notes that drew their
-    /// bubble and refused to play, with a `delivered` receipt and no nack. The
-    /// bytes, the container, the encryption and the descriptor were all right;
-    /// the message was missing the table.
+    /// Without it (#18) audio and voice notes draw their bubble and refuse to
+    /// play, with a `delivered` receipt and no nack, even when the bytes, the
+    /// container, the encryption and the descriptor are all right.
     pub streaming_sidecar: Option<Vec<u8>>,
 }
 
@@ -285,11 +284,11 @@ pub async fn download(
 
 /// Build the download parameters, encrypted or not.
 ///
-/// Issue #6: a channel's media carries NO key. Decoding a newsletter
-/// `ImageMessage` shows no `media_key` and no `file_enc_sha256` at all, because
-/// that media is served in the clear and authenticated by `file_sha256` alone.
-/// `DownloadParams::encrypted` cannot express that, so a relay that only ever
-/// called it answered for encrypted media and failed for the rest.
+/// A channel's media carries NO key (#6): a newsletter `ImageMessage` has no
+/// `media_key` and no `file_enc_sha256` at all, because that media is served in
+/// the clear and authenticated by `file_sha256` alone.
+/// `DownloadParams::encrypted` cannot express that, so the params are built
+/// field by field and the key is optional.
 ///
 /// Absence is the proto3 default (empty bytes), the same rule the outbound side
 /// uses, and the library already has the branch: `media_key: None` takes

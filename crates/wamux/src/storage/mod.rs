@@ -13,7 +13,6 @@ pub mod blob_cipher;
 pub mod blob_codec;
 pub mod blob_format;
 pub(crate) mod convert;
-/// PALLIATIVE for an upstream app-state bug; goes with #36.
 pub mod engine;
 pub(crate) mod file_mode;
 pub mod group_commit;

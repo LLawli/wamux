@@ -1,5 +1,5 @@
 //! `WamuxError` -> `tonic::Status` (#114): the code and the message of each
-//! variant, as the daemon answered them before the move.
+//! variant.
 
 use tonic::Code;
 

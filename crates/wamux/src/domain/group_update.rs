@@ -1,6 +1,5 @@
 //! A group notification's action, projected onto the contract's typed
-//! `GroupUpdate` (#133, part 2 of #74). It used to cross as the library's
-//! `serde` JSON in `raw`, which spelled every jid as the library's struct.
+//! `GroupUpdate` (#133): every jid crosses as the contract's `Jid`.
 
 mod participants;
 

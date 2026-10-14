@@ -1,5 +1,6 @@
-//! `SignalStore` for the SQL family. All key material is stored as raw bytes,
-//! matching the whatsapp-rust sqlite reference (no transform).
+//! `SignalStore` for the SQL family. Key material is the lib's raw bytes with no
+//! codec, as in the whatsapp-rust sqlite reference, sealed under the store key
+//! when one is set (`seal_at` / `open_at`, #164).
 
 use std::sync::Arc;
 

@@ -359,8 +359,8 @@ impl ProtocolStore for SqlBackend {
     }
 
     async fn delete_expired_base_keys(&self, cutoff_timestamp: i64) -> Result<u32> {
-        // The keepalive sweep calls this every cycle; the trait default was Ok(0),
-        // so base_keys grew without bound.
+        // The keepalive sweep calls this every cycle; the trait default is Ok(0),
+        // so base_keys would grow without bound.
         let deleted = execute_sql!(
             &self.pool,
             DELETE_EXPIRED_BASE_KEYS,

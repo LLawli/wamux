@@ -1,8 +1,8 @@
-//! #150 (part 3 of #141): the connection's lifecycle past its state, routed
-//! through `map_event`, so each test also proves the event no longer falls
-//! into the RawEvent catch-all. None of these can be provoked safely on a
-//! paired account, so the stanzas are hand-built in the shapes the library's
-//! handlers read (`client/node_io.rs` at 6f07e3a).
+//! #150: the connection's lifecycle past its state, routed through `map_event`,
+//! so each test also proves the event does not fall into the RawEvent
+//! catch-all. None of these can be provoked safely on a paired account, so the
+//! stanzas are hand-built in the shapes the library's handlers read
+//! (`client/node_io.rs` at 6f07e3a).
 
 use wacore::iq::dirty::DirtyType;
 use wacore::types::events::{

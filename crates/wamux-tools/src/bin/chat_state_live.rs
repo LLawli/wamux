@@ -22,11 +22,11 @@
 //! half alone proves nothing -- a build that hardcoded the group jid would pass
 //! the group half.
 //!
-//! It also asserts `online` is ABSENT on a chat state (issue #24): it used to
-//! be a hardcoded true, which a consumer could light an "online" dot from.
+//! It also asserts `online` is ABSENT on a chat state (issue #24): a hardcoded
+//! true there would let a consumer light an "online" dot from it.
 //!
 //! What it cannot do is prove the indicator renders. That is the edge's job;
-//! this only shows the bytes now carry the conversation.
+//! this only shows the bytes carry the conversation.
 //!
 //! Measured 2026-09-11 against the two production accounts: the group half
 //! names the group jid, and the DM half names the sender's `@lid` (the same

@@ -1,6 +1,5 @@
-//! `status` (#115): the tests that lived inline, moved so the loop can seal
-//! them. Reading a RevokeStatus moved to `wamux-types`
-//! (`messaging/status_tests.rs`), with the same assertions.
+//! `status` (#115). Reading a RevokeStatus is tested in `wamux-types`
+//! (`messaging/status_tests.rs`).
 
 use wacore::download::MediaType;
 use wamux_proto::v1 as pb;

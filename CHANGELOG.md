@@ -99,6 +99,15 @@ has to follow them.
 
 ### Added
 
+- **Comment policy, with a CI guard** (issue #85). `CONTRIBUTING.md` and
+  `CLAUDE.md` now say what a code comment is for: an invariant, a constraint or a
+  reason, with an issue number as a pointer next to it; history (what the code
+  used to do, which version changed what, who reviewed it) goes to the commit
+  message and this file. The comments of `crates/*/src` and of the `.proto`
+  contract were swept to match, with no code change. The new stage
+  `scripts/check-comment-provenance.py` in `scripts/ci.sh` fails on review
+  provenance (`code-review 2026-...`, `edge-review`) in those sources.
+
 - **`AdminService.Check` reports the store's blob format** (issue #84). New
   `HealthResponse.blob_format` (enum `BlobFormat`: `BLOB_FORMAT_BINCODE`,
   `BLOB_FORMAT_PROTOBUF`, or `BLOB_FORMAT_UNSPECIFIED` when the store does not

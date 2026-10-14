@@ -1,6 +1,6 @@
 //! #138: the stanza behind a logout or a ban reaches the edge whole. The
-//! library kept it (`raw`) so a one-time `appeal_token` survives dispatch; the
-//! core used to drop it. The lock stanza here is synthetic: no real capture of
+//! library keeps it (`raw`) so a one-time `appeal_token` survives dispatch, and
+//! the core relays it. The lock stanza here is synthetic: no real capture of
 //! an account lock exists.
 
 use std::collections::HashMap;

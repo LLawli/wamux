@@ -4,13 +4,12 @@ package wamux.v1;
 
 import "common.proto";
 
-// #135 (part 4 of #74): the payloads of `CallEvent.action` and the group-call
-// state, every public field of whatsapp-rust's `CallAction` variants and of
-// `wacore::types::group_call`. They used to cross as the library's JSON in
-// `CallEvent.raw`. The rules of group_metadata.proto hold: absent is unset,
-// a point in time is int64 milliseconds, a value of unverified unit crosses
-// verbatim and its comment says so. A string the library keeps as a string
-// (it names no values) crosses as a string.
+// The payloads of `CallEvent.action` and the group-call state, every public
+// field of whatsapp-rust's `CallAction` variants and of
+// `wacore::types::group_call` (#135). The rules of group_metadata.proto hold:
+// absent is unset, a point in time is int64 milliseconds, a value of
+// unverified unit crosses verbatim and its comment says so. A string the
+// library keeps as a string (it names no values) crosses as a string.
 
 // One audio codec a device offers or accepts.
 message CallAudioCodec {
@@ -209,11 +208,10 @@ message WaitingRoomUser {
   string state = 3;
 }
 
-// #153 (part 2b of #141): one entry of the primary device's call log, synced
-// through app state (`wa.SyncActionValue.CallLogAction`). The only channel
-// that shows a call placed on the phone: such a call puts no signalling on this
-// socket, so CallEvent never sees it. It reached the socket as the
-// `CallLogSync` RawEvent. Measured on 2026-10-08: only the companion of the
+// One entry of the primary device's call log, synced through app state
+// (`wa.SyncActionValue.CallLogAction`, #153). The only channel that shows a
+// call placed on the phone: such a call puts no signalling on this socket, so
+// CallEvent never sees it. Measured on 2026-10-08: only the companion of the
 // account that placed the call received one.
 //
 // Left out on purpose: the record's `isIncoming`, which the library documents
@@ -291,8 +289,7 @@ enum CallLogType {
   CALL_LOG_TYPE_VOICE_CHAT = 4;
 }
 
-// #151: why a call surfaced as missed rather than ringing. It reached the
-// socket as the `MissedCall` RawEvent.
+// Why a call surfaced as missed rather than ringing (#151).
 message CallMissed {
   MissedCallReason reason = 1;
 }

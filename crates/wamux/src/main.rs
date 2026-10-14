@@ -28,9 +28,9 @@ fn load_store_key(config: &Config) -> anyhow::Result<Option<StoreKey>> {
     Ok(Some(key))
 }
 
-/// `wamux` with no arguments serves, as it always has; the other commands are
-/// one-shot (#165). A usage error exits 2, any other failure 1 (the `Err`
-/// `main` returns), success 0.
+/// `wamux` with no arguments serves; the other commands are one-shot (#165).
+/// A usage error exits 2, any other failure 1 (the `Err` `main` returns),
+/// success 0.
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();

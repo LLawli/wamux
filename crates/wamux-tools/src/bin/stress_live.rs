@@ -1,4 +1,4 @@
-//! Sprint 3 M4: probe one REAL WhatsApp connection (the secondary account) for
+//! Probe one REAL WhatsApp connection (the `WAMUX_REF` account) for
 //! round-trip latency while N fake clients are held against the local mock WSS
 //! server. The probe sends a text to a single operator-chosen destination and
 //! times the delivery receipt; it runs once as a baseline (no load) and again
@@ -211,9 +211,9 @@ fn show_pairing_qr(env: pb::EventEnvelope) {
     }
 }
 
-/// Provision N registered devices and connect them to the mock. Mirrors the M3
-/// test: each device has `pn` set + persisted so it logs in via the mock's
-/// `<success>`.
+/// Provision N registered devices and connect them to the mock. Mirrors the
+/// `stress_handshake` test: each device has `pn` set + persisted so it logs in
+/// via the mock's `<success>`.
 async fn provision_and_connect_fakes(
     registry: &Arc<AccountRegistry>,
     pool: &SqlPool,
@@ -281,7 +281,7 @@ async fn record_receipts(env: &pb::EventEnvelope, receipts: &ReceiptMap) {
     }
 }
 
-/// Send `count` probe texts to the primary, timing each until its receipt lands.
+/// Send `count` probe texts to `dest`, timing each until its receipt lands.
 async fn run_probes(
     client: &Client,
     dest: &Jid,

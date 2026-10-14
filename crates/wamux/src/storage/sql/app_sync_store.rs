@@ -1,5 +1,6 @@
 //! `AppSyncStore` for the SQL family. Sync keys and version state are protobuf
-//! blobs (`blob_codec`, #31); MACs are raw bytes.
+//! blobs (`blob_codec`, #31); MACs are raw bytes. All of them are sealed under
+//! the store key when one is set (#164).
 
 use std::collections::HashMap;
 
@@ -40,11 +41,11 @@ impl AppSyncStore for SqlBackend {
         Ok(())
     }
 
-    // `main` made absence meaningful: no row means "never synced" (the lib
-    // bootstraps from a snapshot), while a row at version 0 means a collection
-    // that synced and is legitimately empty (the lib asks for patches).
-    // Collapsing both into `HashState::default()` made an empty collection
-    // re-request a snapshot forever, so a missing row now reads as `None`.
+    // Absence is meaningful: no row means "never synced" (the lib bootstraps from a
+    // snapshot), while a row at version 0 means a collection that synced and is
+    // legitimately empty (the lib asks for patches). Collapsing both into
+    // `HashState::default()` would make an empty collection re-request a snapshot
+    // forever, so a missing row reads as `None`.
     async fn get_version(&self, name: &str) -> Result<Option<HashState>> {
         let row = scalar_optional_sql!(Vec<u8>, &self.pool, GET_VERSION, name, self.device_id)?;
         match row {

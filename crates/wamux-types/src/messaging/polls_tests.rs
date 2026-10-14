@@ -68,7 +68,7 @@ fn a_vote_with_no_options_is_a_retraction() {
     assert!(PollVoteCast::try_from(request).unwrap().options.is_empty());
 }
 
-// Each message is the one the domain answered; the secret's carries the
+// Each check refuses under its own message; the secret's carries the
 // offending length and the expected one.
 #[test]
 fn vote_refusals_keep_their_messages() {

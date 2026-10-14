@@ -1,8 +1,6 @@
-//! `outgoing_context` (#115): the tests that lived inline, moved so the loop
-//! can seal them. Same assertions; the inputs are the domain's own types. The
-//! cases that were about reading a `pb::QuoteContext` (a quote with no key, a
-//! participant overriding the key's) moved with that reading to
-//! `wamux-types` (`messaging/key_tests.rs`).
+//! `outgoing_context` (#115): the inputs are the domain's own types. Reading a
+//! `pb::QuoteContext` (a quote with no key, a participant overriding the key's)
+//! is tested in `wamux-types` (`messaging/key_tests.rs`).
 
 use wamux_types::{Jid, MessageId, OutgoingContext, QuotedRef};
 
@@ -24,8 +22,8 @@ fn all_default_inputs_yield_no_context() {
     assert!(outgoing_context(&OutgoingContext::default()).is_unset());
 }
 
-// Regression (code-review 2026-06-11): a DM quote has no participant; that
-// must relay as the absent field, never Some("") — an empty JID on the wire.
+// Regression: a DM quote has no participant; that must relay as the absent
+// field, never Some("") — an empty JID on the wire.
 #[test]
 fn dm_quote_without_participant_relays_participant_absent() {
     let context = outgoing_context(&OutgoingContext {

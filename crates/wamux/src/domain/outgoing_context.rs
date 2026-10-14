@@ -1,7 +1,7 @@
 //! Outgoing `wa::ContextInfo` shared by the text and media send paths:
 //! mentions, quote, and ephemeral expiration compose identically for every
 //! message kind, so both builders call this instead of growing private copies
-//! (code-review 2026-06-11: the media path silently dropped quote/mentions).
+//! that drift apart (a media path that drops the quote or the mentions).
 
 use wamux_types::{OutgoingContext, QuotedRef};
 use whatsapp_rust::buffa::MessageField;

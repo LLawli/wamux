@@ -9,12 +9,11 @@ import "newsletter_tallies.proto";
 
 // A channel (`@newsletter`), relayed as the server describes it.
 //
-// Issue #6: a channel's identity never crossed the contract, so a consumer that
-// materialises conversations from the event stream could only address these
-// rows by jid. Nothing here is derived or guessed — an inbound newsletter
-// message carries an empty `push_name` and a `sender` equal to the newsletter
-// jid, and history sync brings no name either, so this is the only place the
-// name exists.
+// Issue #6: a consumer that materialises conversations from the event stream
+// could otherwise address these rows only by jid. Nothing here is derived or
+// guessed — an inbound newsletter message carries an empty `push_name` and a
+// `sender` equal to the newsletter jid, and history sync brings no name either,
+// so this is the only place the name exists.
 message Newsletter {
   reserved 1;  // #121: was `string jid`
   Jid jid = 10;
@@ -103,10 +102,9 @@ message NewsletterMessage {
   // reaction is addressed by `server_id`, not by the message id. Distinct from
   // `message.key.id`, which is what edit/revoke key on.
   uint64 server_id = 2;
-  // What the server labelled the row with. Measured live: text, media, poll.
-  // A token this core has never seen relays verbatim in `type_raw` instead of
-  // being folded into a known one, which is how `poll` survived before the
-  // library named it.
+  // What the server labelled the row with. Measured live: text, media, poll. A
+  // token this core has never seen relays verbatim in `type_raw` instead of
+  // being folded into a known one.
   // #128: was `string type = 3`. UNSPECIFIED when the row has no `type`
   // attribute (not TEXT, which is what the library reads absence as, #1558).
   // Any other token is UNKNOWN, verbatim in `type_raw`.
@@ -122,10 +120,9 @@ message NewsletterMessage {
   uint64 forwards_count = 6;
   // #128: was `string poll_type = 7`. `<meta polltype=...>`: CREATION on the
   // poll itself. Relayed because it is what tells a POLL row apart from
-  // whatever else the server may label `poll`. Read from the token on any
-  // row, as it always was; UNSPECIFIED when there is no `<meta polltype>`,
-  // UNKNOWN with the token in `poll_type_raw` for one the library does not
-  // name.
+  // whatever else the server may label `poll`. Read from the token on any row;
+  // UNSPECIFIED when there is no `<meta polltype>`, UNKNOWN with the token in
+  // `poll_type_raw` for one the library does not name.
   reserved 7;
   NewsletterPollType poll_type = 13;
   string poll_type_raw = 14;

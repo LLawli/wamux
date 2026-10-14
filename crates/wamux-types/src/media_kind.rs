@@ -1,7 +1,6 @@
-//! The kinds of media the core relays (#63, #114). One closed enum where there
-//! were three: `media_transfer::MediaKind` (what SendMedia takes),
-//! `status::StatusMediaKind` (what a status can be) and the two download-only
-//! kinds of a received sticker pack (#58). Each operation accepts its own
+//! The kinds of media the core relays (#63, #114): one closed enum, including
+//! the two download-only kinds of a received sticker pack (#58). Each
+//! operation (SendMedia, PostStatusMedia, DownloadMedia) accepts its own
 //! subset through its own parser, and every wire value is written here once.
 
 use wacore::download::MediaType;

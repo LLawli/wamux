@@ -22,8 +22,8 @@ pub(crate) fn client_err(err: impl Into<anyhow::Error>) -> WamuxError {
 
 /// #101: the lib refuses a request it can never serve with typed errors that
 /// carry no server code (`PollError::InvalidPoll`, `AppStateError::
-/// InvalidRequest`). Read as opaque they became Unavailable and the edge
-/// retried a call that could never succeed. The lib's own Display is the
+/// InvalidRequest`). Read as opaque they would become Unavailable and the edge
+/// would retry a call that can never succeed. The lib's own Display is the
 /// reason; `NotConnected` and `NotLoggedIn` are transport, not the request.
 fn invalid_request_message(cause: &(dyn std::error::Error + 'static)) -> Option<String> {
     use whatsapp_rust::features::{AppStateError, PollError};
@@ -47,10 +47,11 @@ fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16
     if let Some(e) = cause.downcast_ref::<ServerErrorCode>() {
         return Some((e.code, e.text.clone()));
     }
-    // `..`: 0.7 added `error_type` (the XMPP error class) and `backoff` (a
-    // server-directed retry delay). Ignored on purpose. Retry timing is edge
-    // policy, so the core has no use for them, and surfacing them is a proto
-    // change to make deliberately, not one smuggled into the error mapper.
+    // `..`: the lib also carries `error_type` (the XMPP error class) and `backoff` (a
+    // server-directed retry delay) and, on the client `IqError`, the whole `response`
+    // stanza. Ignored on purpose. Retry timing is edge policy, so the core has no
+    // use for them, and surfacing them is a proto change to make deliberately, not
+    // one smuggled into the error mapper.
     if let Some(ClientIq::ServerError { code, text, .. }) = cause.downcast_ref::<ClientIq>() {
         return Some((*code, text.clone()));
     }
@@ -67,9 +68,9 @@ fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16
 
 /// A MEX query the server refused arrives as a GraphQL error with a code, not
 /// as an IQ error stanza. #56: a channel this account does not follow answered
-/// `code=405, message='Not Allowed'` in production, and the edge saw
-/// Unavailable ("the core is down"). A code outside `u16` is not an HTTP-style
-/// status and stays an opaque client error.
+/// `code=405, message='Not Allowed'` in production; read as opaque, that
+/// would reach the edge as Unavailable ("the core is down"). A code outside `u16`
+/// is not an HTTP-style status and stays an opaque client error.
 fn mex_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
     use whatsapp_rust::features::MexError;
     let Some(MexError::ExtensionError { code, message }) = cause.downcast_ref::<MexError>() else {
@@ -113,8 +114,8 @@ mod tests {
         std::sync::Arc::new(OwnedNodeRef::new(bytes).unwrap()).into()
     }
 
-    // Regression for edge-review-insights.md achado #3: WhatsApp auth errors
-    // must not surface as Unavailable ("core down" / 503 at the edge).
+    // Regression: WhatsApp auth errors must not surface as Unavailable ("core down" /
+    // 503 at the edge).
     #[test]
     fn iq_401_maps_to_unauthenticated() {
         let status = status_for(iq(401, "not-authorized"));

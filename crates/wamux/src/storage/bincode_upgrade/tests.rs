@@ -127,7 +127,7 @@ fn a_legacy_blob_with_trailing_bytes_is_refused() {
 }
 
 /// Every field is carried over as it was, `bootstrapped` included: the
-/// conversion no longer marks an unmarked synced collection (#36), the
+/// conversion does not mark an unmarked synced collection (#36), the
 /// library's first sync at the head does. `mac_mismatch_fatal` is a real latch.
 #[test]
 fn a_legacy_hash_state_converts_field_for_field() {

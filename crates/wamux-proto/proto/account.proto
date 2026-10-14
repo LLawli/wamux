@@ -57,9 +57,9 @@ message ConnectAccountRequest {
 
 message PairedInfo {
   Jid jid = 1;
-  // Removed: the lib's PairSuccess carries no push name at pair time; the old
-  // field relayed the business name under a misleading name. Use
-  // business_name, and take push names from PushNameUpdate events.
+  // No push name here: the lib's PairSuccess carries none at pair time, and the
+  // business name has its own field. The account's own push name comes from
+  // SelfPushNameUpdate events or ContactService.GetPushName.
   reserved 2;
   reserved "push_name";
   string business_name = 3;         // empty for personal (non-business) accounts
@@ -79,7 +79,6 @@ message PairingCodeRefreshInfo {
 }
 
 // A phone-number pair-code flow failed, so no linking will come of it (#150).
-// Before this, PairWithCode stayed open forever on a refused code.
 message PairingCodeErrorInfo {
   // UNSPECIFIED when nothing was refused: the failure was local (validation,
   // no connection) or the request got no answer.

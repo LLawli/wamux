@@ -1,7 +1,6 @@
-//! What the server says about a contact (#151, part 4 of #141): a picture,
-//! an about text, a profile, a phone number, a re-sync request, a
-//! disappearing-messages timer and a business status. Each reached the socket
-//! as RawEvent with the library's JSON.
+//! What the server says about a contact (#151): a picture, an about text, a
+//! profile, a phone number, a re-sync request, a disappearing-messages timer
+//! and a business status.
 
 use wacore::stanza::business::BusinessSubscription;
 use wacore::types::events::{

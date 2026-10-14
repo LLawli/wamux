@@ -17,14 +17,13 @@ use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_i32}
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 
-// The core does NOT rewrite recipient JIDs. Routing (e.g. sending via `@c.us`
-// vs `@s.whatsapp.net` to work around the library's PN->LID upgrade) is the
-// edge's responsibility: it passes the exact JID it wants and the core relays
-// to it verbatim. Keeping this transport-pure is a deliberate design choice.
+// The core does NOT rewrite recipient JIDs. Which JID to send to is the edge's
+// responsibility: it passes the exact JID it wants and the core relays to it
+// verbatim. Keeping this transport-pure is a deliberate design choice.
 
 /// The routing (`account`, `to`) was consumed by the service; every content
 /// field relays through `build_text_message`, so a new field touches only the
-/// builder, never this signature or its call sites (code-review 2026-06-11).
+/// builder, never this signature or its call sites.
 pub async fn send_text(
     client: &Client,
     to: Jid,
@@ -85,10 +84,9 @@ fn copy_link_preview(
     extended.title = nonempty_string(&preview.title);
     extended.description = nonempty_string(&preview.description);
     extended.jpeg_thumbnail = nonempty_bytes(&preview.jpeg_thumbnail);
-    // waproto 0.7 types this as a closed enum, so an out-of-schema number can
-    // no longer ride the wire the way prost's `Option<i32>` let it. Reject it
-    // instead of silently dropping the field: dropping would change what the
-    // edge asked to relay without telling anyone.
+    // waproto types this as a closed enum, so an out-of-schema number cannot
+    // ride the wire. Reject it instead of silently dropping the field:
+    // dropping would change what the edge asked to relay without telling anyone.
     extended.preview_type = match nonzero_i32(preview.preview_type) {
         None => None,
         Some(value) => Some(PreviewType::from_i32(value).ok_or_else(|| {
@@ -128,8 +126,8 @@ pub async fn edit_message(
         conversation: Some(new_text.to_string()),
         ..Default::default()
     };
-    // The library builds the edit container itself; since upstream #1406 it
-    // hands it back on `SendResult::message`, which is what lets the service
+    // The library builds the edit container itself and hands it back on
+    // `SendResult::message` (upstream #1406), which is what lets the service
     // echo an edit at all (#38). `message_id` is the edit stanza's own fresh
     // id, not the target's.
     client
@@ -234,13 +232,12 @@ pub async fn send_presence(
 
 /// Send a read receipt: the stanza that turns the other person's ticks blue.
 ///
-/// Issue #20: this used to call `chat_actions().mark_chat_as_read()`, whose own
-/// doc line says it is "distinct from `readMessages` IQ receipts -- this syncs
-/// state across linked devices". So `MarkRead` marked the chat read on the
-/// account's OWN devices, ignored `message_ids` and `sender`, and never put a
-/// receipt on the wire. It returned `Empty` either way, which is why nothing
-/// downstream noticed. That mutation still exists, under its own name, in
-/// `chat_actions::mark_chat_read`.
+/// Not `chat_actions().mark_chat_as_read()` (#20): its own doc line says it is
+/// "distinct from `readMessages` IQ receipts -- this syncs state across linked
+/// devices". It would mark the chat read on the account's OWN devices, ignore
+/// `message_ids` and `sender`, and never put a receipt on the wire, while still
+/// returning `Empty`, so nothing downstream would notice. That mutation has its
+/// own name, `chat_actions::mark_chat_read`.
 ///
 /// Empty `message_ids` is not an error: the library returns before building a
 /// stanza, so a caller with nothing to acknowledge costs nothing.
@@ -268,9 +265,9 @@ pub(crate) fn wa_message_key(target: &MessageTarget) -> wa::MessageKey {
     }
 }
 
-/// Takes the fields instead of the whole `SendResult`: 0.7 sealed that
-/// struct (`#[non_exhaustive]`, no public constructor), so a projection that
-/// consumed it could not be exercised from a test at all.
+/// Takes the fields instead of the whole `SendResult`: that struct is
+/// `#[non_exhaustive]` with no public constructor (whatsapp-rust 0.7), so a
+/// projection that consumed it could not be exercised from a test at all.
 pub fn send_result_to_proto(
     message_id: String,
     to: &LibJid,

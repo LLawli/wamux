@@ -187,8 +187,8 @@ pub fn refuse_own_number(own: &str, dest: &str) -> Result<(), LiveEnvError> {
 }
 
 /// One readable line for a `ConnectionStateChanged`: the state, then the typed
-/// logout or ban reason when there is one (#126 replaced the free-text `detail`).
-/// An UNKNOWN reason shows the server's code, the only thing left to read.
+/// logout or ban reason when there is one (#126). An UNKNOWN reason shows the
+/// server's code, the only thing left to read.
 pub fn connection_line_of(state: &wamux::proto::v1::ConnectionStateChanged) -> String {
     use wamux::proto::v1 as pb;
     let name = pb::ConnectionState::try_from(state.state)

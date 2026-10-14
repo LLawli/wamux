@@ -5,8 +5,7 @@
 //! (the four Signal/session/device traits the whatsapp-rust Bot consumes), and
 //! it already abstracts the engine away. `StorageEngine` is per-DEPLOYMENT: it
 //! owns the wamux-specific `accounts` table, applies migrations, and mints the
-//! per-account `Backend`. Everything Postgres-shaped above the Bot lived in
-//! `AccountRegistry` before this trait existed.
+//! per-account `Backend`.
 
 use std::sync::Arc;
 

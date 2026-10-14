@@ -11,8 +11,7 @@ use crate::error::WamuxError;
 pub struct AccountId(Uuid);
 
 /// The edge's own name for an account. Not validated: an empty one is looked
-/// up like any other and answers NotFound, as it did before this type existed
-/// (#114 changes nothing on the wire).
+/// up like any other and answers NotFound.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ExternalRef(String);
 
@@ -24,7 +23,7 @@ pub enum AccountRef {
 }
 
 impl AccountId {
-    /// `InvalidArgument("bad uuid '<v>'")`, as `resolve` answers today.
+    /// `InvalidArgument("bad uuid '<v>'")`.
     pub fn parse(value: &str) -> Result<Self, WamuxError> {
         Uuid::parse_str(value)
             .map(Self)
@@ -66,7 +65,7 @@ impl std::fmt::Display for ExternalRef {
 
 impl AccountRef {
     /// The `account` field of a request. Absent, or present with no `ref` set,
-    /// is `InvalidArgument("missing account ref")`, as `resolve` answers today.
+    /// is `InvalidArgument("missing account ref")`.
     pub fn from_proto(account: Option<&pb::AccountRef>) -> Result<Self, WamuxError> {
         match account.and_then(|a| a.r#ref.as_ref()) {
             Some(pb::account_ref::Ref::Uuid(uuid)) => AccountId::parse(uuid).map(Self::Id),

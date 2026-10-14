@@ -1,6 +1,5 @@
-//! The account's sticker mutations (#148, part 1 of #141): a sticker favorited,
-//! unfavorited or removed from the recent list on a linked device. They
-//! reached the socket as RawEvent with the library's JSON.
+//! The account's sticker mutations (#148): a sticker favorited, unfavorited or
+//! removed from the recent list on a linked device.
 
 use wacore::types::events::{FavoriteStickerUpdate, RemoveRecentStickerUpdate};
 

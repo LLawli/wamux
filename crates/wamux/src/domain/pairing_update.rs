@@ -1,7 +1,6 @@
-//! The pairing events past QR, code, success and error (#150, part 3 of
-//! #141): a pair code withdrawn, a pair code refused and the QR refs used up.
-//! They reached the socket as RawEvent, and never reached the PairWithQr and
-//! PairWithCode streams at all.
+//! The pairing events past QR, code, success and error (#150): a pair code
+//! withdrawn, a pair code refused and the QR refs used up. They reach the
+//! PairWithQr and PairWithCode streams as `PairingUpdate` cases.
 
 use wacore::pair_code::PairCodeRejection;
 use wacore::types::events::{PairingCodeError, PairingCodeRefresh, PairingQrCodesExhausted};

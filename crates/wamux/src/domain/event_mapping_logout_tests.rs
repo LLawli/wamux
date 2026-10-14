@@ -1,6 +1,5 @@
 //! #134: a forced logout carries the server's own copy (header, subtext and the
 //! locale it is written in) and whether the server refused the connection.
-//! Both reached the core and were dropped; #126 had left the copy for #74.
 
 use super::*;
 use wacore::types::events::{ConnectFailureReason, LogoutMessage};

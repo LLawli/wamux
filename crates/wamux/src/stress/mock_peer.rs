@@ -1,8 +1,8 @@
 //! A WhatsApp peer the socket suites can send to and read back (#71).
 //!
-//! Before this, every encrypted send through the mock failed: the client asks
-//! the server for the recipient's devices and prekey bundle, the mock had none
-//! to give, and no `<message>` ever left. A `MockPeer` is the other end: a
+//! Without a peer, every encrypted send through the mock fails: the client asks
+//! the server for the recipient's devices and prekey bundle, the mock has none
+//! to give, and no `<message>` ever leaves. A `MockPeer` is the other end: a
 //! `whatsapp_rust::Client` over an in-memory store that never connects, so it
 //! has a real Signal identity and signed prekey. `MockWaServer::serve_peer`
 //! hands its bundle to the client under test, and the test opens what the

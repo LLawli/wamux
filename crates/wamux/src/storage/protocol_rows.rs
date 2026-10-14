@@ -24,8 +24,8 @@ pub(crate) fn lid_entry(row: LidMappingRow) -> LidPnMappingEntry {
     }
 }
 
-/// `record.devices` is `Box<[DeviceInfo]>` on main; a slice serializes to the
-/// same JSON array a `Vec` did, so the stored blob is unchanged.
+/// `record.devices` is `Box<[DeviceInfo]>`; a slice serializes to the same JSON
+/// array as a `Vec`, which is what `device_list_record` decodes it into.
 pub(crate) fn devices_json(record: &DeviceListRecord) -> Result<String> {
     serde_json::to_string(&*record.devices).map_err(|e| StoreError::Serialization(Box::new(e)))
 }

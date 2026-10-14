@@ -3,10 +3,9 @@
 //!
 //! Each type converts from its generated `pb::*` struct once, at the service
 //! boundary, so `domain/` never sees the wire schema. Routing fields (`account`,
-//! `to`, `chat`) are not part of these: the service resolves them first, in the
-//! order it always has. Every check a conversion makes is one the domain used
-//! to make, with the same message, in the same order, plus the ones decided in
-//! #115 (a jid that used to relay unparsed now parses; an empty id is refused).
+//! `to`, `chat`) are not part of these: the service resolves them first. Every
+//! check a conversion makes has its own message and a fixed order, and a jid is
+//! parsed and an empty id refused (#115).
 
 pub mod key;
 pub mod media;

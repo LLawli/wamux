@@ -1,4 +1,4 @@
-//! The business-hours enums as the contract's enums (#132, part 1 of #74).
+//! The business-hours enums as the contract's enums (#132).
 //!
 //! The library keeps a token it does not name in an `Other(String)` fallback,
 //! so each function returns UNKNOWN plus that token, and an empty raw for a

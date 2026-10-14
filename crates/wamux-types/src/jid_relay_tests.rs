@@ -43,8 +43,8 @@ fn a_lib_jid_is_the_same_rule_as_relay_jid() {
 }
 
 // The library prints a jid with no user as its server, so a library jid never
-// crosses unset: replacing a `Some(pb::Jid { .. })` literal with the helper
-// changes nothing on the wire.
+// crosses unset: the helper and a `Some(pb::Jid { .. })` literal agree on the
+// wire.
 #[test]
 fn a_lib_jid_with_an_empty_user_relays_its_server() {
     assert_eq!(relay_lib_jid(&LibJid::default()), wire("s.whatsapp.net"));

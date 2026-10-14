@@ -1,6 +1,6 @@
-//! Labels (chat lists, in the consumer app) changed on a linked device (#149,
-//! part 2 of #141). The three library events reached the socket as RawEvent
-//! with the library's JSON.
+//! Labels (chat lists, in the consumer app) changed on a linked device (#149).
+//! The three library events (edit, chat association, message association) map
+//! to a `LabelUpdate`.
 
 use wacore::types::events::{
     LabelAssociationUpdate, LabelEditUpdate, MessageLabelAssociationUpdate,

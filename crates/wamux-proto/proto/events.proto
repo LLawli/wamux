@@ -323,7 +323,7 @@ message PresenceUpdate {
   reserved 1, 5;  // #122: were `string jid` and `string chat`
   Jid jid = 6;
   // Present only on real presence. A chat state does not measure whether the
-  // contact is online, so it carries no value here — it used to hardcode true.
+  // contact is online, so it carries no value here.
   optional bool online = 2;
   int64 last_seen = 3;
   // #126: was `string chat_state = 4`. UNSPECIFIED on real presence, which is
@@ -416,7 +416,7 @@ message GroupUpdate {
     Empty reports = 57;
     Empty allow_non_admin_sub_group_creation = 58;
     Empty not_allow_non_admin_sub_group_creation = 59;
-    // The library keeps these two nodes unparsed, so only the fact crosses.
+    // The library keeps these two nodes unparsed, so they cross as the raw stanza (#146).
     GroupSubGroupSuggestionCreated created_sub_group_suggestion = 60;
     GroupSubGroupSuggestionsRevoked revoked_sub_group_suggestions = 61;
     GroupChangeNumber change_number = 62;
@@ -446,15 +446,13 @@ message ContactUpdate {
   // Unset when `removed` is true: a removal carries no action.
   ContactAction action = 8;
   // #153: true when the contact was deleted on a linked device (the syncd
-  // `Remove` of the same `contact` mutation). It reached the socket as the
-  // `ContactRemoved` RawEvent.
+  // `Remove` of the same `contact` mutation).
   bool removed = 9;
 }
 
 // This account's own push name changed (#153), from an app-state
 // `setting_pushName` mutation, a history sync or an account_sync notification.
-// It reached the socket as the `SelfPushNameUpdated` RawEvent. Not the retired
-// `PushNameUpdate`, which named a contact and is never emitted.
+// Not the retired `PushNameUpdate`, which named a contact and is never emitted.
 message SelfPushNameUpdate {
   string old_name = 1;  // empty when the account had none yet (first sync after pairing)
   string new_name = 2;
@@ -505,7 +503,7 @@ message AppStateUpdate {
 }
 
 // A sticker mutation on a linked device (#148): favorited, unfavorited, or
-// removed from the recent list. It reached the socket as RawEvent.
+// removed from the recent list.
 //
 // Not an AppStateUpdate: stickers belong to the account, not to a chat, and
 // the mutation carries no time of its own beside `timestamp`.
@@ -521,8 +519,7 @@ message StickerUpdate {
 }
 
 // The account's favorite chats changed on a linked device (the `favorites`
-// syncd mutation, upstream #1544). Issue #48: it reached the socket as an
-// untyped RawEvent.
+// syncd mutation, upstream #1544, issue #48).
 //
 // Not an AppStateUpdate: favorites is ONE list for the whole account, and each
 // event carries the whole of it. It REPLACES whatever the consumer held before;
@@ -541,8 +538,7 @@ message FavoritesChanged {
 }
 
 // A label (a chat list, in the consumer app) changed on a linked device
-// (#149). The three library events reached the socket as RawEvent. The label
-// belongs to the account, so it is not an AppStateUpdate.
+// (#149). The label belongs to the account, so it is not an AppStateUpdate.
 message LabelUpdate {
   string label_id = 1;      // the mutation's index key, not a jid
   int64 timestamp = 2;      // mutation time (ms)
@@ -556,7 +552,7 @@ message LabelUpdate {
 
 // A quick reply was created, edited or deleted on a linked device (#149).
 // Deleting is the same mutation with `deleted` true and empty texts, not a
-// removal, so check the flag. It reached the socket as RawEvent.
+// removal, so check the flag.
 message QuickReplyUpdate {
   string id = 1;            // the mutation's index key
   int64 timestamp = 2;      // mutation time (ms)
@@ -570,7 +566,7 @@ message QuickReplyUpdate {
 }
 
 // An account-wide setting changed on a linked device (#149). One event for
-// every setting, each its own case. They reached the socket as RawEvent.
+// every setting, each its own case.
 message AccountSettingUpdate {
   int64 timestamp = 1;                    // mutation time (ms)
   optional int64 action_timestamp = 2;    // the mutation's own time (ms); unset when it carried none
@@ -582,8 +578,8 @@ message AccountSettingUpdate {
 }
 
 // A channel's tallies, pushed while this account is subscribed to it
-// (NewsletterService.SubscribeNewsletterLiveUpdates, upstream #1554). Issue
-// #26: it reached the socket as an untyped RawEvent carrying only reactions.
+// (NewsletterService.SubscribeNewsletterLiveUpdates, upstream #1554, issue
+// #26).
 //
 // Measured live 2026-09-25 on the WhatsApp channel: the first push after
 // subscribing held the 10 latest messages, the next one (30 s later) only the
@@ -610,8 +606,8 @@ message NewsletterLiveUpdateMessage {
 // Inbound `<call>` signaling stanza (lib `IncomingCall`). The core relays the
 // primitive; the edge composes any ring/answer policy. `call_id` is the
 // CallAction's id, distinct from `stanza_id`. #135: every field of the
-// library's struct, and the action as a oneof (payloads in call.proto); `raw`
-// was the library's JSON and `action` the #126 enum the oneof case now names.
+// library's struct, and the action as a oneof (payloads in call.proto), whose
+// case names the action.
 message CallEvent {
   reserved 1;  // #122: was `string from`
   reserved 3, 4, 6, 7;
@@ -684,7 +680,7 @@ message RawEvent {
 // happen in N seconds" rule the core does not own.
 //
 // `error` is the nack code (e.g. "479") when the server REJECTED the stanza;
-// empty on a plain ack. Until now a nack was only visible as a library log line.
+// empty on a plain ack.
 message ServerAckEvent {
   string id = 1;
   // Stanza class: "message", "receipt", "notification", "call", ... Empty when
@@ -718,26 +714,24 @@ message OfflineSyncPreview {
 
 // How many the drain actually delivered.
 //
-// Issue #11: this is dispatched only when the drain finishes, so a reconnect
-// mid-resume means it never arrives and the consumer sees a preview with
-// nothing after it.
+// Issue #11: this is dispatched only when the drain finishes. A resume whose
+// connection ends mid-drain never gets one; OfflineSyncInterrupted arrives in
+// its place.
 //
-// CORRECTION (2026-09-02, upstream oxidezap/whatsapp-rust#1380). This comment
-// used to call that shape "an abandoned backlog". It never was one, on any
-// version. Offline stanzas are only confirmed by the aggregate receipt flush
-// that a COMPLETED drain performs, and teardown drops that buffer, so nothing
-// in an interrupted drain was ever acked and the server redelivers all of it on
-// the next connection. A missing completion means "not caught up yet", never
-// "lost" -- the earlier reading was wrong about the risk, not just the wording.
+// A missing completion means "not caught up yet", never "lost" (upstream
+// oxidezap/whatsapp-rust#1380). Offline stanzas are only confirmed by the
+// aggregate receipt flush that a COMPLETED drain performs, and teardown drops
+// that buffer, so nothing in an interrupted drain is acked and the server
+// redelivers all of it on the next connection.
 //
-// Since #1380 (pinned by #30) the library also stops answering with silence:
+// The library (upstream #1380, pinned by #30) does not answer with silence:
 // an armed resume whose connection ends emits OfflineSyncInterrupted, and the
 // client holds WA Web's own 60s stanza-inactivity timer, so a drain that stalls
 // on a LIVE connection finishes itself.
 //
-// What did not change: the core puts no deadline on the wait. How long a
-// missing completion may stay missing is edge policy, same as a missing ack.
-// Upstream agrees on where that timer belongs, which is inside the client.
+// The core puts no deadline on the wait. How long a missing completion may
+// stay missing is edge policy, same as a missing ack. Upstream agrees on where
+// that timer belongs, which is inside the client.
 message OfflineSyncCompleted {
   int32 count = 1;
 }
@@ -757,10 +751,9 @@ message OfflineSyncInterrupted {
   int32 delivered = 2;  // offline stanzas processed before the connection ended
 }
 
-// The connection's lifecycle, past what ConnectionStateChanged says (#150,
-// part 3 of #141). None of these changes the account's state on its own:
-// a terminal end still arrives as ConnectionStateChanged. They reached the
-// socket as RawEvent.
+// The connection's lifecycle, past what ConnectionStateChanged says (#150).
+// None of these changes the account's state on its own: a terminal end still
+// arrives as ConnectionStateChanged.
 message ConnectionNotice {
   oneof notice {
     ConnectFailureInfo connect_failure = 10;
@@ -820,9 +813,8 @@ message ClientBuildVersion {
   uint32 tertiary = 3;
 }
 
-// What the server says about a contact (#151, part 4 of #141): each from a
-// `<notification>` the library parsed. They reached the socket as RawEvent.
-// Times are ms; the server sends seconds.
+// What the server says about a contact (#151): each from a `<notification>`
+// the library parsed. Times are ms; the server sends seconds.
 message ContactNotice {
   oneof notice {
     PictureChange picture = 10;
@@ -971,9 +963,9 @@ message MexNotification {
 }
 
 message EventEnvelope {
-  // Stays a string (#122, decided 2026-10-05): it is not a jid, and no other
-  // uuid in the contract is a message (`AccountRef.uuid`, `Account.uuid`), so a
-  // wrapper here would be the one uuid shaped differently from the rest.
+  // Stays a string (#122): it is not a jid, and no other uuid in the contract
+  // is a message (`AccountRef.uuid`, `Account.uuid`), so a wrapper here would
+  // be the one uuid shaped differently from the rest.
   string account_uuid = 1;
   int64 monotonic_seq = 2;
   int64 ts_unix_ms = 3;

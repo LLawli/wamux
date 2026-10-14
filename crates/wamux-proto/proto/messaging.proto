@@ -453,9 +453,7 @@ service MessagingService {
   rpc FetchMessageHistory(FetchMessageHistoryRequest) returns (FetchMessageHistoryResponse);
   rpc SendPresence(SendPresenceRequest) returns (Empty);
   // Send a read receipt for `message_ids` from `sender`: the thing that turns
-  // the other person's ticks blue. BREAKING as of issue #20 -- this used to be
-  // the app-state mutation below, ignoring both of those fields, so it never
-  // put a receipt on the wire and nothing said so.
+  // the other person's ticks blue (#20).
   //
   // One WhatsApp operation per RPC. The official app does this AND syncs its
   // own devices, but composing the two is the edge's call: bundling them here
@@ -471,8 +469,8 @@ service MessagingService {
   rpc MarkRead(MarkReadRequest) returns (Empty);
 
   // Mark the chat read on THIS account's own linked devices. No receipt, and
-  // nobody else sees it. This is what MarkRead did before #20; it kept the name
-  // and lost the behaviour, so it gets a name of its own here.
+  // nobody else sees it. Not MarkRead, which sends the receipt (#20): a
+  // different operation gets a name of its own.
   rpc MarkChatRead(MarkReadRequest) returns (Empty);
 
   // Mark a chat unread. Separate from MarkChatRead (which keeps its proto3

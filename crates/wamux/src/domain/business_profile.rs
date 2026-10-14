@@ -1,6 +1,6 @@
 //! A business profile as the library parses it, projected onto the contract's
-//! typed `BusinessProfile` (#132, part 1 of #74). It used to cross as the
-//! library's `serde` JSON, a second schema the edge had to follow.
+//! typed `BusinessProfile` (#132), so the edge follows one schema, the
+//! contract's, and not the library's `serde` JSON.
 
 use wacore::iq::business::{BusinessCategory, BusinessHours, BusinessHoursConfig, BusinessProfile};
 use wamux_types::business_enums::{business_hour_mode_of, day_of_week_of};

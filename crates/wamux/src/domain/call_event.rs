@@ -1,8 +1,7 @@
 //! An inbound `<call>` (whatsapp-rust `IncomingCall`) as the typed `CallEvent`
-//! (#135, part 4 of #74). It used to cross as the library's JSON in `raw`.
-//! Every public field crosses, including the three the library keeps out of
-//! its own JSON (a participant's `pn`, a device's capability blob, a rekey's
-//! ciphertext): the relay does not pick. One concrete function per library
+//! (#135). Every public field crosses, including the three the library keeps
+//! out of its own JSON (a participant's `pn`, a device's capability blob, a
+//! rekey's ciphertext): the relay does not pick. One concrete function per library
 //! struct, no generic.
 
 use wacore::types::call::{CallAction, CallAudioCodec, IncomingCall, VideoState};

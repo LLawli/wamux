@@ -1,6 +1,6 @@
 //! Atomic tc-token writers for `ProtocolStore` (#93). Each is ONE statement and no
 //! transaction: the trait requires them atomic against `put_tc_token`, and the
-//! default read-modify-write lost concurrent writers (history sync vs send path).
+//! default read-modify-write loses concurrent writers (history sync vs send path).
 //! Split from `protocol_store.rs` to keep that file under the 500-line cap.
 
 use wacore::store::error::Result;

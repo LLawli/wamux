@@ -1,5 +1,5 @@
 //! A contact sync action, projected onto the contract's typed `ContactUpdate`
-//! (#133, part 2 of #74). It used to cross as the library's `serde` JSON.
+//! (#133).
 
 use wacore::types::events::{ContactRemoved, ContactUpdate};
 use wamux_types::{relay_jid, relay_lib_jid};

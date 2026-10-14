@@ -50,7 +50,7 @@ use crate::proto::v1 as pb;
 /// Map an event to zero or more oneof payloads.
 ///
 /// Zero for events we intentionally drop (raw nodes, internal notifications).
-/// More than one only for `Event::Messages`, which whatsapp-rust 0.7 delivers
+/// More than one only for `Event::Messages`, which whatsapp-rust delivers
 /// as a batch: the wire contract stays one `InboundMessage` per envelope, so
 /// the batch is fanned out here rather than leaking its shape to the edge.
 pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
@@ -61,14 +61,12 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::LoggedOut(l) => one(logged_out(l)),
         Event::TemporaryBan(b) => one(temporary_ban(b)),
 
-        // 0.7 sealed every payload into its own struct, so these are tuple
-        // variants now instead of struct variants with a `code` field.
+        // Each pairing payload is its own struct in the library, hence `q.code`.
         Event::PairingQrCode(q) => one(pairing(pb::pairing_update::Event::QrCode(q.code.clone()))),
         Event::PairingCode(c) => one(pairing(pb::pairing_update::Event::PairCode(c.code.clone()))),
-        // PairSuccess has NO push name (push names arrive later via
-        // PushNameUpdate); the proto field is named for what the lib actually
-        // hands over (code-review 2026-06-11: it used to masquerade as
-        // push_name, empty for every personal account).
+        // PairSuccess has NO push name (the account's own arrives later as
+        // SelfPushNameUpdate); the proto field is named for what the lib
+        // actually hands over.
         Event::PairSuccess(p) => one(pairing(pb::pairing_update::Event::Paired(pb::PairedInfo {
             jid: relay_lib_jid(&p.id),
             business_name: p.business_name.clone(),
@@ -80,7 +78,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
                 message: p.error.clone(),
             },
         ))),
-        // #150 (part 3 of #141): these three used to fall into RawEvent.
+        // Pairing lifecycle (#150).
         Event::PairingCodeRefresh(r) => one(pairing(pairing_code_refresh_of(r))),
         Event::PairingCodeError(e) => one(pairing(pairing_code_error_of(e))),
         Event::PairingQrCodesExhausted(x) => one(pairing(pairing_qr_codes_exhausted_of(x))),
@@ -102,8 +100,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
 
         // The two arms fill disjoint halves of PresenceUpdate: presence answers
         // online/last_seen, a chat state answers chat_state/chat. Each leaves
-        // the other half empty instead of inventing one (issue #24) — `online`
-        // used to be a hardcoded true on every chat state.
+        // the other half empty instead of inventing one (issue #24).
         Event::Presence(p) => one(Pb::Presence(pb::PresenceUpdate {
             jid: relay_lib_jid(&p.from),
             online: Some(!p.unavailable),
@@ -113,7 +110,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             chat: None,
         })),
         // `source.chat` is what tells a group "composing" from a DM one; both
-        // carry the same sender, so dropping it left the edge unable to draw the
+        // carry the same sender, so without it the edge cannot draw the
         // indicator in the conversation it belongs to (issue #24).
         Event::ChatPresence(c) => one(Pb::Presence(pb::PresenceUpdate {
             jid: relay_lib_jid(&c.source.sender),
@@ -125,12 +122,11 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
 
         // #133: typed, one oneof case per library action.
         Event::GroupUpdate(g) => one(Pb::Group(group_update_of(g))),
-        // main retired `Event::PushNameUpdate` (upstream #1310, #30): it never
-        // fired, and 0.7.0 never constructed it either, so the wire never
-        // carried one. `pb::PushNameUpdate` stays in the proto so the contract
-        // does not break; nothing emits it, exactly as before the bump.
+        // The library retired `Event::PushNameUpdate` (upstream #1310, #30): it
+        // never fired. `pb::PushNameUpdate` stays in the proto so the contract
+        // does not break; nothing emits it.
         Event::ContactUpdate(c) => one(Pb::Contact(contact_update_of(c))),
-        // #153 (part 2b of #141): these three used to fall into RawEvent.
+        // Contact removal, the own push name and the call log (#153).
         Event::ContactRemoved(c) => one(Pb::Contact(contact_removed_of(c))),
         Event::SelfPushNameUpdated(u) => one(Pb::SelfPushName(self_push_name_update_of(u))),
         Event::CallLogSync(c) => one(Pb::CallLog(call_log_update_of(c))),
@@ -141,21 +137,21 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::HistorySync(h) => one(history_sync(h)),
 
         // App-state (companion-sync) chat mutations, one concrete function per
-        // library struct (#134: was one generic helper and JSON).
+        // library struct (#134).
         Event::ArchiveUpdate(s) => one(Pb::AppState(archive_update_of(s))),
         Event::PinUpdate(s) => one(Pb::AppState(pin_update_of(s))),
         Event::MuteUpdate(s) => one(Pb::AppState(mute_update_of(s))),
         Event::StarUpdate(s) => one(Pb::AppState(star_update_of(s))),
         Event::MarkChatAsReadUpdate(s) => one(Pb::AppState(mark_read_update_of(s))),
         Event::DeleteChatUpdate(s) => one(Pb::AppState(delete_chat_update_of(s))),
-        // #148 (part 1 of #141): these six used to fall into RawEvent.
+        // Chat lock and clear, message delete, status mute and stickers (#148).
         Event::LockChatUpdate(s) => one(Pb::AppState(lock_chat_update_of(s))),
         Event::ClearChatUpdate(s) => one(Pb::AppState(clear_chat_update_of(s))),
         Event::DeleteMessageForMeUpdate(s) => one(Pb::AppState(delete_message_for_me_update_of(s))),
         Event::UserStatusMuteUpdate(s) => one(Pb::AppState(user_status_mute_update_of(s))),
         Event::FavoriteStickerUpdate(s) => one(Pb::Sticker(favorite_sticker_update_of(s))),
         Event::RemoveRecentStickerUpdate(s) => one(Pb::Sticker(remove_recent_sticker_update_of(s))),
-        // #149 (part 2 of #141): these six used to fall into RawEvent.
+        // Labels, quick replies and account settings (#149).
         Event::LabelEditUpdate(u) => one(Pb::Label(label_edit_update_of(u))),
         Event::LabelAssociationUpdate(u) => one(Pb::Label(label_association_update_of(u))),
         Event::MessageLabelAssociationUpdate(u) => {
@@ -167,16 +163,15 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),
-        // Issue #26 (upstream #1554): a subscribed channel's tallies. It used
-        // to reach the socket as a RawEvent carrying reactions only.
+        // Issue #26 (upstream #1554): a subscribed channel's tallies.
         Event::NewsletterLiveUpdate(u) => one(Pb::NewsletterLiveUpdate(newsletter_live_update(u))),
 
         // Inbound call signaling. The core relays the primitive; ring/answer
-        // policy is the edge's. Typed since #135 (it was the library's JSON).
+        // policy is the edge's. Typed (#135).
         Event::IncomingCall(c) => one(Pb::Call(call_event_of(c))),
         // #151: an offer replayed from the offline queue, as a `missed` action.
         Event::MissedCall(m) => one(Pb::Call(missed_call_event_of(m))),
-        // #151 (part 4 of #141): server notifications that used to fall into RawEvent.
+        // Server notifications about a contact, a device or a MEX update (#151).
         Event::PictureUpdate(u) => one(Pb::ContactNotice(picture_notice_of(u))),
         Event::UserAboutUpdate(u) => one(Pb::ContactNotice(about_notice_of(u))),
         Event::ContactUpdated(u) => one(Pb::ContactNotice(profile_notice_of(u))),
@@ -188,11 +183,11 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::IdentityChange(c) => one(Pb::DeviceNotice(identity_notice_of(c))),
         Event::MexNotification(n) => one(Pb::Mex(mex_notification_of(n))),
 
-        // Issue #4: the server's own verdict on an outgoing stanza, new in
-        // whatsapp-rust 0.7. `SendResult` only says the library accepted the
-        // message; this says whether the server did. Relayed verbatim so the
-        // edge can correlate it with the send it made, and decide for itself
-        // how long a missing ack is allowed to stay missing.
+        // Issue #4: the server's own verdict on an outgoing stanza.
+        // `SendResult` only says the library accepted the message; this says
+        // whether the server did. Relayed verbatim so the edge can correlate it
+        // with the send it made, and decide for itself how long a missing ack
+        // is allowed to stay missing.
         Event::ServerAck(a) => one(Pb::ServerAck(pb::ServerAckEvent {
             id: a.id.clone(),
             class: a.class.clone().unwrap_or_default(),
@@ -220,7 +215,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::OfflineSyncCompleted(c) => one(Pb::OfflineSyncCompleted(pb::OfflineSyncCompleted {
             count: c.count,
         })),
-        // #150 (part 3 of #141): the connection's lifecycle, past its state.
+        // The connection's lifecycle, past its state (#150).
         Event::ConnectFailure(f) => one(Pb::ConnectionNotice(connect_failure_notice_of(f))),
         Event::ClientOutdated(o) => one(Pb::ConnectionNotice(client_outdated_notice_of(o))),
         Event::StreamError(e) => one(Pb::ConnectionNotice(stream_error_notice_of(e))),
@@ -243,10 +238,10 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // resync a dirty bit asks for, so the socket has nothing to add.
         Event::Notification(_) | Event::RawNode(_) | Event::DirtyState(_) => Vec::new(),
 
-        // Forward-compat catch-all: never silently lose an event type. 0.7 also
-        // made `Event` #[non_exhaustive], so this arm is now load-bearing for a
-        // variant the lib adds in a minor release, not only for the ones we
-        // chose not to type.
+        // Forward-compat catch-all: never silently lose an event type. `Event`
+        // is #[non_exhaustive], so this arm is load-bearing for a variant the
+        // lib adds in a minor release, not only for the ones we chose not to
+        // type.
         other => one(Pb::Raw(raw_event_of(other))),
     }
 }
@@ -267,8 +262,8 @@ fn one(event: pb::event_envelope::Event) -> Vec<pb::event_envelope::Event> {
     vec![event]
 }
 
-/// Backfill chunk. 0.7 keeps the payload zlib-compressed behind a lazy handle
-/// (`raw_bytes()` is gone), so inflating is now fallible. A failed inflate
+/// Backfill chunk. The library keeps the payload zlib-compressed behind a lazy
+/// handle, so inflating is fallible. A failed inflate
 /// relays as the raw catch-all carrying the reason: emitting a
 /// `HistorySyncEvent` with empty `raw` would tell the edge "nothing in this
 /// chunk", which is a different and false statement.
@@ -419,7 +414,7 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         chat: relay_jid(chat.clone()),
         id: info.id.to_string(),
         from_me: info.source.is_from_me,
-        // The inbound participant is the sender even in a DM; kept as it was (#120).
+        // The inbound participant is the sender even in a DM (#120).
         participant: relay_jid(sender.clone()),
     };
 
@@ -428,13 +423,12 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         chat: relay_jid(chat.clone()),
         sender: relay_jid(sender),
         timestamp: info.timestamp.timestamp_millis(),
-        // main made this a `CompactString` (#30): a name usually short enough
-        // to live inline rather than heap-allocated. The wire contract still
-        // wants an owned `String`.
+        // The library's `push_name` is a `CompactString` (#30); the wire
+        // contract wants an owned `String`.
         push_name: info.push_name.to_string(),
         // The parser already put the stanza's other-namespace jids here
-        // (sender_pn/participant_pn/participant_lid). Dropping them forced the
-        // edge to poll for an identity the event itself carried (issue #1);
+        // (sender_pn/participant_pn/participant_lid). Dropping them would force
+        // the edge to poll for an identity the event itself carries (issue #1);
         // relaying them is verbatim, no lookup and no guess.
         // Unset when the stanza carried no alt jid, instead of an empty string
         // a consumer would have to know to ignore (#122).
@@ -498,7 +492,7 @@ pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, c
     // An inbound edit or revoke surfaces the typed flags the proto reserves
     // (the edge otherwise reads is_edit/is_delete hard-false and never the new
     // text or target). Relay-pure: only reprojects what raw_message already
-    // carries (E2E triage 2026-06-16).
+    // carries.
     if let Some(pm) = effective_protocol_message(msg) {
         project_protocol_message(out, pm);
     }
@@ -582,7 +576,7 @@ fn message_text(m: &wa::Message) -> Option<String> {
 /// `protocol_message`, but an edit is wrapped one level deeper, in
 /// `edited_message`(FutureProofMessage)`.message.protocol_message` — exactly the
 /// container the lib's `Client::edit_message` builds (client.rs:3556). Checking
-/// only the top level surfaced revokes but silently dropped every edit. The
+/// only the top level surfaces revokes but silently drops every edit. The
 /// top-level form wins when both somehow exist.
 fn effective_protocol_message(msg: &wa::Message) -> Option<&wa::message::ProtocolMessage> {
     if let Some(pm) = msg.protocol_message.as_option() {
@@ -602,8 +596,8 @@ fn effective_protocol_message(msg: &wa::Message) -> Option<&wa::message::Protoco
 /// `edited_message`. Only Revoke/MessageEdit are projected; any other protocol
 /// type is left untouched (it already rides in raw_message). Reading `r#type`
 /// as an explicit `Some` avoids treating an absent type as Revoke (whose wire
-/// value is the 0-default). waproto 0.7 already hands the field over typed, so
-/// there is no `try_from` left to do.
+/// value is the 0-default). waproto hands the field over typed, so there is
+/// no `try_from` to do.
 fn project_protocol_message(out: &mut pb::InboundMessage, pm: &wa::message::ProtocolMessage) {
     use wa::message::protocol_message::Type;
     match pm.r#type {
@@ -677,7 +671,7 @@ fn extract_media(msg: &wa::Message) -> Option<(pb::MediaDescriptor, String)> {
     if let Some(m) = msg.sticker_message.as_option() {
         return Some((media_descriptor!(m, MediaKind::Sticker), String::new()));
     }
-    // Issue #58: a pack used to reach the edge with no descriptor at all.
+    // A pack always carries its descriptor (#58): the edge needs it to fetch the media.
     if let Some(m) = msg.sticker_pack_message.as_option() {
         return Some((sticker_packs::pack_descriptor(m), caption_of(&m.caption)));
     }

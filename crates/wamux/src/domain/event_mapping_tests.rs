@@ -58,7 +58,7 @@ fn sample_source() -> MessageSource {
 fn sample_info() -> MessageInfo {
     MessageInfo {
         source: sample_source(),
-        // CompactString on main (#30).
+        // A CompactString in the library (#30).
         id: "WAMID-1".into(),
         push_name: "Alice".into(),
         // Fixed non-epoch instant: epoch (the Default) would hide a broken
@@ -68,7 +68,7 @@ fn sample_info() -> MessageInfo {
     }
 }
 
-/// 0.7 delivers inbound messages in batches, so `map_event` returns a list.
+/// The library delivers inbound messages in batches, so `map_event` returns a list.
 /// Every event these tests build maps to exactly one payload; asserting that
 /// here keeps each test's own assertion about the payload, not about arity.
 fn map_one(event: &Event) -> Option<PbEvent> {
@@ -82,7 +82,7 @@ fn map_one(event: &Event) -> Option<PbEvent> {
 }
 
 /// One inbound message wrapped in the batch-of-one the lib dispatches for live
-/// traffic. Both payload structs are sealed in 0.7, hence the builders.
+/// traffic. Both payload structs are `#[non_exhaustive]`, hence the builders.
 fn message_event(msg: wa::Message, info: MessageInfo) -> Event {
     Event::Messages(
         MessageBatch::builder()
@@ -105,7 +105,7 @@ pub(super) fn mapped_inbound(msg: wa::Message) -> pb::InboundMessage {
 }
 
 /// pub(super): the media-descriptor suite lives in a sibling test file
-/// (event_mapping_media_tests.rs) to keep both under the 500-line rule.
+/// (event_mapping_media_tests.rs), split out because this file is past the 500-line rule.
 pub(super) fn mapped_media(msg: wa::Message) -> (pb::MediaDescriptor, String) {
     let out = mapped_inbound(msg);
     let media = out
@@ -352,8 +352,8 @@ fn maps_conversation_text_message_with_key_and_metadata() {
 }
 
 // REGRESSION (issue #1): a `@lid` sender is unidentifiable on its own, and the
-// stanza already carries the phone side in `sender_alt`. The core dropped it,
-// forcing the edge to poll for an identity the event was holding.
+// stanza already carries the phone side in `sender_alt`. Dropping it forces the
+// edge to poll for an identity the event was holding.
 #[test]
 fn relays_the_stanza_alt_jids_of_a_lid_sender() {
     let source = MessageSource {
@@ -454,10 +454,10 @@ fn maps_reaction_message_with_target_key() {
     assert_eq!(target.participant, wire(SENDER_JID));
 }
 
-// E2E triage 2026-06-16: an inbound revoke arrives as an ordinary message
-// carrying protocol_message{type:Revoke, key}. The mapper must flag is_delete
-// and carry the revoked message's key in protocol_target (the event's own key
-// is the revoke stanza id, not the target).
+// An inbound revoke arrives as an ordinary message carrying
+// protocol_message{type:Revoke, key}. The mapper must flag is_delete and carry
+// the revoked message's key in protocol_target (the event's own key is the
+// revoke stanza id, not the target).
 #[test]
 fn maps_inbound_revoke_to_is_delete_with_target() {
     let out = mapped_inbound(wa::Message {
@@ -484,7 +484,7 @@ fn maps_inbound_revoke_to_is_delete_with_target() {
     assert_eq!(target.participant, wire(SENDER_JID));
 }
 
-// E2E triage 2026-06-16: a legacy inbound edit carries the new text in
+// A legacy inbound edit carries the new text in
 // protocol_message.edited_message; the mapper must flag is_edit, surface that
 // new text, and carry the edited message's key in protocol_target.
 #[test]
@@ -513,11 +513,12 @@ fn maps_inbound_edit_to_is_edit_with_new_text_and_target() {
     assert_eq!(target.id, "EDITED-MSG-1");
 }
 
-// E2E triage re-run 2026-06-16: the REAL inbound edit shape the lib's
-// Client::edit_message builds wraps the protocol_message one level deeper, in
+// The REAL inbound edit shape the lib's Client::edit_message builds wraps the
+// protocol_message one level deeper, in
 // edited_message(FutureProofMessage).message.protocol_message. The unwrapped
-// test above missed this exact shape (revoke worked, edit silently didn't); the
-// mapper must unwrap edited_message before projecting.
+// test above does not cover this shape, and a mapper that reads only the top
+// level still sees revokes but silently drops every edit; the mapper must
+// unwrap edited_message before projecting.
 #[test]
 fn maps_wrapped_inbound_edit_to_is_edit_with_new_text_and_target() {
     let out = mapped_inbound(wa::Message {
@@ -555,16 +556,16 @@ fn maps_wrapped_inbound_edit_to_is_edit_with_new_text_and_target() {
 
 #[test]
 fn maps_receipt_with_ids_type_and_millis() {
-    // 0.7 sealed every event payload (#[non_exhaustive] + a bon builder), so
-    // the fixtures below build instead of struct-literal.
+    // Event payloads are #[non_exhaustive] with a bon builder, so the fixtures
+    // below build instead of struct-literal.
     let event = Event::Receipt(
         Receipt::builder()
             .source(sample_source())
             .message_ids(vec!["AAA111".into(), "BBB222".into()])
             .timestamp(wacore::time::from_secs(1_717_932_111).unwrap())
             .r#type(ReceiptType::Read)
-            // 0.7 added this: true only for receipts drained from the offline
-            // queue. A live receipt is what this test is about.
+            // True only for receipts drained from the offline queue. A live
+            // receipt is what this test is about.
             .offline(false)
             .build(),
     );
@@ -596,7 +597,7 @@ fn maps_undecryptable_message_with_reason() {
         Some(PbEvent::Undecryptable(u)) => {
             assert_eq!(u.chat, wire(CHAT_JID));
             assert_eq!(u.sender, wire(SENDER_JID));
-            // #126: was the `Debug` string "ViewOnce".
+            // #126: an enum, not the `Debug` string "ViewOnce".
             assert_eq!(u.reason(), pb::UnavailableReason::ViewOnce);
         }
         other => panic!("expected undecryptable, got {other:?}"),
@@ -644,16 +645,16 @@ fn maps_chat_presence_to_composing_state() {
             .build(),
     ));
     assert_eq!(p.jid, wire(SENDER_JID));
-    // A chat state measures no presence: the field used to hardcode true, which
-    // lit an "online" dot off a literal (issue #24).
+    // A chat state measures no presence: a hardcoded true would light an
+    // "online" dot off a literal (issue #24).
     assert_eq!(p.online, None);
-    // #126: the ChatState enum (was the token "composing").
+    // #126: the ChatState enum (not the token "composing").
     assert_eq!(p.chat_state(), pb::ChatState::Composing);
 }
 
-// Regression (issue #24): the conversation a chat state happened in used to be
-// dropped, so typing in a group and typing in the DM with the same person
-// arrived as identical bytes and the edge drew the indicator on the DM.
+// Regression (issue #24): the conversation a chat state happened in must be
+// named, or typing in a group and typing in the DM with the same person arrive
+// as identical bytes and the edge draws the indicator on the DM.
 #[test]
 fn chat_presence_in_a_group_names_the_group_not_only_the_sender() {
     let p = mapped_presence(&Event::ChatPresence(
@@ -699,10 +700,9 @@ fn maps_chat_presence_audio_to_recording_state() {
     assert_eq!(p.chat_state(), pb::ChatState::Recording);
 }
 
-// No `maps_push_name_update`: main retired `Event::PushNameUpdate` (#30,
-// upstream #1310) as a dead event, and 0.7.0 never constructed it either, so
-// the wire never carried one. `pb::PushNameUpdate` stays in the proto so the
-// contract does not break; nothing emits it, exactly as before the bump.
+// No `maps_push_name_update`: the library retired `Event::PushNameUpdate`
+// (#30, upstream #1310) as a dead event. `pb::PushNameUpdate` stays in the
+// proto so the contract does not break; nothing emits it.
 
 #[test]
 fn maps_history_sync_with_raw_passthrough() {
@@ -716,9 +716,9 @@ fn maps_history_sync_with_raw_passthrough() {
         ..Default::default()
     };
     let raw = proto.encode_to_vec();
-    // 0.7 keeps the chunk zlib-compressed behind the lazy handle, so the fixture
-    // has to compress it (and declare the inflated size, which doubles as the
-    // inflate cap) the way the real producer does.
+    // The library keeps the chunk zlib-compressed behind the lazy handle, so
+    // the fixture has to compress it (and declare the inflated size, which
+    // doubles as the inflate cap) the way the real producer does.
     let compressed = zlib_compress(&raw);
     let lazy = LazyHistorySync::new(
         Bytes::from(compressed),
@@ -751,9 +751,8 @@ fn maps_connected_and_disconnected_states() {
     // #126: neither typed info outside its own state.
     assert_eq!((connected.logged_out, connected.ban), (None, None));
 
-    // 0.7 turned Disconnected from a unit marker into a payload carrying why
-    // the socket closed. The mapping ignores it (the proto has one Disconnected
-    // state), so any reason exercises the same arm.
+    // Disconnected carries why the socket closed. The mapping ignores it (the
+    // proto has one Disconnected state), so any reason exercises the same arm.
     let disconnected = mapped_connection(&Event::Disconnected(
         Disconnected::builder()
             .reason(wacore::net::DisconnectReason::StreamEnded)
@@ -763,13 +762,11 @@ fn maps_connected_and_disconnected_states() {
     assert_eq!((disconnected.logged_out, disconnected.ban), (None, None));
 }
 
-// #126: the reason used to reach the edge as `Debug` inside `detail`; it is a
-// typed LoggedOutInfo now.
+// #126: the reason is a typed LoggedOutInfo, not `Debug` inside `detail`.
 #[test]
 fn maps_logged_out_with_a_typed_reason() {
-    // 0.7 dropped `MainDeviceGone` from `ConnectFailureReason`; any real
-    // variant serves.
-    // Boxed on main (#30, upstream #1417).
+    // Any real `ConnectFailureReason` variant serves.
+    // `LoggedOut` is boxed in the library (#30, upstream #1417).
     let c = mapped_connection(&Event::LoggedOut(Box::new(
         LoggedOut::builder()
             .on_connect(false)
@@ -795,7 +792,7 @@ fn maps_temporary_ban_to_banned_state() {
             .build(),
     )));
     assert_eq!(c.state, pb::ConnectionState::Banned as i32);
-    // #126: was the whole TemporaryBan as `Debug` inside `detail`.
+    // #126: typed fields, not the whole TemporaryBan as `Debug` inside `detail`.
     let ban = c.ban.expect("BANNED carries its info");
     assert_eq!(ban.reason(), pb::BanReason::BlockedByUsers);
     assert_eq!(ban.reason_code, 0);
@@ -865,8 +862,7 @@ fn drops_notification_and_raw_node_events() {
 #[test]
 fn catch_all_maps_unmatched_variant_to_raw_event() {
     // QrScannedWithoutMultidevice has no explicit arm: it must land in Raw, not
-    // vanish. One of the events kept in the catch-all on purpose (#141 triage);
-    // PairingCodeRefresh was the example until #150 typed it.
+    // vanish. One of the events kept in the catch-all on purpose (#141 triage).
     let event = Event::QrScannedWithoutMultidevice(QrScannedWithoutMultidevice::builder().build());
     match map_one(&event) {
         Some(PbEvent::Raw(raw)) => {
@@ -927,7 +923,7 @@ fn maps_server_ack_so_a_send_can_be_confirmed_against_the_server() {
     }
 }
 
-// A nack was only ever a library log line before. Relaying the code is what
+// A nack is otherwise only a library log line. Relaying the code is what
 // lets the edge tell "the server refused this" from "no ack yet".
 #[test]
 fn server_nack_relays_its_error_code() {
@@ -986,9 +982,9 @@ fn maps_offline_sync_completed_with_what_was_delivered() {
     }
 }
 
-// Issue #38 (upstream #1380): the interrupted resume used to reach the edge as
-// an untyped RawEvent. Typed like its two siblings, and never folded into
-// OfflineSyncCompleted: "not caught up" is a different statement from "done".
+// Issue #38 (upstream #1380): the interrupted resume is typed like its two
+// siblings, and never folded into OfflineSyncCompleted: "not caught up" is a
+// different statement from "done".
 #[test]
 fn maps_offline_sync_interrupted_with_both_counts() {
     let event = Event::OfflineSyncInterrupted(
@@ -1054,7 +1050,7 @@ fn maps_incoming_call_terminate_action_token() {
             .action(CallAction::Terminate {
                 call_id: "CALL-ID-2".to_string(),
                 call_creator: jid_of(SENDER_JID),
-                // New in 0.7: why the peer hung up. Absent = a plain missed call.
+                // Why the peer hung up. Absent = a plain missed call.
                 reason: None,
                 duration: Some(42),
                 audio_duration: None,
@@ -1064,7 +1060,7 @@ fn maps_incoming_call_terminate_action_token() {
     match map_one(&event) {
         Some(PbEvent::Call(c)) => {
             assert_eq!(c.call_id, "CALL-ID-2");
-            // #135: the oneof case names the action (#126 had an enum for it).
+            // #135: the oneof case names the action.
             assert!(matches!(
                 c.action,
                 Some(pb::call_event::Action::Terminate(_))

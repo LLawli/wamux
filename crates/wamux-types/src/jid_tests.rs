@@ -1,5 +1,5 @@
 //! `Jid`, `GroupJid`, `NewsletterJid` (#114): what each accepts, what each
-//! refuses and with which message (the messages are today's wire messages).
+//! refuses and with which message.
 
 use wamux_proto::v1 as pb;
 
@@ -32,7 +32,7 @@ fn lid_and_group_jids_parse() {
     assert_eq!(Jid::parse(GROUP).unwrap().to_string(), GROUP);
 }
 
-/// Decided 2026-10-05: the library's parse is the one normalization. It reads
+/// The library's parse is the one normalization. It reads
 /// `@c.us` as a phone user (the fix for #4), so it comes out canonical.
 #[test]
 fn the_c_us_spelling_comes_out_canonical_through_the_library() {
@@ -69,7 +69,7 @@ fn a_pb_jid_converts_and_back() {
     );
 }
 
-/// The services answered an empty `pb::Jid` with "missing jid" (`require_jid`).
+/// An empty `pb::Jid` is "missing jid".
 #[test]
 fn an_empty_pb_jid_is_missing_jid() {
     assert_eq!(

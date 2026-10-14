@@ -20,9 +20,9 @@ pub async fn post_status_text(
     status: &StatusText,
 ) -> Result<SendResult, WamuxError> {
     let recipients = lib_recipients(&status.recipients);
-    // 0.7 types the font as a closed enum instead of a bare i32. Reject an
-    // out-of-schema number rather than quietly falling back to SYSTEM: the edge
-    // asked for a specific font and deserves to hear that it does not exist.
+    // The font is a closed enum, not a bare i32. Reject an out-of-schema number
+    // rather than quietly falling back to SYSTEM: the edge asked for a specific
+    // font and deserves to hear that it does not exist.
     let font = FontType::from_i32(status.font).ok_or_else(|| {
         WamuxError::InvalidArgument(format!(
             "unknown status font {}; expected a wa FontType value",
@@ -83,7 +83,7 @@ pub async fn post_status_media(
                 .await
         }
         // `parse_status` only yields the two kinds above; the arm keeps the
-        // match exhaustive now that `MediaKind` has seven (#114).
+        // match exhaustive over all seven `MediaKind` values (#114).
         other => {
             return Err(other.refused_as_status());
         }

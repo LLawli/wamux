@@ -1,9 +1,9 @@
 //! JIDs, parsed once at the boundary (#63, #114).
 //!
-//! `Jid` wraps the library's parsed `Jid` (decided 2026-10-05): the library's
-//! parse is the one normalization the core applies, and it is not the core's
-//! own. `@c.us` comes out `@s.whatsapp.net` because the library parses it as a
-//! phone user (the fix for #4); the core rewrites nothing itself.
+//! `Jid` wraps the library's parsed `Jid`: the library's parse is the one
+//! normalization the core applies, and it is not the core's own. `@c.us` comes
+//! out `@s.whatsapp.net` because the library parses it as a phone user (the fix
+//! for #4); the core rewrites nothing itself.
 
 use std::str::FromStr;
 
@@ -68,8 +68,7 @@ impl std::fmt::Display for Jid {
     }
 }
 
-/// A required `pb::Jid`: an empty value is `InvalidArgument("missing jid")`,
-/// the message the services answer today.
+/// A required `pb::Jid`: an empty value is `InvalidArgument("missing jid")`.
 impl TryFrom<pb::Jid> for Jid {
     type Error = WamuxError;
 
@@ -193,8 +192,7 @@ impl NewsletterJid {
     }
 
     /// `InvalidArgument("'<v>' is not a channel: expected a jid ending in
-    /// @newsletter")` for a valid JID on another server, as
-    /// `require_newsletter_jid` answers today.
+    /// @newsletter")` for a valid JID on another server.
     pub fn parse(value: &str) -> Result<Self, WamuxError> {
         let jid = Jid::parse(value)?;
         if jid.0.server != Server::Newsletter {

@@ -1,10 +1,9 @@
-//! #153 (part 2b of #141): the call log, routed through `map_event`, so each
-//! test also proves the event no longer falls into the RawEvent catch-all.
-//! The two captured calls are the ones the user placed from pessoal to trabalho
-//! on 2026-10-08 at 19:57Z (answered, 30-31 s on the phones) and 19:59Z
-//! (rejected), read off the production subscription; jids anonymized. They
-//! measured `start_time` and `duration` in seconds. The group call is
-//! hand-built: none was captured.
+//! #153: the call log, routed through `map_event`, so each test also proves the
+//! event does not fall into the RawEvent catch-all. The two captured calls are
+//! the ones the user placed from pessoal to trabalho on 2026-10-08 at 19:57Z
+//! (answered, 30-31 s on the phones) and 19:59Z (rejected), read off the
+//! production subscription; jids anonymized. They measured `start_time` and
+//! `duration` in seconds. The group call is hand-built: none was captured.
 
 #![allow(clippy::field_reassign_with_default)] // the generated records are built by assignment
 

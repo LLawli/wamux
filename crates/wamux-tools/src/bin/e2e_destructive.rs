@@ -1,5 +1,5 @@
-//! The destructive half of the old e2e_all (#64): profile name and picture
-//! changed then restored, a NEW group created with WAMUX_LIVE_DEST as its
+//! The destructive half of the e2e suite (#64; `e2e_all` is the other half): profile
+//! name and picture changed then restored, a NEW group created with WAMUX_LIVE_DEST as its
 //! participant, then modified and left. Logout and DeleteAccount of the paired
 //! account are NOT here: `logout_e2e` covers them.
 //!

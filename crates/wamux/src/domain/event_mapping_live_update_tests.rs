@@ -59,7 +59,7 @@ fn mapped(event: &Event) -> pb::NewsletterLiveUpdate {
 #[test]
 fn a_live_push_maps_its_channel_and_every_message() {
     let update = mapped(&captured_push());
-    // #122: `newsletter_jid` became `Jid newsletter`.
+    // #122: the field is `Jid newsletter`.
     assert_eq!(
         update.newsletter,
         Some(pb::Jid {

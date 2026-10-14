@@ -1,12 +1,11 @@
 //! The last blob migration (#31): bincode-standard -> protobuf, run by the
 //! daemon itself when it opens the store, before any account loads.
 //!
-//! Why this one is automatic when the two before it were one-shot bins: those
-//! had to read an OLD layout, which meant linking the old `wacore` next to the
-//! new one. Bincode is positional, so the layout that wrote a blob is the only
-//! one that reads it. `Device` changed in the middle (#86, upstream #1565
-//! inserted `status_privacy`), so it is read through a frozen mirror of the
-//! layout that wrote it (`legacy_device`) instead of the current type.
+//! Automatic and in-process, with no second `wacore` linked: bincode is
+//! positional, so the layout that wrote a blob is the only one that reads it.
+//! `Device` changed in the middle (#86, upstream #1565 inserted
+//! `status_privacy`), so it is read through a frozen mirror of the layout that
+//! wrote it (`legacy_device`) instead of the current type.
 //! `HashState` and `AppStateSyncKey` have not changed and are still read as the
 //! current types; real-blob tests fail the day one of them does.
 //!
@@ -16,7 +15,7 @@
 //! at the cost of one SELECT, and the rows and the marker change in one
 //! transaction, so a store is never half one format and half the other.
 //!
-//! The contract, kept from the one-shot runner it replaces:
+//! The contract:
 //! - **Plan first.** Every blob converts and is proved before anything is
 //!   written; one that will not aborts the run with nothing changed.
 //! - **Proved, not assumed.** Each new blob is decoded back and compared with
@@ -143,10 +142,9 @@ pub fn upgrade_device_blob(blob: &[u8], row: String) -> Result<Vec<u8>, BincodeU
 /// holds a HashMap, so its bincode depends on iteration order): any difference
 /// is a codec bug.
 ///
-/// `bootstrapped` is carried over as it was. Until #36 this step also marked a
-/// synced-but-unmarked collection, because the library never did; since
-/// upstream #1545 its first sync at the head marks it
-/// (`tests/appstate_bootstrap.rs`).
+/// `bootstrapped` is carried over as it was: this step does not mark a
+/// synced-but-unmarked collection (#36), the library's first sync at the head
+/// does (upstream #1545, `tests/appstate_bootstrap.rs`).
 pub fn upgrade_hash_state_blob(blob: &[u8], row: String) -> Result<Vec<u8>, BincodeUpgradeError> {
     let expected: HashState = decode_whole(blob, &row)?;
     let new = encode_hash_state(&expected);

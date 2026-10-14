@@ -1,5 +1,6 @@
-//! `AccountId`, `ExternalRef`, `AccountRef` (#114). The messages are the ones
-//! `AccountRegistry::resolve` answers today.
+//! `AccountId`, `ExternalRef`, `AccountRef` (#114): the shape errors each raises
+//! at the boundary ("missing account ref", "bad uuid '<v>'"), before
+//! `AccountRegistry::resolve`, which only answers NotFound.
 
 use wamux_proto::v1 as pb;
 use wamux_proto::v1::account_ref::Ref;
@@ -34,8 +35,7 @@ fn a_bad_uuid_names_the_offending_value() {
     );
 }
 
-/// Not validated on purpose: an empty one is looked up and answers NotFound,
-/// as before (#114 changes nothing on the wire).
+/// Not validated on purpose: an empty one is looked up and answers NotFound.
 #[test]
 fn an_external_ref_keeps_its_text_even_empty() {
     assert_eq!(ExternalRef::new("trabalho").as_str(), "trabalho");

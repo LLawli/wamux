@@ -1,4 +1,4 @@
-//! The library's call enums as the contract's enums (#135, part 4 of #74).
+//! The library's call enums as the contract's enums (#135).
 //!
 //! Same rules as `event_enums`: an explicit `match` per enum, written once.
 //! `VideoState` has an `Unknown(code)` fallback, so it maps to UNKNOWN plus the

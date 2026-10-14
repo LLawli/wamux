@@ -2,10 +2,11 @@
 //!
 //! sqlx-sqlite queues each statement on a worker thread and runs it even after
 //! the caller's future is gone (`connection/worker.rs` in sqlx-sqlite 0.8.6), so
-//! a writer aborted mid-COMMIT left the batch believing a transaction was open
-//! that had already committed: the next job's SAVEPOINT opened one on its own,
-//! its RELEASE committed it, and its COMMIT failed with "no transaction is
-//! active" (5 runs in 150 of `sqlite_dropped_writers_never_block_the_rest`).
+//! without the reconcile a writer aborted mid-COMMIT leaves the batch believing
+//! a transaction is open that has already committed: the next job's SAVEPOINT
+//! opens one on its own, its RELEASE commits it, and its COMMIT fails with "no
+//! transaction is active" (5 runs in 150 of
+//! `sqlite_dropped_writers_never_block_the_rest`).
 //! An engine that runs nothing once the future is gone has the mirror case.
 //! Whoever uses the connection next must find it in a known state.
 

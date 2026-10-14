@@ -2,8 +2,8 @@
 //! with what (#164). Pure: the engines read the `store_encryption` row and the
 //! account count, call `resolve`, and write the mark it asks for.
 //!
-//! The decision table (#165 added the conversion rows; the progress column is
-//! `store_conversion_progress`, see migration 0006):
+//! The decision table (the progress column is `store_conversion_progress`, see
+//! migration 0006):
 //!
 //! | state     | verifier | progress | accounts | key   | result                         |
 //! |-----------|----------|----------|----------|-------|--------------------------------|

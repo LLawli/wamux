@@ -1,6 +1,5 @@
 //! `NewsletterHistoryQuery`, `NewsletterPollVote`, `NewsletterAddOnsQuery`
-//! (#26, #116). The checks moved here from `domain/newsletters` with their
-//! messages; the library's own checks answer `InvalidRequest`, which
+//! (#26, #116). The library's own checks answer `InvalidRequest`, which
 //! `client_err` turns into Unavailable, so a malformed request stops here.
 
 use wamux_proto::v1 as pb;
@@ -117,8 +116,8 @@ fn a_history_query_checks_the_jid_before_the_count() {
 
 // #99: history refuses a jid that is not a channel, as the three other channel
 // RPCs do. Measured on 2026-10-09 (live-trabalho): the server never answers a
-// history IQ for a group or phone jid, so it used to wait the library's 75 s
-// IQ timeout and answer Unavailable.
+// history IQ for a group or phone jid, so without this check the call would wait
+// out the library's 75 s IQ timeout and answer Unavailable.
 #[test]
 fn a_history_query_refuses_a_jid_that_is_not_a_channel() {
     for jid in [GROUP, "5511999000111@s.whatsapp.net", "100000000000002@lid"] {

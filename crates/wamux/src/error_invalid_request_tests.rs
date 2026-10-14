@@ -1,7 +1,7 @@
 //! #101: the library refuses a request it can never serve with a typed error
-//! that has no server code. `client_err` read it as an opaque client failure
-//! and the edge saw Unavailable ("the core is down"), so it retried a request
-//! that could never succeed. The caller's mistake is InvalidArgument.
+//! that has no server code. `client_err` must not read it as an opaque client
+//! failure: the edge would see Unavailable ("the core is down") and retry a
+//! request that can never succeed. The caller's mistake is InvalidArgument.
 
 use whatsapp_rust::features::{AppStateError, PollError};
 

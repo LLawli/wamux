@@ -93,10 +93,10 @@ fn gap_marker(account_uuid: &str, lagged: u64, state: pb::ConnectionState) -> pb
 /// Gap marker for the account-created broadcast itself (all-accounts streams
 /// only). Lagging here takes a burst of >64 creates while the follower is
 /// starved; it means forwarders for some new accounts were never attached, so
-/// their events are silently absent from this stream. A DISTINCT kind
-/// (code-review 2026-06-11): the edge dispatches on `kind`, never on note
-/// prose, and the recovery differs from the per-account gap (re-subscribe or
-/// reconcile via `ListAccounts` — mechanism, not policy).
+/// their events are silently absent from this stream. A DISTINCT kind:
+/// the edge dispatches on `kind`, never on note prose, and the recovery differs
+/// from the per-account gap (re-subscribe or reconcile via `ListAccounts` -
+/// mechanism, not policy).
 fn created_gap_marker(lagged: u64) -> pb::EventEnvelope {
     gap_envelope(
         String::new(),
@@ -159,10 +159,10 @@ fn forward(handle: Arc<AccountHandle>, replay: usize, outlet: Outlet) {
     });
 }
 
-/// All-accounts subscription with dynamic membership (Sprint 5): forward every
-/// account in the registry today AND every account created later. Contract
-/// change: the created-follower task owns `tx`, so this stream now stays OPEN
-/// indefinitely (before, it ended once the snapshot's forwarders ended). Also
+/// All-accounts subscription with dynamic membership: forward every account in
+/// the registry today AND every account created later. The created-follower
+/// task owns `tx`, so this stream stays OPEN until the client hangs up or
+/// shutdown fires (#35), not when the snapshot's forwarders end. Also
 /// documented on `SubscribeRequest.all_accounts` in proto/events.proto.
 fn forward_all_accounts(registry: &AccountRegistry, replay: usize, outlet: Outlet) {
     // Order matters: subscribe to creations BEFORE snapshotting. An account
@@ -212,15 +212,14 @@ async fn follow_created_step(
     match received {
         Ok(account) => {
             // Skips the subscribe/snapshot overlap (see forward_all_accounts).
-            // Full-ring replay regardless of the client's replay_from_ring
-            // (code-review 2026-06-11): events this account emitted between
-            // created_tx.send and this forwarder's subscribe were broadcast to
-            // zero receivers, but the dispatch path pushes to the ring FIRST,
-            // so replaying the whole (young) ring recovers them — for an
-            // account created after the subscribe, "live only" starts at its
-            // creation. forward()'s seq filter dedupes the overlap. (With
-            // ring_capacity 0 the ring stores nothing and the window remains;
-            // replay is config-disabled then.)
+            // Full-ring replay regardless of the client's replay_from_ring:
+            // events this account emitted between created_tx.send and this
+            // forwarder's subscribe were broadcast to zero receivers, but the
+            // dispatch path pushes to the ring FIRST, so replaying the whole
+            // (young) ring recovers them — for an account created after the
+            // subscribe, "live only" starts at its creation. forward()'s seq
+            // filter dedupes the overlap. (With ring_capacity 0 the ring stores
+            // nothing and the window remains; replay is config-disabled then.)
             if !snapshot_uuids.contains(&account.uuid) {
                 forward(account, usize::MAX, outlet.clone());
             }

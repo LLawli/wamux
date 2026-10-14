@@ -1,6 +1,5 @@
-//! `messaging` (#115): the tests that lived inline, moved to their own file so
-//! the loop can seal them. Same assertions; only the inputs changed type, from
-//! the wire's `pb::*` to the domain's own.
+//! `messaging` (#115): the inputs are the domain's own types, not the wire's
+//! `pb::*`.
 
 use std::str::FromStr;
 
@@ -245,9 +244,9 @@ fn an_unknown_preview_type_is_invalid_argument() {
     }
 }
 
-// Regression (code-review 2026-06-11): a preview-only extended text must
-// NOT carry a present-but-empty ContextInfo — regular clients send the
-// field absent, and an empty submessage is a fingerprintable wire shape.
+// Regression: a preview-only extended text must NOT carry a present-but-empty
+// ContextInfo — regular clients send the field absent, and an empty submessage
+// is a fingerprintable wire shape.
 #[test]
 fn link_preview_only_leaves_context_absent() {
     let ext = build_text_message(&OutgoingText {
@@ -260,9 +259,8 @@ fn link_preview_only_leaves_context_absent() {
     assert!(ext.context_info.is_unset());
 }
 
-// Regression (code-review 2026-06-11): quoting in a DM has no participant;
-// that must relay as the absent field, never Some("") — an empty JID on the
-// WhatsApp wire.
+// Regression: quoting in a DM has no participant; that must relay as the absent
+// field, never Some("") — an empty JID on the WhatsApp wire.
 #[test]
 fn dm_quote_without_participant_maps_participant_to_none() {
     let ext = build_text_message(&OutgoingText {

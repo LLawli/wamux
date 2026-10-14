@@ -154,7 +154,7 @@ fn every_reply_shape_converts() {
 }
 
 // A reply that names no offer is not a reply. The three ways to name none
-// answer with the message the domain used, not the generic quote one.
+// answer with the reply's own message, not the generic quote one.
 #[test]
 fn an_unquoted_or_idless_reply_keeps_its_message() {
     let no_key = pb::QuoteContext {

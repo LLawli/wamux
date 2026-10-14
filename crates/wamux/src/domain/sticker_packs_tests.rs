@@ -116,7 +116,7 @@ fn the_summary_relays_the_pack_and_each_entry() {
     assert_eq!(info.stickers[1].mime_type, "image/webp");
 }
 
-// #126: the contract's enum, one value per waproto value (was a lowercase token).
+// #126: the contract's enum, one value per waproto value.
 #[test]
 fn each_origin_relays_as_its_enum_value() {
     let cases = [
@@ -143,7 +143,7 @@ fn each_origin_relays_as_its_enum_value() {
 }
 
 // FIRST_PARTY is waproto's 0, so absence must not collapse into it: it is
-// UNSPECIFIED (#126; it was "").
+// UNSPECIFIED (#126).
 #[test]
 fn an_absent_origin_relays_unspecified_not_first_party() {
     let info = sticker_pack_info(&StickerPackMessage {
