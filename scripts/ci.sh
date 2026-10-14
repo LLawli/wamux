@@ -189,6 +189,11 @@ scripts/check-comment-provenance.py
 stage "doc links"
 scripts/check-doc-links.py
 
+# #82: docs and comments are written in English; a new Portuguese document or
+# comment fails here, not in a reader. Pure text check.
+stage "docs and comments in English"
+scripts/check-doc-language.py
+
 # #78: the release pipeline builds from fixed inputs (actions by SHA, FROM by
 # digest, cargo --locked) and the image waits for the release. Pure text check.
 stage "release pins"
