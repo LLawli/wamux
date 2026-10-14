@@ -14,6 +14,22 @@ has to follow them.
 
 ### Changed
 
+- **The docs describe the daemon that exists** (issue #81). README, `docs/PRD.md`
+  and `docs/SPEC.md` were read end to end against the code and corrected: the
+  store is Postgres or SQLite (Turso behind the `turso` feature), connection is
+  edge-driven with no per-account policy, media is sent as streamed bytes only,
+  channels and interactive replies are in scope. SPEC now stays at the level of
+  crates and module directories, with no counts or migration names to go stale,
+  and the PRD's June "Status" section is gone. `docs/DEPLOYMENT.md` gets back the
+  native, Docker and troubleshooting sections an unrelated change had dropped,
+  checked against today's unit, compose file and image (create `./run` before
+  the first `docker compose up`). `wamux.toml.example` no longer suggests the
+  `@c.us` routing recipe and documents `store_key_file`. `docs/STATUS.md` and
+  `docs/BACKLOG.md` (June snapshots) are removed, and so are the edge project's
+  PRD and agent instructions, which live in that project. A new `scripts/ci.sh`
+  stage, `scripts/check-doc-links.py`, fails on a relative link, `#anchor` or
+  `docs/*.md` mention that points at nothing.
+
 - **Bounded defaults: metric labels and the replay ring** (issue #80; see
   `docs/BREAKING-CHANGES-2026-10-13-bounded-defaults.md`). The `method` label of
   `wamux_grpc_requests_total` and `wamux_grpc_request_duration_seconds` is the
