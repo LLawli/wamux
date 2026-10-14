@@ -17,8 +17,8 @@ pub async fn check_on_whatsapp(
     // (e.g. "<number>@s.whatsapp.net"); the service already parsed them.
     let jids: Vec<whatsapp_rust::Jid> = jids.into_iter().map(Jid::into_lib).collect();
     // The library's usync future isn't Send (HRTB), so it cannot live inside the
-    // #[async_trait] future. Drive it to completion on its own current-thread
-    // runtime in a blocking task; only the owned result crosses back.
+    // #[async_trait] future. Drive it to completion in a blocking task on the
+    // daemon's own runtime (`run_isolated`); only the owned result crosses back.
     let results = crate::domain::isolate::run_isolated(move || async move {
         client.contacts().is_on_whatsapp(&jids).await
     })

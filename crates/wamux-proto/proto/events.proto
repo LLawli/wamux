@@ -42,8 +42,9 @@ message SubscribeRequest {
 // comes from our own device and nothing comes back -- not live, not on the next
 // history read. Only the consumer that made the call ever learned the message
 // existed, while its receipts reached everyone, naming an id nobody had. So the
-// relay publishes the echo its own shape prevents. It is the only event on this
-// bus that WhatsApp did not produce.
+// relay publishes the echo its own shape prevents. It is the only MESSAGE on
+// this bus that WhatsApp did not produce (the other events the core makes up
+// are the `raw` `gap` and `subscription_gap` markers of EventService).
 //
 // It goes to EVERY subscriber, the caller included: excluding the caller would
 // mean the bus knowing who called, and the core has no notion of client

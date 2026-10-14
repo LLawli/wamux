@@ -119,7 +119,8 @@ async fn serve() -> anyhow::Result<()> {
     spool::prepare_spool_dir(Path::new(&config.media_spool_dir))
         .context("preparing the media spool directory")?;
 
-    // The DSN scheme picks the engine (postgres:// or sqlite://).
+    // The DSN scheme picks the engine (postgres://, sqlite://, or turso:// in a
+    // `turso` build).
     let engine = storage::open_engine_keyed(
         &config.database_url,
         config.db_max_connections,

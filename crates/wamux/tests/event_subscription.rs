@@ -1,7 +1,7 @@
-//! Sprint 5 regression: the all-accounts subscription is DYNAMIC — accounts
-//! created AFTER subscribing deliver into an already-open stream (the gap
-//! recorded in docs/STATUS.md §4), and the snapshot path (accounts existing
-//! before the subscribe) keeps delivering. Drives `EventSvc` directly (no
+//! Regression: the all-accounts subscription is DYNAMIC. Accounts created
+//! AFTER subscribing deliver into an already-open stream (a subscription that
+//! only snapshotted the registry would never see them), and the snapshot path
+//! (accounts existing before the subscribe) keeps delivering. Drives `EventSvc` directly (no
 //! socket), mirroring tests/load_multi_account.rs.
 //!
 //! Runs against whichever engine WAMUX_TEST_ENGINE names (default Postgres,

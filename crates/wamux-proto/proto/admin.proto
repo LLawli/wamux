@@ -19,7 +19,7 @@ enum BlobFormat {
 
 message HealthResponse {
   bool serving = 1;   // liveness: the daemon is up and answering this RPC
-  bool ready = 2;     // readiness: Postgres is reachable (SELECT 1 ok)
+  bool ready = 2;     // readiness: the store (Postgres, SQLite or Turso) answers SELECT 1
   string version = 3; // wamux crate version
   BlobFormat blob_format = 4; // read from the store on every Check (#84)
 }

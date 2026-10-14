@@ -176,7 +176,8 @@ pub fn synthetic_envelope(account_uuid: &str, seq: i64, payload_len: usize) -> p
 /// Delete leftover synthetic accounts whose `external_ref` starts with
 /// `prefix`. Tests call this at setup (self-heal from an aborted prior run,
 /// whose best-effort teardown never ran) and at the end, bounding accumulation
-/// to at most one aborted run's rows (the B5 pattern, docs/BACKLOG.md).
+/// to at most one aborted run's rows. A cleanup that only runs at the end is
+/// skipped by a panic, so every failed run would leave its accounts behind.
 ///
 /// Prefix matching happens in Rust, over `list_accounts`, rather than in SQL:
 /// that keeps the helper engine-agnostic and sidesteps per-dialect LIKE escaping
