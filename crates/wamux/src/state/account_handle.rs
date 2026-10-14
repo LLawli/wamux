@@ -14,7 +14,8 @@ use super::event_ring::EventRing;
 use crate::proto::v1::{ConnectionState, EventEnvelope};
 use crate::storage::AccountRow;
 
-/// The supervisor task for a running bot: it owns the `Bot`, awaits the run
+/// The supervisor task for a running bot: it owns the `BotHandle` (dropping
+/// that aborts the bot; `Bot::spawn` consumed the `Bot`), awaits the run
 /// loop's terminal exit (the library handles transient reconnects internally,
 /// so this resolves only when the library has given up), then marks the account
 /// down truthfully. Aborting it is the hard-stop fallback.

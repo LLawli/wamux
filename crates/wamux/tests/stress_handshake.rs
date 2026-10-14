@@ -84,10 +84,11 @@ async fn registered_client_logs_in_and_talks_over_transport() {
         .expect("connect");
 
     // The client should accept <success>, log in, and send post-login IQs over
-    // the encrypted transport — which the server decrypts AND parses (both
+    // the encrypted transport, which the server decrypts AND parses (both
     // directions work). We wait on `parsed_nodes`, not just `post_login_frames`:
-    // a decrypted-but-unparsed frame (the B1 flag-byte bug) would still bump the
-    // frame count, so asserting on parsed nodes is what catches that regression.
+    // a decrypted-but-unparsed frame (a leading flag byte the mock failed to
+    // unpack) would still bump the frame count, so asserting on parsed nodes is
+    // what catches that regression.
     let parsed = wait_for("one parsed node", Duration::from_secs(10), || {
         mock.parsed_nodes() >= 1
     })

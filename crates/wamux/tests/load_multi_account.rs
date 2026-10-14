@@ -1,4 +1,4 @@
-//! Sprint 3 scale gate (opt-in: `cargo test --test load_multi_account -- --ignored`).
+//! Scale gate (opt-in: `cargo test --test load_multi_account -- --ignored`).
 //!
 //! Synthetic, no real WhatsApp: register ~200 accounts and drive the live event
 //! fan-out directly through each handle's broadcast. Proves the two properties
@@ -135,8 +135,8 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
         "healthy account delivered fully despite a saturated neighbor"
     );
 
-    // Let the whole flood land before checking for the gap (B7): `broadcast::send`
-    // never blocks, so this finishes fast and makes the lag deterministic — the
+    // Let the whole flood land before checking for the gap: `broadcast::send`
+    // never blocks, so this finishes fast and makes the lag deterministic. The
     // slow account's forwarder, blocked on its undrained onward channel, has now
     // definitely missed events, instead of racing the gap-check against the flood.
     flood.await.expect("flood task");
@@ -162,6 +162,6 @@ async fn no_head_of_line_blocking_and_gap_under_load() {
 
     // Tidy on success with a single sweep (not 200 sequential deletes that an
     // earlier panic could leave half-run). An aborted run is caught by the next
-    // run's setup-sweep, so orphans never accumulate past one run (B5).
+    // run's setup-sweep, so orphans never accumulate past one run.
     let _ = common::sweep_orphans(registry.storage(), &prefix).await;
 }

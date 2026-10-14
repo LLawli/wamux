@@ -12,7 +12,8 @@ pub const DEFAULT_REPLAY_MAX_EVENT_BYTES: u64 = 256 * 1024;
 pub struct Config {
     /// Unix socket path the gRPC server binds.
     pub socket_path: String,
-    /// Socket file mode (octal, e.g. 0o660). Stored as decimal in TOML/env.
+    /// Socket file mode, e.g. 0o660. An env var takes it in decimal (432); TOML
+    /// also accepts the `0o660` literal.
     pub socket_mode: u32,
     /// Optional owning group name to chown the socket to.
     pub socket_group: Option<String>,

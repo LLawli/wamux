@@ -230,9 +230,11 @@ impl MockWaServer {
 
     /// Count of post-login frames the mock actually **parsed** into a node (via
     /// `unpack` + `unmarshal_ref`). Distinct from `post_login_frames` (decrypt
-    /// only): a non-zero value proves the wire envelope is decoded end-to-end, so
-    /// the "decrypts but never parses" regression (the flag-byte bug) can't hide
-    /// behind a green frame count. See B1/B4 in docs/BACKLOG.md.
+    /// only): a non-zero value proves the wire envelope is decoded end-to-end.
+    /// A mock that skips `unpack` still decrypts every frame, so the frame count
+    /// stays green while the leading flag byte makes every parse fail; asserting
+    /// on this count is what makes that "decrypts but never parses" regression
+    /// fail a test instead of hiding.
     pub fn parsed_nodes(&self) -> usize {
         self.parsed_nodes.load(Ordering::SeqCst)
     }

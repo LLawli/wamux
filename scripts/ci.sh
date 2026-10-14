@@ -184,6 +184,11 @@ scripts/check-test-sleeps.py
 stage "no review provenance in comments"
 scripts/check-comment-provenance.py
 
+# #81: the docs described a daemon that no longer existed; a deleted file or a
+# renamed heading must fail here, not in a reader. Pure text check.
+stage "doc links"
+scripts/check-doc-links.py
+
 # #78: the release pipeline builds from fixed inputs (actions by SHA, FROM by
 # digest, cargo --locked) and the image waits for the release. Pure text check.
 stage "release pins"

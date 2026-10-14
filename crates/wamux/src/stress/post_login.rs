@@ -72,7 +72,7 @@ pub(super) async fn read_client_frames(mut session: Session, counters: ConnCount
         // same envelope `wacore_binary::Encoder` writes on send. Without this
         // unpack the leading flag byte derails `unmarshal_ref`, so the client's
         // post-login IQs (e.g. usync) go unanswered, the waiter stays pending,
-        // and the keepalive loop skips its ping forever (#stress-m2b).
+        // and the keepalive loop skips its ping forever.
         let payload = match wacore_binary::util::unpack(&buf) {
             Ok(p) => p,
             Err(e) => {
