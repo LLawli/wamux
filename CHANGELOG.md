@@ -739,6 +739,14 @@ has to follow them.
 
 ### Security
 
+- **rustls 0.23.46** (RUSTSEC-2026-0346, -0347, -0348, -0349, published
+  2026-10-14). rustls reaches the daemon through the WhatsApp WebSocket
+  transport, the media CDN client and sqlx's TLS. The fixed advisories are
+  secrets in client session `Debug` output, data sent to the outer server after
+  an ECH rejection, a brotli certificate decompression of up to 1 GiB before
+  authentication, and an unauthenticated ServerHello downgrading later
+  connections to classical key exchange. Lockfile only; no code or wire change.
+
 - **The release pipeline publishes only what passed its gates, from fixed
   inputs, with provenance** (issue #78). The image job now needs the release
   job, so a tag that fails `scripts/ci.sh --no-postgres`, the tag/version check
