@@ -408,11 +408,12 @@ users belong to, see
 [How the daemon binds the socket](#how-the-daemon-binds-the-socket-77).
 
 In the system-wide unit, the socket sits next to the database, in a state
-directory that systemd creates `0755`. For a consumer of another user, move the
-socket out of it (`RuntimeDirectory=wamux`, `RuntimeDirectoryMode=0750`, `Group=` the shared
-group, `Environment=WAMUX_SOCKET_PATH=%t/wamux/wamux.sock`) and set
-`StateDirectoryMode=0700`, as [The store is a secret](#the-store-is-a-secret)
-asks. A user unit cannot serve another user: its `%t` is private to its owner.
+directory the unit creates `0700` (`StateDirectoryMode=0700`, as
+[The store is a secret](#the-store-is-a-secret) asks), so only the daemon's own
+user reaches it. For a consumer of another user, move the socket out of it
+(`RuntimeDirectory=wamux`, `RuntimeDirectoryMode=0750`, `Group=` the shared
+group, `Environment=WAMUX_SOCKET_PATH=%t/wamux/wamux.sock`). A user unit cannot
+serve another user: its `%t` is private to its owner.
 
 ## Docker, consumer on the host
 

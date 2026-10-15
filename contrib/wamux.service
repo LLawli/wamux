@@ -33,8 +33,13 @@ Restart=on-failure
 RestartSec=10
 
 # Creates and owns %S/wamux (~/.local/state/wamux for a user unit), which is
-# where both the database and the socket live.
+# where both the database and the socket live. 0700 because the database holds
+# every account's identity keys (docs/DEPLOYMENT.md, "The store is a secret"):
+# systemd would create it 0755, and UMask= does not apply to it. The consumer of
+# this user unit is the same user, so the socket stays reachable; a system-wide
+# install that serves another user moves the socket to a RuntimeDirectory=.
 StateDirectory=wamux
+StateDirectoryMode=0700
 
 # The media spool (#79): SendMedia, PostStatusMedia and DownloadMedia stage each
 # file on disk instead of in memory. CacheDirectory= creates %C/wamux

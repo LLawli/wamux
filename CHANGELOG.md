@@ -767,6 +767,15 @@ has to follow them.
 
 ### Security
 
+- **`contrib/wamux.service` creates the store's directory `0700`** (issue
+  #188). `docs/DEPLOYMENT.md` promises the database's directory is `0700`, but
+  the unit had `StateDirectory=wamux` with no `StateDirectoryMode=`, and systemd
+  creates a state directory `0755` whatever `UMask=` says (measured with a
+  transient unit on systemd 261: `0755` without the directive, `0700` with it).
+  The database file itself was already `0600`, so this is defense in depth. An
+  existing install picks it up by copying the new unit, `daemon-reload` and a
+  restart: systemd tightens an existing `0755` state directory on start. The
+  socket stays reachable for the user unit, whose consumer is the same user.
 - **rustls 0.23.46** (RUSTSEC-2026-0346, -0347, -0348, -0349, published
   2026-10-14). rustls reaches the daemon through the WhatsApp WebSocket
   transport, the media CDN client and sqlx's TLS. The fixed advisories are
