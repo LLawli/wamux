@@ -802,6 +802,19 @@ has to follow them.
 
 ### Fixed
 
+- **`pair_socket` and `pair_cli` send their self-message only after the
+  post-pairing reconnect** (issue #108). Right after pairing the server closes
+  the stream (515) and the library reconnects, and `pair_socket` sent into that
+  window and reported `[FAIL] Messaging.SendText(self)`. Waiting for
+  `GetAccountStatus` to say CONNECTED would not have helped: the daemon maps
+  `PairSuccess` to CONNECTED and the library announces no disconnect for an
+  expected 515, so the status reads CONNECTED the whole time. Both binaries now
+  subscribe to the account's events before pairing and send after the
+  `Connection(CONNECTED)` that follows `Paired` (the new `wamux_tools::post_pairing`
+  module); `pair_cli` drops the fixed 6 s sleep it used instead. When the
+  reconnect does not come within 30 s the self-message is skipped with a note
+  and no check, not counted as a failure: it was only ever `accepted`. No
+  daemon or wire change.
 - **CI: the store-defaults check no longer fails a PR's first hosted run**
   (issue #140). `scripts/check-store-defaults.py` found wacore through
   `cargo metadata --offline` with no platform filter, which wants the sources

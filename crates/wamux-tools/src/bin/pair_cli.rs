@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::broadcast::{Receiver, error::RecvError};
+use tokio_stream::wrappers::BroadcastStream;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use wamux::domain::messaging;
@@ -23,6 +24,7 @@ use wamux::proto::v1 as pb;
 use wamux::state::AccountHandle;
 use wamux_tools::inproc::{database_url_from, init_tracing, open_registry, resolve_or_create};
 use wamux_tools::live_env::{account_ref_from, connection_line_of, jid_text_of, process_env};
+use wamux_tools::post_pairing::{RECONNECT_WAIT, wait_reconnected_after_paired};
 use wamux_tools::qr::{ascii_qr, open_in_viewer, write_qr_png};
 use wamux_tools::report::Report;
 use wamux_types::{Jid, OutgoingText};
@@ -48,7 +50,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         handle.uuid,
         handle.device_id
     );
-    let events = handle.subscribe();
+    let mut events = handle.subscribe();
     println!(
         "Mode: {} | connecting ...",
         if qr_mode { "QR" } else { "PAIR CODE" }
@@ -58,10 +60,13 @@ async fn main() -> anyhow::Result<ExitCode> {
         spawn_pair_request(handle.clone(), phone.clone());
     }
     let mut report = Report::new();
-    let paired =
-        tokio::time::timeout(PAIRING_DEADLINE, watch_events(events, qr_mode, &mut report)).await;
+    let paired = tokio::time::timeout(
+        PAIRING_DEADLINE,
+        watch_events(&mut events, qr_mode, &mut report),
+    )
+    .await;
     match paired {
-        Ok(Some(jid)) => send_self_message(&handle, &phone, jid, &mut report).await,
+        Ok(Some(jid)) => send_self_message(&handle, events, &phone, jid, &mut report).await,
         Ok(None) => {}
         Err(_) => report.fail("Pairing", format!("not paired within {PAIRING_DEADLINE:?}")),
     }
@@ -70,7 +75,7 @@ async fn main() -> anyhow::Result<ExitCode> {
 
 /// Print events until the phone pairs (returns its jid) or pairing fails.
 async fn watch_events(
-    mut events: Receiver<pb::EventEnvelope>,
+    events: &mut Receiver<pb::EventEnvelope>,
     qr_mode: bool,
     report: &mut Report,
 ) -> Option<String> {
@@ -188,15 +193,20 @@ fn make_options(phone: &str) -> PairCodeOptions {
     }
 }
 
-/// After pairing, wait for the link to settle then send a self-message. A
+/// After pairing, wait for the reconnect then send a self-message (#108). A
 /// self-chat has no receipt and no fan-out (CLAUDE.md), so it is `accepted`.
+/// If the reconnect does not come in time the send is skipped, not failed.
 async fn send_self_message(
     handle: &Arc<AccountHandle>,
+    events: Receiver<pb::EventEnvelope>,
     phone: &str,
     paired_jid: String,
     report: &mut Report,
 ) {
-    tokio::time::sleep(Duration::from_secs(6)).await;
+    let mut stream = BroadcastStream::new(events);
+    if let Err(e) = wait_reconnected_after_paired(&mut stream, RECONNECT_WAIT).await {
+        return println!("self-message skipped: {e}");
+    }
     let target = if phone.is_empty() {
         paired_jid
     } else {

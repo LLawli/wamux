@@ -1,7 +1,8 @@
 //! Pairing validator that drives the REAL wamux socket (not the library):
 //! connects to the daemon's Unix socket via gRPC, calls AccountService
 //! CreateAccount + PairWithQr, renders the QR to /tmp/wamux-qr-<ref>.png and
-//! opens it with xdg-open. On pairing, sends a self-message via MessagingService.
+//! opens it with xdg-open. After pairing, waits for the account to reconnect
+//! (the post-pairing 515) and then sends a self-message via MessagingService.
 //!
 //! Env: WAMUX_REF (required, the account's stable name; pass one per phone you
 //! pair, since the daemon multiplexes many), WAMUX_SOCKET_PATH.
@@ -16,9 +17,10 @@ use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::messaging_service_client::MessagingServiceClient;
 use wamux_tools::live_env::{account_ref_from, process_env, socket_path_from};
+use wamux_tools::post_pairing::{RECONNECT_WAIT, send_self_after_reconnect};
 use wamux_tools::qr::{ascii_qr, open_in_viewer, write_qr_png};
 use wamux_tools::report::Report;
-use wamux_tools::socket_client::{account_ref, connect_uds};
+use wamux_tools::socket_client::{account_ref, connect_uds, subscribe_account};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
@@ -29,11 +31,14 @@ async fn main() -> anyhow::Result<ExitCode> {
     let qr_png = PathBuf::from(format!("/tmp/wamux-qr-{external_ref}.png"));
     let channel = connect_uds(&socket_path).await?;
     let mut account = AccountServiceClient::new(channel.clone());
-    let mut messaging = MessagingServiceClient::new(channel);
+    let mut messaging = MessagingServiceClient::new(channel.clone());
     let mut report = Report::new();
 
     create_if_missing(&mut account, &mut report, &external_ref).await;
     let acct = account_ref(&external_ref);
+    // Before pairing, so the Paired and the CONNECTED after the 515 both land
+    // in this stream; the self-message waits for that CONNECTED (#108).
+    let mut events = subscribe_or_fail(&channel, &acct, &mut report).await;
     println!("calling PairWithQr over the socket (account '{external_ref}') ...");
     let stream = account
         .pair_with_qr(pb::PairWithQrRequest {
@@ -44,8 +49,10 @@ async fn main() -> anyhow::Result<ExitCode> {
     match stream {
         Ok(response) => {
             let jid = watch_pairing(response.into_inner(), &qr_png, &mut report).await;
-            if let Some(jid) = jid {
-                send_self(&mut messaging, &mut report, acct, jid).await;
+            if let (Some(jid), Some(events)) = (jid, events.as_mut()) {
+                let wait = RECONNECT_WAIT;
+                send_self_after_reconnect(&mut messaging, events, &mut report, acct, jid, wait)
+                    .await;
             }
         }
         Err(status) => report.fail("Account.PairWithQr", status.to_string()),
@@ -148,20 +155,18 @@ fn show_qr(code: &str, qr_png: &std::path::Path, opened: &mut bool) {
     }
 }
 
-/// A note to self: a self-chat has no delivery receipt and no fan-out
-/// (CLAUDE.md), so the send can only ever be `accepted`.
-async fn send_self(
-    messaging: &mut MessagingServiceClient<Channel>,
+/// A failed subscribe is a failed check, but pairing still goes ahead: the
+/// run then only cannot send the self-message.
+async fn subscribe_or_fail(
+    channel: &Channel,
+    acct: &pb::AccountRef,
     report: &mut Report,
-    acct: pb::AccountRef,
-    jid: String,
-) {
-    let request = pb::SendTextRequest {
-        account: Some(acct),
-        to: Some(pb::Jid { value: jid }),
-        text: "wamux: pareamento via socket + envio OK".to_string(),
-        ..Default::default()
-    };
-    let sent = messaging.send_text(request).await;
-    report.accepted_rpc("Messaging.SendText(self)", sent);
+) -> Option<tonic::Streaming<pb::EventEnvelope>> {
+    match subscribe_account(channel.clone(), acct).await {
+        Ok(stream) => Some(stream),
+        Err(e) => {
+            report.fail("EventService.SubscribeEvents", e.to_string());
+            None
+        }
+    }
 }

@@ -112,14 +112,14 @@ of nothing, proved nothing and exits non-zero.
 
 - **Needs:** Postgres (in process, no daemon) and a phone.
 - **Env:** `WAMUX_REF`, `DATABASE_URL`. Argument: `qr` or the international digits for a pair code (requested once, never retried).
-- **Proves:** pairing completes with a jid. The self-message that follows is only accepted (a self-chat has no receipt).
+- **Proves:** pairing completes with a jid. The self-message is sent after the post-pairing reconnect and is only accepted (a self-chat has no receipt). If the reconnect does not come in time the message is skipped, not failed.
 - **Writes to WhatsApp:** it links a device and sends one note to your own number.
 
 ### pair_socket
 
 - **Needs:** the daemon and a phone to scan the QR.
 - **Env:** `WAMUX_REF`, `WAMUX_SOCKET_PATH`.
-- **Proves:** pairing through the socket completes with a jid. The self-message that follows is only accepted.
+- **Proves:** pairing through the socket completes with a jid. The self-message is sent after the post-pairing reconnect and is only accepted. If the reconnect does not come in time the message is skipped, not failed.
 - **Writes to WhatsApp:** it links a device and sends one note to your own number.
 
 ### poll_live
