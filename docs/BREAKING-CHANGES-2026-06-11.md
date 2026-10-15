@@ -1,204 +1,207 @@
-# Breaking changes para a borda (wamux-http-edge) — 2026-06-11
+# Breaking changes for the edge (wamux-http-edge): 2026-06-11
 
-Consolidação de TODAS as mudanças de contrato do core desta rodada de
-code-review (correções críticas + lote de contrato). Tudo entra junto na
-working tree de hoje; a borda deve tratar este documento como o delta completo
-em relação ao contrato do fim do Sprint 5.
+Consolidation of ALL the core's contract changes from this code-review round
+(critical fixes + a contract batch). Everything lands together in today's
+working tree; the edge should treat this document as the complete delta
+against the contract at the end of Sprint 5.
 
-Arquivos .proto alterados: `proto/events.proto` e `proto/account.proto`
-(texto integral na seção final). Os demais (`messaging.proto`, `common.proto`,
-`media.proto`, `groups.proto`, `contacts.proto`, `admin.proto`) não mudaram
-nesta rodada.
+Changed .proto files: `proto/events.proto` and `proto/account.proto`
+(full text in the final section). The others (`messaging.proto`, `common.proto`,
+`media.proto`, `groups.proto`, `contacts.proto`, `admin.proto`) did not change
+in this round.
 
-Resumo por impacto:
+Summary by impact:
 
-| # | Mudança | Impacto na borda |
-|---|---------|------------------|
-| 1 | `ReceiptEvent.type` agora em tokens minúsculos | **BREAKING** (valores de string) |
-| 2 | `PresenceUpdate.chat_state` em minúsculas + novo valor `recording` | **BREAKING** (valores de string) |
-| 3 | `PairedInfo`: `push_name` removido; `business_name`, `lid`, `platform` adicionados | **BREAKING** (codegen + semântica) |
-| 4 | Gap do canal de criação virou `kind="subscription_gap"` | **BREAKING** (dispatch de gap) |
-| 5 | Replay sem duplicatas + replay full-ring para contas criadas pós-subscribe | Comportamental (a favor da borda) |
-| 6 | `SendMediaHeader.quote`/`mentions` agora são honrados | Comportamental (campos antes ignorados passam a ter efeito) |
-| 7 | Erros IQ: trailers `wa-code`/`wa-text` estruturados | Aditivo (migrar do parse de prosa) |
-| 8 | Wire WhatsApp: sem ContextInfo vazio; participant de quote em DM ausente em vez de `""` | Invisível na API do socket |
+| # | Change | Impact on the edge |
+|---|--------|--------------------|
+| 1 | `ReceiptEvent.type` is now lowercase tokens | **BREAKING** (string values) |
+| 2 | `PresenceUpdate.chat_state` in lowercase + new value `recording` | **BREAKING** (string values) |
+| 3 | `PairedInfo`: `push_name` removed; `business_name`, `lid`, `platform` added | **BREAKING** (codegen + semantics) |
+| 4 | The creation channel's gap became `kind="subscription_gap"` | **BREAKING** (gap dispatch) |
+| 5 | Replay without duplicates + full-ring replay for accounts created after subscribe | Behavioral (in the edge's favor) |
+| 6 | `SendMediaHeader.quote`/`mentions` are now honored | Behavioral (fields that used to be ignored now take effect) |
+| 7 | IQ errors: structured `wa-code`/`wa-text` trailers | Additive (migrate off prose parsing) |
+| 8 | WhatsApp wire: no empty ContextInfo; quote participant in a DM is absent instead of `""` | Invisible in the socket API |
 
 ---
 
-## 1. `ReceiptEvent.type`: tokens minúsculos (BREAKING)
+## 1. `ReceiptEvent.type`: lowercase tokens (BREAKING)
 
-**Antes:** o core emitia o Debug do Rust: `"Read"`, `"Delivered"`,
-`"Played"`, e até `"Other(\"...\")"` para tipos desconhecidos. O comentário do
-proto prometia `delivered|read|played` e nunca foi verdade.
+**Before:** the core emitted Rust's Debug output: `"Read"`, `"Delivered"`,
+`"Played"`, and even `"Other(\"...\")"` for unknown types. The proto comment
+promised `delivered|read|played` and it was never true.
 
-**Agora:** tokens minúsculos estáveis, exatamente os documentados no proto:
+**Now:** stable lowercase tokens, exactly the ones documented in the proto:
 
 ```
 delivered | read | played | read-self | played-self | sender | retry |
 enc_rekey_retry | server-error | inactive | peer_msg | hist_sync
 ```
 
-Tipo desconhecido relaya o atributo bruto da stanza verbatim (sem wrapper
-`Other(...)`).
+An unknown type relays the raw stanza attribute verbatim (no `Other(...)`
+wrapper).
 
-**Migração:** trocar qualquer match/comparação de `"Read"`/`"Delivered"` para
-os tokens minúsculos. Se a borda já normalizava com lowercase, conferir os
-hifenizados (`read-self`, `server-error`) que antes vinham como `ReadSelf`/
+**Migration:** change any match/comparison of `"Read"`/`"Delivered"` to the
+lowercase tokens. If the edge already normalized with lowercase, check the
+hyphenated ones (`read-self`, `server-error`), which used to arrive as
+`ReadSelf`/
 `ServerError`.
 
-## 2. `PresenceUpdate.chat_state`: minúsculas + `recording` (BREAKING)
+## 2. `PresenceUpdate.chat_state`: lowercase + `recording` (BREAKING)
 
-**Antes:** `"Composing"` ou `"Paused"` (Debug). "Gravando áudio" era
-indistinguível de "digitando" (a lib modela recording como Composing com
-media=Audio, e o Debug ignorava o media).
+**Before:** `"Composing"` or `"Paused"` (Debug). "Recording audio" was
+indistinguishable from "typing" (the lib models recording as Composing with
+media=Audio, and Debug ignored the media).
 
-**Agora:** `composing` | `recording` | `paused` | `""` (string vazia continua
-sendo "presença sem chat state", vinda de PresenceUpdate online/offline).
+**Now:** `composing` | `recording` | `paused` | `""` (the empty string still
+means "presence without chat state", coming from an online/offline
+PresenceUpdate).
 
-Bônus de simetria: esses são os mesmos tokens que `SendPresenceRequest.state`
-aceita, então a borda pode espelhar o valor observado de volta sem traduzir.
+Symmetry bonus: these are the same tokens that `SendPresenceRequest.state`
+accepts, so the edge can mirror the observed value back without translating.
 
-**Migração:** trocar `"Composing"` → `"composing"`, `"Paused"` → `"paused"`,
-e tratar o novo `"recording"` (antes ele chegava como `"Composing"`).
+**Migration:** change `"Composing"` → `"composing"`, `"Paused"` → `"paused"`,
+and handle the new `"recording"` (it used to arrive as `"Composing"`).
 
-## 3. `PairedInfo` reformulado (BREAKING)
+## 3. `PairedInfo` reworked (BREAKING)
 
-**Antes:**
+**Before:**
 ```proto
 message PairedInfo {
   Jid jid = 1;
-  string push_name = 2;   // na prática carregava o business_name!
+  string push_name = 2;   // in practice it carried the business_name!
 }
 ```
 
-**Agora:**
+**Now:**
 ```proto
 message PairedInfo {
   Jid jid = 1;
   reserved 2; reserved "push_name";
-  string business_name = 3;   // vazio para contas pessoais
-  Jid lid = 4;                // identidade LID (hidden-PN) da conta
-  string platform = 5;        // ex.: "android", "smba", "iphone"
+  string business_name = 3;   // empty for personal accounts
+  Jid lid = 4;                // the account's LID (hidden-PN) identity
+  string platform = 5;        // e.g.: "android", "smba", "iphone"
 }
 ```
 
-**Por quê:** o evento PairSuccess da lib não carrega push name nenhum; o campo
-antigo entregava o nome comercial sob um nome enganoso (e string vazia para
-toda conta pessoal). Push names reais chegam depois, via eventos
-`PushNameUpdate` (e `Account.push_name`/`AccountStatus.push_name`, que não
-mudaram).
+**Why:** the lib's PairSuccess event carries no push name at all; the old
+field delivered the business name under a misleading name (and an empty string
+for every personal account). Real push names arrive later, via `PushNameUpdate`
+events (and `Account.push_name`/`AccountStatus.push_name`, which did not
+change).
 
-**Migração:** regenerar o cliente a partir dos protos; qualquer leitura de
-`paired.push_name` quebra em compile/codegen (intencional). Usar
-`business_name` se o que se queria era o nome comercial; para push name,
-consumir `PushNameUpdate`. `lid` e `platform` são informação nova que antes
-era descartada.
+**Migration:** regenerate the client from the protos; any read of
+`paired.push_name` breaks at compile/codegen time (intentional). Use
+`business_name` if what you wanted was the business name; for the push name,
+consume `PushNameUpdate`. `lid` and `platform` are new information that used
+to be discarded.
 
-## 4. Gap do canal de criação: `kind="subscription_gap"` (BREAKING)
+## 4. Creation channel gap: `kind="subscription_gap"` (BREAKING)
 
-**Antes:** os dois tipos de gap usavam `RawEvent.kind="gap"`, distinguíveis só
-pelo `account_uuid` vazio e pelo texto da nota. Uma borda que seguisse o
-contrato documentado ("gap → resync via GetAccountStatus") chamaria
-`GetAccountStatus("")` e receberia InvalidArgument.
+**Before:** both kinds of gap used `RawEvent.kind="gap"`, distinguishable only
+by the empty `account_uuid` and by the note text. An edge that followed the
+documented contract ("gap → resync via GetAccountStatus") would call
+`GetAccountStatus("")` and get InvalidArgument.
 
-**Agora:** dois kinds reservados, documentados no proto (`RawEvent`):
+**Now:** two reserved kinds, documented in the proto (`RawEvent`):
 
-- `kind="gap"`: o assinante de UMA conta lagou o buffer; `account_uuid`
-  preenchido; recuperação = `GetAccountStatus` daquela conta.
-- `kind="subscription_gap"`: o canal de contas-criadas do stream all-accounts
-  lagou (burst de >64 creates); `account_uuid` vazio; recuperação =
-  re-assinar ou reconciliar via `ListAccounts`.
+- `kind="gap"`: ONE account's subscriber lagged the buffer; `account_uuid`
+  is set; recovery = `GetAccountStatus` for that account.
+- `kind="subscription_gap"`: the created-accounts channel of the all-accounts
+  stream lagged (burst of >64 creates); `account_uuid` is empty; recovery =
+  re-subscribe or reconcile via `ListAccounts`.
 
-Ambos mantêm `monotonic_seq = -1` e payload vazio. A nota continua existindo,
-mas é prosa para humanos, não contrato.
+Both keep `monotonic_seq = -1` and an empty payload. The note still exists,
+but it is prose for humans, not contract.
 
-**Migração:** dispatch de gaps por `kind`, nunca por nota nem por uuid vazio.
-O `subscription_gap` só existe desde o Sprint 5; se a borda ainda não trata o
-gap de all-accounts, basta implementar direto no kind novo.
+**Migration:** dispatch gaps by `kind`, never by note or by empty uuid.
+`subscription_gap` has only existed since Sprint 5; if the edge does not yet
+handle the all-accounts gap, just implement it directly on the new kind.
 
-## 5. Semântica de replay (comportamental, a favor da borda)
+## 5. Replay semantics (behavioral, in the edge's favor)
 
-Duas garantias novas, documentadas em `SubscribeRequest.replay_from_ring`:
+Two new guarantees, documented in `SubscribeRequest.replay_from_ring`:
 
-- **Sem duplicatas dentro de um stream.** Antes, um evento publicado na
-  janela entre o subscribe interno e o snapshot do ring chegava duas vezes
-  (replay + live) com o mesmo `monotonic_seq`. Agora o core filtra o overlap.
-  Borda que já dedupava por `(account_uuid, monotonic_seq)` continua correta
-  e simplesmente nunca mais verá duplicata.
-- **Conta criada DEPOIS do subscribe all-accounts sempre replaya o ring
-  inteiro, mesmo com `replay_from_ring=0`.** "Live only" não se aplica a
-  eventos emitidos antes do forwarder anexar; sem isso, o QR de pareamento de
-  uma conta recém-criada podia se perder. Efeito visível: um stream live-only
-  passa a receber os primeiros eventos de contas novas que antes sumiam.
-  (Exceção de config: `ring_capacity=0` desliga o ring e a janela volta a
-  existir.)
+- **No duplicates within a stream.** Before, an event published in the window
+  between the internal subscribe and the ring snapshot arrived twice
+  (replay + live) with the same `monotonic_seq`. Now the core filters the
+  overlap. An edge that already deduplicated by `(account_uuid, monotonic_seq)`
+  stays correct and simply never sees a duplicate again.
+- **An account created AFTER the all-accounts subscribe always replays the
+  whole ring, even with `replay_from_ring=0`.** "Live only" does not apply to
+  events emitted before the forwarder attached; without this, the pairing QR
+  of a freshly created account could be lost. Visible effect: a live-only
+  stream now receives the first events of new accounts, events that used to
+  vanish.
+  (Config exception: `ring_capacity=0` turns the ring off and the window
+  exists again.)
 
-**Migração:** nenhuma obrigatória. Se a borda tinha workaround de
-"re-assinar com replay>=1 depois de CreateAccount", pode remover.
+**Migration:** none required. If the edge had a workaround of
+"re-subscribe with replay>=1 after CreateAccount", it can remove it.
 
-## 6. `SendMediaHeader.quote` e `mentions` agora têm efeito (comportamental)
+## 6. `SendMediaHeader.quote` and `mentions` now take effect (behavioral)
 
-**Antes:** os campos 7/8 do `SendMediaHeader` existiam no proto mas eram
-silenciosamente descartados: mídia saía sem balão de resposta e sem menção,
-com SendResult OK.
+**Before:** fields 7/8 of `SendMediaHeader` existed in the proto but were
+silently dropped: media went out with no reply bubble and no mention,
+with SendResult OK.
 
-**Agora:** quote + mentions + ephemeral compõem num único ContextInfo, com a
-mesma semântica do caminho de texto (incluindo a precedência
-`QuoteContext.participant` > `quoted.participant` e o mapeamento de string
-vazia para campo ausente).
+**Now:** quote + mentions + ephemeral compose into a single ContextInfo, with
+the same semantics as the text path (including the precedence
+`QuoteContext.participant` > `quoted.participant` and the mapping of an empty
+string to an absent field).
 
-**Migração:** nenhuma mudança de chamada. Mas atenção: se a borda já enviava
-esses campos achando que funcionavam, eles passam a funcionar de verdade
-agora; se ela os preenchia com lixo "porque não fazia diferença", revisar.
+**Migration:** no call changes. But note: if the edge was already sending
+these fields thinking they worked, they now really work; if it filled them
+with junk "because it made no difference", review that.
 
-## 7. Erros IQ: metadata estruturada `wa-code`/`wa-text` (aditivo)
+## 7. IQ errors: structured `wa-code`/`wa-text` metadata (additive)
 
-Toda rejeição IQ do servidor WhatsApp (`WaServer`) agora carrega trailers
-gRPC além do Status:
+Every IQ rejection from the WhatsApp server (`WaServer`) now carries gRPC
+trailers in addition to the Status:
 
-- `wa-code`: o código IQ bruto (ex.: `403`, `409`), sempre presente.
-- `wa-text`: o texto da stanza (ex.: `forbidden`), presente quando for ASCII
-  válido.
+- `wa-code`: the raw IQ code (e.g.: `403`, `409`), always present.
+- `wa-text`: the stanza text (e.g.: `forbidden`), present when it is valid
+  ASCII.
 
-O mapeamento código→Status não mudou (400→InvalidArgument,
+The code→Status mapping did not change (400→InvalidArgument,
 401→Unauthenticated, 403→PermissionDenied, 404→NotFound,
-429→ResourceExhausted, resto→Unavailable), e a mensagem em prosa
-(`whatsapp server rejected the request: code=..., text='...'`) continua igual
-por compatibilidade.
+429→ResourceExhausted, everything else→Unavailable), and the prose message
+(`whatsapp server rejected the request: code=..., text='...'`) stays the same
+for compatibility.
 
-**Migração recomendada:** trocar qualquer regex sobre a mensagem
-(`code=(\d+)`) pela leitura dos trailers. A prosa passa a ser considerada
-livre para mudar; os trailers são o contrato. Em especial, códigos não
-mapeados (405/406/409/500) que colapsam em Unavailable agora são
-distinguíveis de queda de conexão pelo `wa-code` (erro de conexão genérico
-não carrega trailer nenhum).
+**Recommended migration:** replace any regex over the message
+(`code=(\d+)`) with reading the trailers. The prose is now considered free to
+change; the trailers are the contract. In particular, unmapped codes
+(405/406/409/500) that collapse into Unavailable can now be told apart from a
+dropped connection by `wa-code` (a generic connection error carries no
+trailer at all).
 
-## 8. Wire WhatsApp (sem impacto na API do socket)
+## 8. WhatsApp wire (no impact on the socket API)
 
-Mudanças no que o core põe no fio para o WhatsApp, não no gRPC:
+Changes in what the core puts on the wire to WhatsApp, not in gRPC:
 
-- Texto só com link_preview não emite mais um ContextInfo presente-porém-vazio
-  (forma não canônica que nenhum cliente oficial produz).
-- Quote em DM (participants vazios) emite o campo participant AUSENTE em vez
-  de `Some("")` (JID vazio inválido).
-- Recibos/presence/pareamento: nada mudou no fio, só na representação gRPC
-  (itens 1 a 3).
+- Text with only a link_preview no longer emits a present-but-empty
+  ContextInfo (a non-canonical shape that no official client produces).
+- A quote in a DM (empty participants) emits the participant field ABSENT
+  instead of `Some("")` (an invalid empty JID).
+- Receipts/presence/pairing: nothing changed on the wire, only in the gRPC
+  representation (items 1 to 3).
 
-## Mudanças internas sem contrato (FYI)
+## Internal changes without a contract (FYI)
 
-- Forwarders de eventos agora encerram quando o cliente desconecta
-  (`tx.closed()`), eliminando vazamento de tasks/handles de contas ociosas ou
-  deletadas em streams longos.
-- `MediaKind` interno único deriva upload e sub-message (impossível mislabel
-  de mídia por drift de matches).
-- `scripts/ci.sh`: aceita DATABASE_URL sem porta explícita e falha se um gate
-  filtrado rodar 0 testes.
-- Adiado de propósito: capacidade 64 do canal created_tx (ver
+- Event forwarders now terminate when the client disconnects
+  (`tx.closed()`), eliminating the leak of tasks/handles of idle or deleted
+  accounts in long streams.
+- A single internal `MediaKind` derives the upload and the sub-message
+  (mislabeling media through drifting matches is impossible).
+- `scripts/ci.sh`: accepts DATABASE_URL without an explicit port and fails if a
+  filtered gate runs 0 tests.
+- Deferred on purpose: capacity 64 of the created_tx channel (see
   `docs/DEFERRED.md`).
 
 ---
 
-## proto/events.proto (novo, integral)
+## proto/events.proto (new, full text)
 
 ```proto
 syntax = "proto3";
@@ -341,7 +344,7 @@ service EventService {
 }
 ```
 
-## proto/account.proto (novo, integral)
+## proto/account.proto (new, full text)
 
 ```proto
 syntax = "proto3";
@@ -440,17 +443,17 @@ service AccountService {
 }
 ```
 
-## Checklist de migração da borda
+## Edge migration checklist
 
-1. Copiar os novos `events.proto` e `account.proto` (ou apontar para o
-   `proto/` do core) e regenerar o cliente gRPC.
-2. Corrigir o que o codegen quebrar: `PairedInfo.push_name` não existe mais.
-3. Buscar e atualizar comparações de string: `"Read"`, `"Delivered"`,
-   `"Played"`, `"Composing"`, `"Paused"` → tokens minúsculos; adicionar
+1. Copy the new `events.proto` and `account.proto` (or point at the core's
+   `proto/`) and regenerate the gRPC client.
+2. Fix whatever codegen breaks: `PairedInfo.push_name` no longer exists.
+3. Search for and update string comparisons: `"Read"`, `"Delivered"`,
+   `"Played"`, `"Composing"`, `"Paused"` → lowercase tokens; add
    `"recording"`.
-4. Dispatch de gaps por `kind` (`gap` vs `subscription_gap`).
-5. Trocar parse de `code=(\d+)` na mensagem de erro pelos trailers
-   `wa-code`/`wa-text`.
-6. Remover workarounds de replay (dedupe por seq vira no-op; re-subscribe
-   pós-CreateAccount fica desnecessário).
-7. Revisar envios de mídia que preenchem `quote`/`mentions`: agora têm efeito.
+4. Dispatch gaps by `kind` (`gap` vs `subscription_gap`).
+5. Replace the `code=(\d+)` parse of the error message with the
+   `wa-code`/`wa-text` trailers.
+6. Remove replay workarounds (dedupe by seq becomes a no-op; re-subscribing
+   after CreateAccount becomes unnecessary).
+7. Review media sends that fill `quote`/`mentions`: they now take effect.
