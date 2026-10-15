@@ -10,6 +10,7 @@ use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
+use wamux::proto::v1::event_service_client::EventServiceClient;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -21,6 +22,10 @@ pub enum ClientError {
     },
     #[error("account {account} did not reach CONNECTED with a jid within {waited:?}")]
     NotConnected { account: String, waited: Duration },
+    #[error("the account did not reconnect within {waited:?} after pairing")]
+    NotReconnected { waited: Duration },
+    #[error("the event stream ended before the account reconnected")]
+    EventsEnded,
     #[error("{rpc} failed: {status}")]
     Rpc {
         rpc: &'static str,
@@ -51,6 +56,26 @@ pub fn account_ref(external: &str) -> pb::AccountRef {
     pb::AccountRef {
         r#ref: Some(pb::account_ref::Ref::ExternalRef(external.to_string())),
     }
+}
+
+/// Subscribe to one account's live events (no replay: an old CONNECTED left
+/// in the ring by an earlier connection must not count as a new one).
+pub async fn subscribe_account(
+    channel: Channel,
+    acct: &pb::AccountRef,
+) -> Result<tonic::Streaming<pb::EventEnvelope>, ClientError> {
+    let request = pb::SubscribeRequest {
+        selector: Some(pb::subscribe_request::Selector::Account(acct.clone())),
+        replay_from_ring: 0,
+    };
+    EventServiceClient::new(channel)
+        .subscribe_events(request)
+        .await
+        .map(tonic::Response::into_inner)
+        .map_err(|status| ClientError::Rpc {
+            rpc: "SubscribeEvents",
+            status,
+        })
 }
 
 /// How often the status is polled while waiting for CONNECTED.

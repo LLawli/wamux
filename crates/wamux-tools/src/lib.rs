@@ -10,6 +10,7 @@ pub mod delivery;
 pub mod inproc;
 pub mod live_env;
 pub mod media_kit;
+pub mod post_pairing;
 pub mod profile;
 pub mod qr;
 pub mod report;
