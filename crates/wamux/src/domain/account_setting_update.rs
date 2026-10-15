@@ -37,7 +37,9 @@ pub fn status_privacy_update_of(update: &StatusPrivacyUpdate) -> pb::AccountSett
     }
 }
 
-fn status_privacy_of(action: &StatusPrivacyAction) -> pb::StatusPrivacySetting {
+/// Shared by the event and the `GetStatusAudience` snapshot (#89), so the two
+/// cannot drift.
+pub(crate) fn status_privacy_of(action: &StatusPrivacyAction) -> pb::StatusPrivacySetting {
     pb::StatusPrivacySetting {
         mode: action.mode.map(status_audience_of),
         users: jids_of(&action.user_jid),

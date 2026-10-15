@@ -1,4 +1,4 @@
-//! MessagingService through the socket (#71): all 23 RPCs over a real Unix
+//! MessagingService through the socket (#71): all 24 RPCs over a real Unix
 //! socket and tonic client, with a companion account logged in against
 //! `MockWaServer`.
 //!
@@ -32,5 +32,6 @@ mod rich;
 mod sends;
 mod spool;
 mod status;
+mod status_audience;
 mod statuses;
 mod typed_inputs;

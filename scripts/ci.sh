@@ -214,7 +214,7 @@ scripts/check-service-coverage.py NewsletterService crates/wamux/tests/newslette
 
 # #71: same net under MessagingService (23 RPCs).
 stage "MessagingService RPC coverage"
-scripts/check-service-coverage.py MessagingService crates/wamux/tests/messaging_service 23
+scripts/check-service-coverage.py MessagingService crates/wamux/tests/messaging_service 24
 
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend

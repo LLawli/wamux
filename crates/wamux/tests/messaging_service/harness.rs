@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use tonic::transport::Channel;
+use wacore::store::Device;
 use wacore_binary::Node;
 use wamux::config::Config;
 use wamux::proto::v1 as pb;
@@ -51,16 +52,25 @@ pub struct Fixture {
 }
 
 pub async fn fixture(test: &str) -> Fixture {
-    let config = Config {
-        media_max_bytes: MEDIA_LIMIT,
-        ..Config::default()
-    };
-    fixture_with(test, config).await
+    fixture_shaped(test, |_| {}).await
 }
 
 /// `fixture` with a config of the test's choosing (#79: the spool directory,
 /// its budget and the size limit).
 pub async fn fixture_with(test: &str, config: Config) -> Fixture {
+    fixture_built(test, config, |_| {}).await
+}
+
+/// `fixture` with the account's device shaped before it logs in (#89).
+pub async fn fixture_shaped(test: &str, shape: impl FnOnce(&mut Device)) -> Fixture {
+    let config = Config {
+        media_max_bytes: MEDIA_LIMIT,
+        ..Config::default()
+    };
+    fixture_built(test, config, shape).await
+}
+
+async fn fixture_built(test: &str, config: Config, shape: impl FnOnce(&mut Device)) -> Fixture {
     let mock = MockWaServer::start_as(MockIdentity {
         lid: OWN_LID.to_string(),
     })
@@ -82,7 +92,7 @@ pub async fn fixture_with(test: &str, config: Config) -> Fixture {
     }
     mock.serve_group(GROUP, &[&peer, &other]);
     let prefix = common::test_prefix("messaging_service", test);
-    let logged = common::logged_in_companion(&mock, &prefix).await;
+    let logged = common::logged_in_companion(&mock, &prefix, shape).await;
     await_login_presence(&mock).await;
     let channel = common::serve_registry_with(logged.registry.clone(), config).await;
     let account = account_ref(&logged.handle.uuid.to_string());

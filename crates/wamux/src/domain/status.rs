@@ -7,6 +7,7 @@ use whatsapp_rust::buffa::Enumeration;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::FontType;
 use whatsapp_rust::{Client, Jid as LibJid, SendResult, StatusSendOptions};
 
+use crate::domain::account_setting_update::status_privacy_of;
 use crate::domain::media_transfer;
 use crate::domain::wire_defaults::nonempty_string;
 use crate::error::{WamuxError, client_err};
@@ -112,6 +113,18 @@ pub async fn revoke_status(
         )
         .await
         .map_err(client_err)
+}
+
+/// The status audience the library last synced (#89). A sync read of the
+/// device snapshot; `None` (no audience yet) crosses as an unset `audience`,
+/// never as a default that would read as "all contacts".
+pub fn status_audience(client: &Client) -> crate::proto::v1::StatusAudienceResponse {
+    crate::proto::v1::StatusAudienceResponse {
+        audience: client
+            .status()
+            .audience()
+            .map(|action| status_privacy_of(&action)),
+    }
 }
 
 #[cfg(test)]

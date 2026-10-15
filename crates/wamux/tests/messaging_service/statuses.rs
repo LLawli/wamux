@@ -10,7 +10,7 @@ use crate::every_rpc::call_every_rpc;
 use crate::harness::{Fixture, assert_only_the_probe_was_sent, fixture, jid, key, wire_count};
 
 fn assert_every(results: &[(&str, Result<(), tonic::Status>)], code: Code) {
-    assert_eq!(results.len(), 23, "all 23 RPCs");
+    assert_eq!(results.len(), 24, "all 24 RPCs");
     for (rpc, result) in results {
         let status = result.as_ref().expect_err(rpc);
         assert_eq!(status.code(), code, "{rpc}: {status:?}");
