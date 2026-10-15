@@ -372,10 +372,18 @@ pub const COMPANION_PN: &str = "5511999999999:7@s.whatsapp.net";
 /// client embeds it in a pkmsg and never verifies it) and app-state sync
 /// state, so a chat action sends its patch at once. Waits until the client
 /// has also taken its LID from `<success>`, which group and status sends need.
+/// `shape` is one more touch on the device before it logs in: state the
+/// library would otherwise only learn from the phone (#89: a synced status
+/// audience).
 #[cfg(feature = "stress")]
-pub async fn logged_in_companion(mock: &wamux::stress::MockWaServer, prefix: &str) -> LoggedIn {
+pub async fn logged_in_companion(
+    mock: &wamux::stress::MockWaServer,
+    prefix: &str,
+    shape: impl FnOnce(&mut Device),
+) -> LoggedIn {
     let (registry, handle) = registered_account_as(mock.ws_url(), prefix, COMPANION_PN, |device| {
         device.account = Some(Arc::new(zeroed_adv_identity()));
+        shape(device);
     })
     .await;
     let backend = registry.storage().device_backend(handle.device_id);

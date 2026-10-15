@@ -1,4 +1,4 @@
-//! Every one of the 23 RPCs, called for one account with arguments valid in
+//! Every one of the 24 RPCs, called for one account with arguments valid in
 //! shape, for the tests that check a status all of them share. The name is
 //! the proto RPC, so a failure says which one.
 
@@ -318,6 +318,10 @@ async fn statuses(
             })
             .await
             .map(drop),
+        ),
+        (
+            "GetStatusAudience",
+            m.get_status_audience(account.clone()).await.map(drop),
         ),
     ]
 }

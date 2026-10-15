@@ -3,6 +3,7 @@ syntax = "proto3";
 package wamux.v1;
 
 import "common.proto";
+import "app_state.proto";
 
 // Link-preview card for an outgoing text. The EDGE fetches the URL and
 // supplies every field here; the core relays them verbatim and performs no
@@ -367,6 +368,18 @@ message RevokeStatusRequest {
   repeated Jid recipients = 4;    // the same device set the status was posted to
 }
 
+// The account's status audience as the library last synced it from the phone
+// (#89): the same `StatusPrivacySetting` an `AccountSettingUpdate` carries, read
+// back on demand, because the event only comes live or from the full sync at
+// pairing and an edge that missed it has no other way to recover it.
+//
+// `audience` unset means no audience has been synced yet. That is NOT "all
+// contacts", and neither is an UNKNOWN mode. The audience is informative: a
+// status still goes to exactly the `recipients` the edge posts it to.
+message StatusAudienceResponse {
+  StatusPrivacySetting audience = 1;
+}
+
 // --- Answering a button, a list or a template (issue #28) ---
 //
 // An offer (`buttonsMessage`, `listMessage`, `templateMessage`,
@@ -504,4 +517,7 @@ service MessagingService {
   // The answer's key is the revoke stanza's own, like EditMessage's; the
   // status it revoked is the echo's `protocol_target`.
   rpc RevokeStatus(RevokeStatusRequest) returns (SendResult);
+  // The status audience the library holds for this account; reads nothing
+  // from the server (#89).
+  rpc GetStatusAudience(AccountRef) returns (StatusAudienceResponse);
 }

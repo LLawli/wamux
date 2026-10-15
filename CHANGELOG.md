@@ -127,6 +127,17 @@ has to follow them.
 
 ### Added
 
+- **`MessagingService.GetStatusAudience`: the status audience, read on demand**
+  (issue #89). The audience change itself already reaches the socket as
+  `AccountSettingUpdate.status_privacy` (#149), but only live or from the full
+  sync at pairing: an edge that started later, lost its own state or missed the
+  event beyond the replay ring had no way to get the current audience back. The
+  new RPC returns the `StatusPrivacySetting` the library holds for the account
+  (`client.status().audience()`, persisted since #86), through the same mapper
+  the event uses. It reads nothing from the server. `audience` unset means no
+  audience has been synced yet, which is not "all contacts", and neither is an
+  UNKNOWN mode; a status still goes to exactly the `recipients` the edge posts
+  it to. Additive: no field or RPC changes for existing clients.
 - **Comment policy, with a CI guard** (issue #85). `CONTRIBUTING.md` and
   `CLAUDE.md` now say what a code comment is for: an invariant, a constraint or a
   reason, with an issue number as a pointer next to it; history (what the code

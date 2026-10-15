@@ -75,6 +75,11 @@ are noted here.
     (issue #13).
   - `RevokeStatus` needs the edge to hand back the recipients it posted to
     (issue #41).
+  - `GetStatusAudience` reads the audience the library last synced from the
+    phone, the same `StatusPrivacySetting` an `AccountSettingUpdate` event
+    carries (issue #89). An unset `audience` is "not synced yet", never "all
+    contacts", and the audience chooses no recipients: a status goes to the
+    `recipients` the edge posts it to.
 - **MediaService**: `DownloadMedia` (server stream: meta frame + byte chunks).
 - **GroupService**, **NewsletterService**: group and channel operations.
 - **ContactService**: lookups, profile, push name, presence subscription, identity.

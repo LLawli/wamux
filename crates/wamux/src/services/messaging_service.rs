@@ -451,4 +451,13 @@ impl MessagingService for MessagingSvc {
         let result = status::revoke_status(&client, revoke).await?;
         Ok(self.echoed(&handle, &client, result).await)
     }
+
+    async fn get_status_audience(
+        &self,
+        request: Request<pb::AccountRef>,
+    ) -> Result<Response<pb::StatusAudienceResponse>, Status> {
+        let reference = request.into_inner();
+        let client = client_of(&self.registry, Some(&reference)).await?;
+        Ok(Response::new(status::status_audience(&client)))
+    }
 }
