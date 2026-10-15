@@ -46,8 +46,9 @@ services:
       WAMUX_MEDIA_SPOOL_DIR: /var/lib/wamux/spool
     volumes:
       # Bind mount, not a named volume: a named volume lives under
-      # /var/lib/docker and is root-only, which puts the socket out of reach of
-      # a consumer running as you on this host. See docs/DEPLOYMENT.md for the
+      # /var/lib/docker, which only root can traverse (0710 root:root), so the
+      # socket in it is out of reach of a consumer running as you on this host
+      # whatever the volume's own owner and mode. See docs/DEPLOYMENT.md for the
       # container-to-container variant, where a named volume IS the right call.
       - ./run:/run/wamux
       - wamux-spool:/var/lib/wamux
