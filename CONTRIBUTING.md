@@ -110,3 +110,15 @@ diff. Run the gates before pushing.
 
 Documentation, code comments, commit messages and issues are written in English.
 `scripts/check-doc-language.py` fails CI on Portuguese in docs and comments.
+
+## Releasing
+
+`bin/release X.Y.Z` cuts a release from an empty working copy on top of
+`main@origin`. It bumps `[workspace.package].version`, turns `[Unreleased]` in
+`CHANGELOG.md` into the dated `[X.Y.Z]` section, runs `scripts/ci.sh`, commits
+`chore: release vX.Y.Z`, pushes `main`, then tags that commit with a signed tag
+and pushes the tag. The tag starts `.github/workflows/release.yml`: the tarball
+with its `.sha256` and attestation on the GitHub release, then the GHCR image.
+
+`--no-push` stops after the local commit, to read what it did. In `0.x` a
+breaking wire change bumps the minor version.
