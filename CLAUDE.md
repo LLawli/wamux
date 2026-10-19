@@ -57,6 +57,11 @@ badly, and the second one was the trap:
   bundle the server *did* return reads as absent. No session is built, `send::encrypt`
   skips the device, and the stanza ships carrying nothing for the recipient's handset.
   Fixed upstream in [#1362](https://github.com/oxidezap/whatsapp-rust/pull/1362).
+- On the current pin (`6f07e3ab`) the library's own parse collapses `@c.us` into the
+  phone namespace (`Server::Pn`) for text, wire and serde alike, so past the boundary
+  the legacy spelling no longer exists: `wamux_types::Jid` holds `@s.whatsapp.net`. The
+  defect above is the 0.7.0 behavior. Code that tries to refuse or special-case `@c.us`
+  after parsing cannot see it (#197 learned this the hard way).
 
 Measured on 2026-08-31 against the two production accounts on 0.7.0: the modern spelling
 delivers (`delivered` receipts, no library warnings), and it is the legacy spelling that
