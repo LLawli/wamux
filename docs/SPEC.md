@@ -82,7 +82,9 @@ are noted here.
     `recipients` the edge posts it to.
 - **MediaService**: `DownloadMedia` (server stream: meta frame + byte chunks).
 - **GroupService**, **NewsletterService**: group and channel operations.
-- **ContactService**: lookups, profile, push name, presence subscription, identity.
+- **ContactService**: lookups, profile, push name, about text, presence subscription,
+  identity, blocklist. `BlockContact` needs the LID<->PN pair the client already
+  learned (`FailedPrecondition` without it); the core never resolves it itself.
   `GetPushName` takes an `AccountRef`: it is the account's OWN name, the getter
   that pairs with `SetPushName`.
 - **AdminService**: Prometheus metrics and the daemon's liveness/readiness check

@@ -63,8 +63,8 @@ See [`docs/SPEC.md`](SPEC.md) for the technical design.
    membership requests (list/approve/reject).
 10. **Contacts/profile**: check-number-on-WhatsApp, profile picture (get anyone's,
     set/remove the account's own), the account's own push name (get/set), a
-    contact's about text, business profile, subscribe to a contact's presence,
-    LID/PN resolution.
+    contact's about text and the account's own (set), business profile, subscribe
+    to a contact's presence, LID/PN resolution, block/unblock and the blocklist.
 11. **Channels (newsletters)**: list followed channels, read metadata and messages
     (with the server-side reaction and poll tallies), vote in channel polls, read
     back the account's own reactions and votes, subscribe to live updates.
