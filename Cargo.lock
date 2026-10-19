@@ -4707,7 +4707,7 @@ dependencies = [
 
 [[package]]
 name = "wamux"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4757,7 +4757,7 @@ dependencies = [
 
 [[package]]
 name = "wamux-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -4769,7 +4769,7 @@ dependencies = [
 
 [[package]]
 name = "wamux-tools"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "hyper-util",
@@ -4794,7 +4794,7 @@ dependencies = [
 
 [[package]]
 name = "wamux-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "prost",
