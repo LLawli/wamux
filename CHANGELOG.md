@@ -72,6 +72,18 @@ has to follow them.
   new RPC fails CI until a test calls it. Additive: no field or RPC changes for
   existing clients.
 
+### Security
+
+- **rustls-webpki 0.103.16 and webpki-roots 1.0.10** (RUSTSEC-2026-0382 and
+  RUSTSEC-2026-0381, CVE-2026-111943, published 2026-10-19 and 2026-10-20).
+  Certificate verification could accept a path through the distrusted emSign
+  intermediates, whose private keys are now public. These crates verify the
+  WhatsApp WebSocket transport, the media CDN client and sqlx's TLS. sqlx 0.8
+  still pulls `webpki-roots` 0.26.11, which only re-exports 1.x and so uses the
+  patched roots; cargo-audit flags it by version number, so it is ignored in
+  `.cargo/audit.toml` until sqlx moves past it (#209). Lockfile only; no code
+  or wire change.
+
 ## [0.2.0] - 2026-10-19
 
 ### Changed
