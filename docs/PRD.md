@@ -102,8 +102,9 @@ without a socket.
 Real pairing and delivery need live WhatsApp credentials and are exercised manually.
 
 ## Out of scope
-HTTP/auth/permissions edge; message-history persistence; placing, answering or
-rejecting voice/video calls (call signaling reaches the edge only as events);
+HTTP/auth/permissions edge; message-history persistence; placing or answering
+voice/video calls (call signaling reaches the edge as events, and the edge can
+reject one with `CallService.RejectCall`);
 community management (community data reaches the edge only through group metadata
 and events); administering a channel (editing it, its picture, its admins,
 deleting it) and posting to one; sending interactive (button/list)

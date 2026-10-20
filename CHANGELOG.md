@@ -14,6 +14,17 @@ has to follow them.
 
 ### Added
 
+- **`CallService`: reject an incoming call** (issue #200). A call reaches the
+  edge only as a `CallEvent`, and nothing let it decline one, so the phone kept
+  ringing. `RejectCall` takes a `RejectCallRequest` (`account`, `call_id`,
+  `peer`, `call_creator`) and answers `Empty`. The three identifiers come from
+  the `CallEvent`: `peer` is its `from`, `call_creator` its `call_creator`. They
+  stay separate because they differ for a companion device. Success means the
+  stanza was sent: the library sends one `<call><reject/></call>` and waits for
+  no answer. An empty `call_id` is `InvalidArgument` and nothing is sent. Placing
+  and answering calls stay out of scope. `scripts/ci.sh` now expects 1
+  CallService RPC covered by the socket suite. Additive: no field or RPC changes
+  for existing clients.
 - **`NewsletterService`: follow, unfollow, mute and create a channel** (issue
   #199). The service could read channels and vote in their polls but not change
   which ones the account follows, and the edge cannot compose any of these.
