@@ -39,7 +39,7 @@ wacore.workspace = true
 whatsapp-rust.workspace = true
 # blocking HTTP GET used by the media probes (ureq 2; the daemon uses ureq 3
 # through whatsapp-rust-ureq-http-client)
-ureq = "2"
+ureq = "3"
 # QR rendering for the pairing validator (pair_cli): matrix -> PNG/ASCII
 qrcode = { version = "0.14", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
