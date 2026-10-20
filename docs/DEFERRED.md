@@ -26,15 +26,23 @@ broadcast_capacity`, promoted from hardcode to config in Sprint 3).
   capacity becomes config" is not the project's norm; only the hot-path
   broadcast was promoted.
 
-**When to revisit.** On the next real change to `RegistryTuning` or to the
-`account_registry` module: promoting the 64 to a `created_channel_capacity`
-field (default 64) is cheap while you are already there and removes the
-asymmetry with `broadcast_capacity`. Also revisit earlier if any deployment
-does bulk provisioning with all-accounts streams open and `subscription_gap`
-markers show up in the edge's logs.
+**When to revisit.** When either of these is seen, not "when someone is
+nearby":
+- an all-accounts stream receives a `RawEvent` of kind `subscription_gap` with
+  an empty `account_uuid` (the one `created_gap_marker` in
+  `crates/wamux/src/services/event_service.rs` emits). The core does not log
+  this lag itself, so the signal lives in the edge's logs; or
+- an edge provisions accounts in bursts (tens of `CreateAccount` calls in a
+  row) while an all-accounts stream is open.
 
-**Status (rechecked 2026-10-15, #189).** The facts above still hold in the
-code. The opportunistic trigger passed twice without the promotion: #35
-(2026-09-24) changed the module and #80 (2026-10-13) changed a
-`RegistryTuning` default. The decision is open again in #192: do the
-promotion, or rewrite this trigger so it can be acted on.
+Then promote the 64 to a `RegistryTuning` field (`created_channel_capacity`,
+default 64), wired where `broadcast_capacity` is, and close this entry.
+
+**Status (2026-10-20, #192).** Kept deferred on purpose. The facts above still
+hold in the code: the follower's per-item work is a `HashSet` lookup and a
+spawned forwarder, and an overflow still surfaces as `subscription_gap` with
+the `ListAccounts` recovery. The earlier trigger ("on the next real change to
+`RegistryTuning` or to the `account_registry` module") passed twice without
+anyone acting on it (#35 on 2026-09-24, #80 on 2026-10-13), because nothing
+observable told the person in the file that the change was due. The trigger
+above replaces it with signals someone can actually see.
