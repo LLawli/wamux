@@ -216,6 +216,11 @@ scripts/check-service-coverage.py NewsletterService crates/wamux/tests/newslette
 stage "MessagingService RPC coverage"
 scripts/check-service-coverage.py MessagingService crates/wamux/tests/messaging_service 24
 
+# #197: same net under ContactService (15 RPCs). Its older RPCs are also tested
+# in grpc_server and group_service; this suite calls every one of them.
+stage "ContactService RPC coverage"
+scripts/check-service-coverage.py ContactService crates/wamux/tests/contact_service 15
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -328,6 +333,12 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newslett
 stage "stress tests (group service)"
 must_run_tests --features stress --test group_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test group_service
+
+# ContactService through the socket (#197): the blocklist and SetAbout against
+# the IQ shapes whatsapp-rust 6f07e3a builds, and a status from every RPC.
+stage "stress tests (contact service)"
+must_run_tests --features stress --test contact_service
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test contact_service
 
 # MediaService through the socket (#69): DownloadMedia against a loopback CDN,
 # reached by the production ureq client behind a loopback-only https rewrite.

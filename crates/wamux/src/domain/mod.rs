@@ -3,6 +3,7 @@
 
 pub mod account_setting_update;
 pub mod app_state_update;
+pub mod blocklist;
 pub mod bot_factory;
 pub mod business_profile;
 pub mod call_event;

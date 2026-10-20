@@ -7,7 +7,7 @@ use tonic::{Request, Response, Status};
 use wamux_types::{AccountRef, Jid, LidPnQuery};
 
 use super::client_of;
-use crate::domain::{contacts, lid_mapping};
+use crate::domain::{blocklist, contacts, lid_mapping};
 use crate::proto::v1 as pb;
 use crate::proto::v1::contact_service_server::ContactService;
 use crate::state::AccountRegistry;
@@ -94,6 +94,46 @@ impl ContactService for ContactSvc {
         Ok(Response::new(
             contacts::get_about(client, Jid::from_required_wire(req.jid)?).await?,
         ))
+    }
+
+    async fn set_about(
+        &self,
+        request: Request<pb::SetAboutRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        contacts::set_about(&client, &req.about).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn block_contact(
+        &self,
+        request: Request<pb::JidRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        blocklist::block_contact(&client, &Jid::from_required_wire(req.jid)?).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn unblock_contact(
+        &self,
+        request: Request<pb::JidRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        blocklist::unblock_contact(&client, &Jid::from_required_wire(req.jid)?).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn get_blocklist(
+        &self,
+        request: Request<pb::AccountRef>,
+    ) -> Result<Response<pb::GetBlocklistResponse>, Status> {
+        let reference = request.into_inner();
+        let client = client_of(&self.registry, Some(&reference)).await?;
+        let entries = blocklist::get_blocklist(&client).await?;
+        Ok(Response::new(pb::GetBlocklistResponse { entries }))
     }
 
     async fn get_business_profile(

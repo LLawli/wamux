@@ -12,6 +12,25 @@ has to follow them.
 
 ## [Unreleased]
 
+### Added
+
+- **`ContactService`: block, unblock, read the blocklist, set the about text**
+  (issue #197). None of these could be composed from the RPCs the core already
+  had, so the edge could not do them at all. `BlockContact` and `UnblockContact`
+  take a `JidRequest` with a phone jid (`@s.whatsapp.net`) or a LID (`@lid`),
+  relayed as given; any other kind is `InvalidArgument` before anything is sent.
+  A block carries both sides of the LID<->PN pair, as modern WhatsApp requires,
+  so it needs the mapping the client already learned: without it the answer is
+  `FailedPrecondition` (learn the pair first, for example with `ResolveLidPn` or
+  `CheckOnWhatsApp`), not `Unavailable`. An unblock by LID needs no mapping.
+  `GetBlocklist` returns each entry the server lists, with its `t` as unix
+  seconds in `timestamp` (unset when the server sent none). `SetAbout` sets the
+  account's own about text, next to `GetAbout`, and relays `""` as is. A new
+  socket suite, `crates/wamux/tests/contact_service/`, calls every one of the 15
+  RPCs, and `scripts/ci.sh` gains a `ContactService RPC coverage` stage, so a
+  new RPC fails CI until a test calls it. Additive: no field or RPC changes for
+  existing clients.
+
 ## [0.2.0] - 2026-10-19
 
 ### Changed

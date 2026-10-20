@@ -112,6 +112,14 @@ pub async fn get_about(client: Arc<Client>, jid: Jid) -> Result<pb::AboutRespons
     Ok(pb::AboutResponse { about })
 }
 
+pub async fn set_about(client: &Client, about: &str) -> Result<(), WamuxError> {
+    client
+        .profile()
+        .set_status_text(about)
+        .await
+        .map_err(client_err)
+}
+
 pub async fn get_business_profile(
     client: &Client,
     jid: &Jid,

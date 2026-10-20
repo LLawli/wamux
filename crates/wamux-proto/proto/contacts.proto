@@ -52,6 +52,23 @@ message AboutResponse {
   string about = 1;
 }
 
+// The account's OWN about text, relayed as given: "" is sent as is (#197).
+message SetAboutRequest {
+  AccountRef account = 1;
+  string about = 2;
+}
+
+// One blocked contact, as the server lists it (#197).
+message BlocklistEntry {
+  Jid jid = 1;
+  // The server's `t`, unix seconds. Unset when the server sent none.
+  optional int64 timestamp = 2;
+}
+
+message GetBlocklistResponse {
+  repeated BlocklistEntry entries = 1;
+}
+
 message BusinessProfileResponse {
   reserved 1;
   reserved "raw";  // #132: was the library's profile as JSON
@@ -177,6 +194,18 @@ service ContactService {
   rpc GetPushName(AccountRef) returns (PushNameResponse);
   rpc SetPushName(SetPushNameRequest) returns (Empty);
   rpc GetAbout(JidRequest) returns (AboutResponse);
+  // The account's OWN about text, the setter next to GetAbout (#197).
+  rpc SetAbout(SetAboutRequest) returns (Empty);
+  // Block or unblock a user. The jid must be a phone jid
+  // ("<user>@s.whatsapp.net") or a LID ("<user>@lid"), relayed as given: any
+  // other kind is InvalidArgument. A block sends both sides of the pair, so it
+  // needs the LID<->PN mapping the client already learned; without it the
+  // answer is FailedPrecondition and nothing is sent. An unblock by LID needs
+  // no mapping (#197).
+  rpc BlockContact(JidRequest) returns (Empty);
+  rpc UnblockContact(JidRequest) returns (Empty);
+  // The account's blocklist, entry by entry as the server returns it (#197).
+  rpc GetBlocklist(AccountRef) returns (GetBlocklistResponse);
   rpc GetBusinessProfile(JidRequest) returns (BusinessProfileResponse);
   rpc SubscribePresence(SubscribePresenceRequest) returns (Empty);
   // Targeted LID<->PN lookup, batched. Reads the live client (in-memory cache
