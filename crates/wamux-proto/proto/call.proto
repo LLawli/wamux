@@ -304,3 +304,24 @@ enum MissedCallReason {
   // feature, which this build does not enable.
   MISSED_CALL_REASON_REMOTE = 3;
 }
+
+// Reject a call ringing this account (#200). The three identifiers are the
+// ones a `CallEvent` offer carries: `peer` is its `from` (the `<call to>` the
+// reject goes back to) and `call_creator` its `call_creator`. They stay
+// separate because companion-device signaling can make them differ.
+message RejectCallRequest {
+  AccountRef account = 1;
+  string call_id = 2;
+  Jid peer = 3;
+  Jid call_creator = 4;
+}
+
+// Call control that needs no media stack. Placing and answering a call do, and
+// stay out of the core.
+service CallService {
+  // Sends one `<call><reject/></call>` stanza. The server answers nothing, so
+  // success means the stanza went out, not that the caller saw the decline:
+  // the `CallEvent` stream shows how the call ended. Whether and when to
+  // reject is the edge's policy.
+  rpc RejectCall(RejectCallRequest) returns (Empty);
+}

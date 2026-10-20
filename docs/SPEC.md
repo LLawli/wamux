@@ -96,6 +96,10 @@ are noted here.
   learned (`FailedPrecondition` without it); the core never resolves it itself.
   `GetPushName` takes an `AccountRef`: it is the account's OWN name, the getter
   that pairs with `SetPushName`.
+- **CallService**: `RejectCall` declines an incoming call with one fire-and-forget
+  `<call><reject/></call>` stanza (success means it was sent). `peer` and
+  `call_creator` come from the `CallEvent` (`from`, `call_creator`); an empty
+  `call_id` is `InvalidArgument`. Placing and answering calls are not offered.
 - **AdminService**: Prometheus metrics and the daemon's liveness/readiness check
   (see Notable constraints).
 - **Identity (LID<->PN)**: `InboundMessage.sender_alt`/`recipient_alt` relay the

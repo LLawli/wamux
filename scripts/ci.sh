@@ -221,6 +221,10 @@ scripts/check-service-coverage.py MessagingService crates/wamux/tests/messaging_
 stage "ContactService RPC coverage"
 scripts/check-service-coverage.py ContactService crates/wamux/tests/contact_service 15
 
+# #200: same net under CallService (1 RPC, RejectCall).
+stage "CallService RPC coverage"
+scripts/check-service-coverage.py CallService crates/wamux/tests/call_service.rs 1
+
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
   # deliberately keeps Postgres-backed cases (engine parity is only provable
@@ -339,6 +343,12 @@ WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test group_service
 stage "stress tests (contact service)"
 must_run_tests --features stress --test contact_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test contact_service
+
+# CallService through the socket (#200): RejectCall against the <call> stanza
+# the library builds, recorded by the mock server.
+stage "stress tests (call service)"
+must_run_tests --features stress --test call_service
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test call_service
 
 # MediaService through the socket (#69): DownloadMedia against a loopback CDN,
 # reached by the production ureq client behind a loopback-only https rewrite.
