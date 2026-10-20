@@ -275,6 +275,23 @@ message SubscribeNewsletterLiveUpdatesResponse {
   uint64 duration_seconds = 1;
 }
 
+// Mute or unmute a followed channel (#199): the "Mute" a follower toggles in
+// the app, the channel's own updates (MUTE_ADMIN_ACTIVITY).
+message NewsletterMuteRequest {
+  AccountRef account = 1;
+  Jid jid = 2;
+  bool muted = 3;
+}
+
+// Create a channel this account owns (#199). An empty `name` is refused before
+// the server: a channel without one never exists. `description` goes out as
+// given when set, absent when not.
+message CreateNewsletterRequest {
+  AccountRef account = 1;
+  string name = 2;
+  optional string description = 3;
+}
+
 service NewsletterService {
   // Every channel this account follows. The startup call: it lets a consumer
   // name every newsletter row it already holds in one round trip, the way
@@ -305,4 +322,12 @@ service NewsletterService {
   // events, for the answered duration. Without it none arrive. Renewing before
   // the duration runs out is the caller's timer: the core keeps none.
   rpc SubscribeNewsletterLiveUpdates(JidRequest) returns (SubscribeNewsletterLiveUpdatesResponse);
+  // Follow a channel (#199). Answers nothing: measured live, the server's
+  // answer to the join carries the channel id and not its name, badge or this
+  // account's role, so a Newsletter built from it would state UNVERIFIED for a
+  // verified channel. GetNewsletterMetadata reads the channel as it is.
+  rpc FollowNewsletter(JidRequest) returns (Empty);
+  rpc UnfollowNewsletter(JidRequest) returns (Empty);
+  rpc MuteNewsletter(NewsletterMuteRequest) returns (Empty);
+  rpc CreateNewsletter(CreateNewsletterRequest) returns (Newsletter);
 }

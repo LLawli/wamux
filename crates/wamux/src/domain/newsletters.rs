@@ -74,6 +74,56 @@ pub async fn get_metadata(
     Ok(metadata_to_proto(&found))
 }
 
+/// Follow a channel. The join answer is dropped on purpose: it carries only
+/// the channel id, with no name, verification or role, so projecting it would
+/// relay a blank channel as if it were the real one. A caller that needs the
+/// channel asks `GetNewsletterMetadata`.
+pub async fn follow(client: &Client, jid: &NewsletterJid) -> Result<(), WamuxError> {
+    client
+        .newsletter()
+        .join(jid.as_lib())
+        .await
+        .map(drop)
+        .map_err(newsletter_err)
+}
+
+pub async fn unfollow(client: &Client, jid: &NewsletterJid) -> Result<(), WamuxError> {
+    client
+        .newsletter()
+        .leave(jid.as_lib())
+        .await
+        .map_err(newsletter_err)
+}
+
+/// The follower's own mute (WA Web's MUTE_ADMIN_ACTIVITY, the channel's own
+/// updates), not `set_follower_mute`, which silences follower activity for an
+/// owner or admin.
+pub async fn mute(client: &Client, jid: &NewsletterJid, muted: bool) -> Result<(), WamuxError> {
+    client
+        .newsletter()
+        .set_admin_mute(jid.as_lib(), muted)
+        .await
+        .map_err(newsletter_err)
+}
+
+/// Create a channel. Only an empty name is refused here: the server owns every
+/// other limit, and relaying its verdict beats a copy of it that can drift.
+pub async fn create(
+    client: &Client,
+    name: &str,
+    description: Option<&str>,
+) -> Result<pb::Newsletter, WamuxError> {
+    if name.is_empty() {
+        return Err(WamuxError::InvalidArgument("missing name".into()));
+    }
+    let created = client
+        .newsletter()
+        .create(name, description)
+        .await
+        .map_err(newsletter_err)?;
+    Ok(metadata_to_proto(&created))
+}
+
 /// `NotFound` is the one library error with a gRPC meaning of its own; every
 /// other one goes through `client_err`, which lifts the server's own
 /// rejections (IQ or MEX) into `WaServer`.

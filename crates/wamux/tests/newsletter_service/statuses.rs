@@ -14,7 +14,7 @@ use crate::harness::{Fixture, MEX, NEWSLETTER, call_every_rpc, fixture, option_h
 const GROUP: &str = "120363000000000068@g.us";
 
 fn assert_every(results: &[(&str, Result<(), tonic::Status>)], code: Code) {
-    assert_eq!(results.len(), 6, "all 6 RPCs");
+    assert_eq!(results.len(), 10, "all 10 RPCs");
     for (rpc, result) in results {
         let status = result.as_ref().expect_err(rpc);
         assert_eq!(status.code(), code, "{rpc}: {status:?}");
@@ -78,7 +78,7 @@ async fn every_iq_rpc_relays_a_server_refusal_as_permission_denied() {
     f.mock
         .answer_iq_error(NEWSLETTER, "*", "*", 403, "forbidden");
     let results = call_every_rpc(&mut f.channels, &f.account.clone()).await;
-    assert_eq!(results.len(), 6, "all 6 RPCs");
+    assert_eq!(results.len(), 10, "all 10 RPCs");
     for (rpc, result) in &results {
         if *rpc == "SendNewsletterPollVote" {
             assert!(result.is_ok(), "{rpc}: {result:?}");
@@ -112,12 +112,19 @@ async fn assert_only_the_probe_was_sent(f: &mut Fixture, newsletter_iqs: usize, 
     assert!(messages.is_empty(), "no vote stanza, got {messages:?}");
 }
 
-/// The five RPCs that name a channel, all with `jid` as the channel.
+/// The eight RPCs that name a channel, all with `jid` as the channel.
 async fn channel_scoped_statuses(f: &mut Fixture, jid: &str) -> Vec<(&'static str, tonic::Status)> {
     let request = f.jid_request(jid);
     let history = f.history(jid, 5, 0);
     let vote = f.vote(jid, VOTED_POLL, vec![option_hash("azul")]);
     let add_ons = f.add_ons(jid, 20);
+    let muted = pb::NewsletterMuteRequest {
+        account: Some(f.account.clone()),
+        jid: Some(pb::Jid {
+            value: jid.to_string(),
+        }),
+        muted: true,
+    };
     let c = &mut f.channels;
     vec![
         (
@@ -150,10 +157,25 @@ async fn channel_scoped_statuses(f: &mut Fixture, jid: &str) -> Vec<(&'static st
         ),
         (
             "SubscribeNewsletterLiveUpdates",
-            c.subscribe_newsletter_live_updates(request)
+            c.subscribe_newsletter_live_updates(request.clone())
                 .await
                 .map(drop)
                 .unwrap_err(),
+        ),
+        (
+            "FollowNewsletter",
+            c.follow_newsletter(request.clone())
+                .await
+                .map(drop)
+                .unwrap_err(),
+        ),
+        (
+            "UnfollowNewsletter",
+            c.unfollow_newsletter(request).await.map(drop).unwrap_err(),
+        ),
+        (
+            "MuteNewsletter",
+            c.mute_newsletter(muted).await.map(drop).unwrap_err(),
         ),
     ]
 }
@@ -163,7 +185,9 @@ async fn every_channel_rpc_rejects_an_empty_or_malformed_jid() {
     let mut f = fixture("every_channel_rpc_rejects_an_empty_or_malformed_jid").await;
     let (newsletter_iqs, mex_iqs) = (iqs_in(&f.mock, NEWSLETTER), iqs_in(&f.mock, MEX));
     for bad in ["", "not a jid"] {
-        for (rpc, status) in channel_scoped_statuses(&mut f, bad).await {
+        let checked = channel_scoped_statuses(&mut f, bad).await;
+        assert_eq!(checked.len(), 8, "every RPC that names a channel");
+        for (rpc, status) in checked {
             assert_eq!(
                 status.code(),
                 Code::InvalidArgument,
@@ -184,6 +208,13 @@ async fn channel_only_rpcs_reject_a_jid_that_is_not_a_channel() {
     let vote = f.vote(GROUP, VOTED_POLL, vec![option_hash("azul")]);
     let add_ons = f.add_ons(GROUP, 20);
     let request = f.jid_request(GROUP);
+    let muted = pb::NewsletterMuteRequest {
+        account: Some(f.account.clone()),
+        jid: Some(pb::Jid {
+            value: GROUP.to_string(),
+        }),
+        muted: true,
+    };
     let c = &mut f.channels;
     let statuses = [
         (
@@ -196,8 +227,19 @@ async fn channel_only_rpcs_reject_a_jid_that_is_not_a_channel() {
         ),
         (
             "SubscribeNewsletterLiveUpdates",
-            c.subscribe_newsletter_live_updates(request).await.map(drop),
+            c.subscribe_newsletter_live_updates(request.clone())
+                .await
+                .map(drop),
         ),
+        (
+            "FollowNewsletter",
+            c.follow_newsletter(request.clone()).await.map(drop),
+        ),
+        (
+            "UnfollowNewsletter",
+            c.unfollow_newsletter(request).await.map(drop),
+        ),
+        ("MuteNewsletter", c.mute_newsletter(muted).await.map(drop)),
     ];
     for (rpc, result) in statuses {
         let status = result.expect_err(rpc);
