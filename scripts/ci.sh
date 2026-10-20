@@ -202,7 +202,7 @@ scripts/check-release-pins.py
 # #68: an RPC of GroupService no socket test calls is an RPC nobody pinned. The
 # count (21) makes a new RPC fail here until it gets a test. Pure text check.
 stage "GroupService RPC coverage"
-scripts/check-service-coverage.py GroupService crates/wamux/tests/group_service 21
+scripts/check-service-coverage.py GroupService crates/wamux/tests/group_service 25
 
 # #69: same net under MediaService, whose one RPC is DownloadMedia.
 stage "MediaService RPC coverage"
