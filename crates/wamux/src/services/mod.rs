@@ -7,6 +7,7 @@
 
 pub mod account_service;
 pub mod admin_service;
+pub mod call_service;
 pub mod contact_service;
 pub mod event_service;
 pub mod group_service;

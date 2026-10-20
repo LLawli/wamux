@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::observe::{KnownMethods, RequestObserveLayer};
 use crate::proto::v1::account_service_server::AccountServiceServer;
 use crate::proto::v1::admin_service_server::AdminServiceServer;
+use crate::proto::v1::call_service_server::CallServiceServer;
 use crate::proto::v1::contact_service_server::ContactServiceServer;
 use crate::proto::v1::event_service_server::EventServiceServer;
 use crate::proto::v1::group_service_server::GroupServiceServer;
@@ -18,6 +19,7 @@ use crate::proto::v1::messaging_service_server::MessagingServiceServer;
 use crate::proto::v1::newsletter_service_server::NewsletterServiceServer;
 use crate::services::account_service::AccountSvc;
 use crate::services::admin_service::AdminSvc;
+use crate::services::call_service::CallSvc;
 use crate::services::contact_service::ContactSvc;
 use crate::services::event_service::EventSvc;
 use crate::services::group_service::GroupSvc;
@@ -71,6 +73,7 @@ pub fn build_router(
             registry.clone(),
         )))
         .add_service(ContactServiceServer::new(ContactSvc::new(registry.clone())))
+        .add_service(CallServiceServer::new(CallSvc::new(registry.clone())))
         .add_service(AdminServiceServer::new(AdminSvc::new(
             registry.clone(),
             prometheus,

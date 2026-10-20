@@ -67,9 +67,9 @@ impl PeerWorld {
     }
 
     /// Whether `tag` is a stanza `client_stanzas` records (`<message>` and
-    /// `<iq>` have their own lists).
+    /// `<iq>` have their own lists). `<call>` is a reject (#200).
     pub(super) fn records(tag: &str) -> bool {
-        matches!(tag, "receipt" | "presence" | "chatstate")
+        matches!(tag, "receipt" | "presence" | "chatstate" | "call")
     }
 
     /// Keep a stanza for `client_stanzas`.
@@ -187,7 +187,7 @@ impl MockWaServer {
     }
 
     /// Every stanza with this tag a client sent after login, oldest first:
-    /// `"receipt"`, `"presence"`, `"chatstate"` (and `"message"`/`"iq"`, the
+    /// `"receipt"`, `"presence"`, `"chatstate"`, `"call"` (and `"message"`/`"iq"`, the
     /// same as `client_messages`/`client_iqs`).
     pub fn client_stanzas(&self, tag: &str) -> Vec<Node> {
         match tag {

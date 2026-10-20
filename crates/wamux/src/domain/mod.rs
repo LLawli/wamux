@@ -8,6 +8,7 @@ pub mod bot_factory;
 pub mod business_profile;
 pub mod call_event;
 pub mod call_log_update;
+pub mod calls;
 pub mod chat_actions;
 pub mod connection_notice;
 pub mod contact_notice;

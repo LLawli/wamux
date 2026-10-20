@@ -26,10 +26,11 @@ use wamux::{server, transport};
 mod common;
 
 /// Every service in `proto/*.proto`, plus reflection itself.
-const EXPECTED_SERVICES: [&str; 9] = [
+const EXPECTED_SERVICES: [&str; 10] = [
     "grpc.reflection.v1.ServerReflection",
     "wamux.v1.AccountService",
     "wamux.v1.AdminService",
+    "wamux.v1.CallService",
     "wamux.v1.ContactService",
     "wamux.v1.EventService",
     "wamux.v1.GroupService",
