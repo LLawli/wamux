@@ -10,10 +10,10 @@ use wamux::proto::v1 as pb;
 use crate::captured::{GROUP, GROUP_ID, REQUESTER_LID, REQUESTER_PN};
 use crate::common;
 use crate::common::mock_wire::{account_ref, iqs_in, sent_iq};
-use crate::harness::{Fixture, G2, PICTURE, call_every_rpc, fixture, jid, jids};
+use crate::harness::{Fixture, G2, MEX, PICTURE, call_every_rpc, fixture, jid, jids};
 
 fn assert_every(statuses: &[(&str, tonic::Status)], code: Code) {
-    assert_eq!(statuses.len(), 21, "all 21 RPCs");
+    assert_eq!(statuses.len(), 25, "all 25 RPCs");
     for (rpc, status) in statuses {
         assert_eq!(status.code(), code, "{rpc}: {status:?}");
     }
@@ -61,6 +61,7 @@ async fn every_rpc_relays_a_server_refusal_as_permission_denied() {
     let mut f = fixture("every_rpc_relays_a_server_refusal_as_permission_denied").await;
     f.mock.answer_iq_error(G2, "*", "*", 403, "forbidden");
     f.mock.answer_iq_error(PICTURE, "*", "*", 403, "forbidden");
+    f.mock.answer_iq_error(MEX, "*", "*", 403, "forbidden");
     let statuses = call_every_rpc(&mut f.groups, &f.account.clone()).await;
     assert_every(&statuses, Code::PermissionDenied);
     for (rpc, status) in &statuses {
@@ -83,9 +84,10 @@ async fn every_rpc_relays_a_server_refusal_as_permission_denied() {
 async fn every_group_rpc_rejects_an_empty_or_malformed_group_jid() {
     let mut f = fixture("every_group_rpc_rejects_an_empty_or_malformed_group_jid").await;
     let before = iqs_in(&f.mock, G2);
+    let mex_before = iqs_in(&f.mock, MEX);
     for bad in ["", "not a jid"] {
         let checked = group_scoped_statuses(&mut f, bad).await;
-        assert_eq!(checked.len(), 17, "every RPC that names a group");
+        assert_eq!(checked.len(), 21, "every RPC that names a group");
         for (rpc, status) in checked {
             assert_eq!(
                 status.code(),
@@ -109,10 +111,11 @@ async fn every_group_rpc_rejects_an_empty_or_malformed_group_jid() {
         before + 1,
         "only the probe reached the wire"
     );
+    assert_eq!(iqs_in(&f.mock, MEX), mex_before, "no MEX query");
     f.cleanup().await;
 }
 
-/// The 17 RPCs that take a `group_jid`, all with `bad` as the group.
+/// The 21 RPCs that take a `group_jid`, all with `bad` as the group.
 async fn group_scoped_statuses(f: &mut Fixture, bad: &str) -> Vec<(&'static str, tonic::Status)> {
     let a = || Some(f.account.clone());
     let gref = || pb::GroupRef {
@@ -226,6 +229,46 @@ async fn group_scoped_statuses(f: &mut Fixture, bad: &str) -> Vec<(&'static str,
                 .await
                 .map(drop)
                 .unwrap_err(),
+        ),
+        (
+            "SetGroupMembershipApproval",
+            g.set_group_membership_approval(toggle())
+                .await
+                .map(drop)
+                .unwrap_err(),
+        ),
+        (
+            "SetGroupMemberAddMode",
+            g.set_group_member_add_mode(pb::GroupMemberAddModeRequest {
+                account: a(),
+                group: jid(bad),
+                mode: pb::GroupMemberAddMode::AdminAdd as i32,
+            })
+            .await
+            .map(drop)
+            .unwrap_err(),
+        ),
+        (
+            "SetGroupMemberLinkMode",
+            g.set_group_member_link_mode(pb::GroupMemberLinkModeRequest {
+                account: a(),
+                group: jid(bad),
+                mode: pb::GroupMemberLinkMode::AdminLink as i32,
+            })
+            .await
+            .map(drop)
+            .unwrap_err(),
+        ),
+        (
+            "SetGroupMemberShareHistoryMode",
+            g.set_group_member_share_history_mode(pb::GroupMemberShareHistoryModeRequest {
+                account: a(),
+                group: jid(bad),
+                mode: pb::GroupMemberShareHistoryMode::AdminShare as i32,
+            })
+            .await
+            .map(drop)
+            .unwrap_err(),
         ),
     ]
 }
@@ -398,10 +441,11 @@ async fn a_description_conflict_relays_wa_code_409() {
 async fn every_group_rpc_refuses_a_jid_that_is_not_a_group() {
     let mut f = fixture("every_group_rpc_refuses_a_jid_that_is_not_a_group").await;
     let before = iqs_in(&f.mock, G2);
+    let mex_before = iqs_in(&f.mock, MEX);
     let channel = "120363999999999999@newsletter";
     for other in [REQUESTER_PN, REQUESTER_LID, channel] {
         let checked = group_scoped_statuses(&mut f, other).await;
-        assert_eq!(checked.len(), 17, "every RPC that names a group");
+        assert_eq!(checked.len(), 21, "every RPC that names a group");
         let want = format!("'{other}' is not a group: expected a jid ending in @g.us");
         for (rpc, status) in checked {
             assert_eq!(status.code(), Code::InvalidArgument, "{rpc} with {other}");
@@ -409,6 +453,7 @@ async fn every_group_rpc_refuses_a_jid_that_is_not_a_group() {
         }
     }
     assert_eq!(iqs_in(&f.mock, G2), before, "nothing reached the wire");
+    assert_eq!(iqs_in(&f.mock, MEX), mex_before, "no MEX query");
     f.cleanup().await;
 }
 

@@ -106,6 +106,30 @@ message GroupEphemeralRequest {
   uint32 expiration_seconds = 3;
 }
 
+// Who may add members (#198). The same enum GetGroupMetadata reports, so the
+// edge writes what it reads; UNSPECIFIED and UNKNOWN name no setting and are
+// refused with InvalidArgument before anything reaches the server.
+message GroupMemberAddModeRequest {
+  AccountRef account = 1;
+  Jid group = 2;
+  GroupMemberAddMode mode = 3;
+}
+
+// Who may share the invite link (#198). Refused like GroupMemberAddModeRequest.
+message GroupMemberLinkModeRequest {
+  AccountRef account = 1;
+  Jid group = 2;
+  GroupMemberLinkMode mode = 3;
+}
+
+// Who may share the group's history with a new member (#198). Refused like
+// GroupMemberAddModeRequest.
+message GroupMemberShareHistoryModeRequest {
+  AccountRef account = 1;
+  Jid group = 2;
+  GroupMemberShareHistoryMode mode = 3;
+}
+
 // Preview an invite's group metadata without joining.
 message PreviewInviteRequest {
   AccountRef account = 1;
@@ -186,4 +210,9 @@ service GroupService {
   rpc GetMembershipRequests(GroupRef) returns (MembershipRequestsResponse);
   rpc ApproveMembershipRequests(ParticipantsRequest) returns (ParticipantsResponse);
   rpc RejectMembershipRequests(ParticipantsRequest) returns (ParticipantsResponse);
+  // `enabled` true: a new member waits for an admin's approval.
+  rpc SetGroupMembershipApproval(GroupToggleRequest) returns (Empty);
+  rpc SetGroupMemberAddMode(GroupMemberAddModeRequest) returns (Empty);
+  rpc SetGroupMemberLinkMode(GroupMemberLinkModeRequest) returns (Empty);
+  rpc SetGroupMemberShareHistoryMode(GroupMemberShareHistoryModeRequest) returns (Empty);
 }
