@@ -2,9 +2,9 @@
 //! name exists (issue #6), and a page of its history, which is the only place
 //! the server's per-message tallies exist (issue #26). Its one write is the
 //! poll vote, with the two reads that go with it: this account's own add-ons
-//! and the live-tally subscription (#26 again). The library also offers
-//! create/join/leave/update, but nothing needed those yet and the core does
-//! not grow surface ahead of a caller.
+//! and the live-tally subscription (#26 again). Membership is follow, unfollow,
+//! mute and create (#199). Update, picture, delete and admins stay out: the
+//! core does not grow surface ahead of a caller.
 
 use std::sync::Arc;
 
@@ -101,5 +101,48 @@ impl NewsletterService for NewsletterSvc {
             )
             .await?,
         ))
+    }
+
+    async fn follow_newsletter(
+        &self,
+        request: Request<pb::JidRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let jid = NewsletterJid::from_required_wire(req.jid)?;
+        newsletters::follow(&client, &jid).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn unfollow_newsletter(
+        &self,
+        request: Request<pb::JidRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let jid = NewsletterJid::from_required_wire(req.jid)?;
+        newsletters::unfollow(&client, &jid).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn mute_newsletter(
+        &self,
+        request: Request<pb::NewsletterMuteRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let jid = NewsletterJid::from_required_wire(req.jid)?;
+        newsletters::mute(&client, &jid, req.muted).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn create_newsletter(
+        &self,
+        request: Request<pb::CreateNewsletterRequest>,
+    ) -> Result<Response<pb::Newsletter>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let created = newsletters::create(&client, &req.name, req.description.as_deref()).await?;
+        Ok(Response::new(created))
     }
 }

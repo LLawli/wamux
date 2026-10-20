@@ -92,7 +92,7 @@ pub fn option_hash(option: &str) -> Vec<u8> {
     wacore::poll::compute_option_hash(option).to_vec()
 }
 
-/// Every one of the 6 RPCs, for `account`, with arguments valid in shape. The
+/// Every one of the 10 RPCs, for `account`, with arguments valid in shape. The
 /// name is the proto RPC, so a failure says which one.
 pub async fn call_every_rpc(
     channels: &mut NewsletterServiceClient<Channel>,
@@ -162,6 +162,38 @@ pub async fn call_every_rpc(
             "SubscribeNewsletterLiveUpdates",
             channels
                 .subscribe_newsletter_live_updates(jid())
+                .await
+                .map(drop),
+        ),
+        (
+            "FollowNewsletter",
+            channels.follow_newsletter(jid()).await.map(drop),
+        ),
+        (
+            "UnfollowNewsletter",
+            channels.unfollow_newsletter(jid()).await.map(drop),
+        ),
+        (
+            "MuteNewsletter",
+            channels
+                .mute_newsletter(pb::NewsletterMuteRequest {
+                    account: a(),
+                    jid: Some(pb::Jid {
+                        value: CHANNEL.to_string(),
+                    }),
+                    muted: true,
+                })
+                .await
+                .map(drop),
+        ),
+        (
+            "CreateNewsletter",
+            channels
+                .create_newsletter(pb::CreateNewsletterRequest {
+                    account: a(),
+                    name: "wamux 199".into(),
+                    description: None,
+                })
                 .await
                 .map(drop),
         ),

@@ -14,6 +14,23 @@ has to follow them.
 
 ### Added
 
+- **`NewsletterService`: follow, unfollow, mute and create a channel** (issue
+  #199). The service could read channels and vote in their polls but not change
+  which ones the account follows, and the edge cannot compose any of these.
+  `FollowNewsletter` and `UnfollowNewsletter` take a `JidRequest` and answer
+  `Empty`: measured live, the server's answer to a join carries the channel id
+  but not its name, badge or this account's role, so `GetNewsletterMetadata` is
+  the way to read the channel after following it. `MuteNewsletter` takes a
+  `NewsletterMuteRequest` (`jid`, `muted`) and toggles the follower's mute (WA
+  Web's `MUTE_ADMIN_ACTIVITY`). `CreateNewsletter` takes a
+  `CreateNewsletterRequest` (`name`, optional `description`) and answers the new
+  channel's metadata; an empty name is `InvalidArgument` and nothing is sent. A
+  jid that is not a channel is refused by name before the server, as the other
+  channel RPCs do since #99. When the server answers a mutation with nothing
+  (not applied), the status is `Unavailable` today. `scripts/ci.sh` now expects
+  10 NewsletterService RPCs covered by the socket suite. The PRD's "Out of scope"
+  no longer lists creating channels. Additive: no field or RPC changes for
+  existing clients.
 - **`GroupService`: membership approval, who may add members, who may share the
   invite link and the history** (issue #198). The core already relayed all four
   as state (`GetGroupMetadata`) and as `GroupUpdate` events, but the edge could

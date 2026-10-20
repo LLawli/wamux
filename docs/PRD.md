@@ -68,7 +68,8 @@ See [`docs/SPEC.md`](SPEC.md) for the technical design.
     to a contact's presence, LID/PN resolution, block/unblock and the blocklist.
 11. **Channels (newsletters)**: list followed channels, read metadata and messages
     (with the server-side reaction and poll tallies), vote in channel polls, read
-    back the account's own reactions and votes, subscribe to live updates.
+    back the account's own reactions and votes, subscribe to live updates, follow,
+    unfollow and mute a channel, create one.
 12. **Admin**: metrics and a liveness/readiness check over the socket.
 
 The complete, current contract is
@@ -104,5 +105,6 @@ Real pairing and delivery need live WhatsApp credentials and are exercised manua
 HTTP/auth/permissions edge; message-history persistence; placing, answering or
 rejecting voice/video calls (call signaling reaches the edge only as events);
 community management (community data reaches the edge only through group metadata
-and events); creating or posting to channels; sending interactive (button/list)
+and events); administering a channel (editing it, its picture, its admins,
+deleting it) and posting to one; sending interactive (button/list)
 offers (answering one is in scope).

@@ -208,9 +208,9 @@ scripts/check-service-coverage.py GroupService crates/wamux/tests/group_service 
 stage "MediaService RPC coverage"
 scripts/check-service-coverage.py MediaService crates/wamux/tests/media_service.rs 1
 
-# #70: same net under NewsletterService (6 RPCs).
+# #70: same net under NewsletterService (10 RPCs).
 stage "NewsletterService RPC coverage"
-scripts/check-service-coverage.py NewsletterService crates/wamux/tests/newsletter_service 6
+scripts/check-service-coverage.py NewsletterService crates/wamux/tests/newsletter_service 10
 
 # #71: same net under MessagingService (23 RPCs).
 stage "MessagingService RPC coverage"

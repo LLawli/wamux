@@ -85,7 +85,12 @@ are noted here.
   settings an admin sets by mode (`SetGroupMemberAddMode`, `SetGroupMemberLinkMode`,
   `SetGroupMemberShareHistoryMode`) take the enum `GetGroupMetadata` reports;
   UNSPECIFIED and UNKNOWN are `InvalidArgument`. The link and history modes go out
-  as a MEX mutation, the other settings as `w:g2` IQs.
+  as a MEX mutation, the other settings as `w:g2` IQs. `FollowNewsletter`,
+  `UnfollowNewsletter`, `MuteNewsletter` (the follower's mute, `MUTE_ADMIN_ACTIVITY`)
+  and `CreateNewsletter` are MEX mutations too. Create answers the new channel's
+  metadata; follow answers nothing, because the server's join answer lacks the
+  channel's name, badge and the account's role. An empty channel name is
+  `InvalidArgument`.
 - **ContactService**: lookups, profile, push name, about text, presence subscription,
   identity, blocklist. `BlockContact` needs the LID<->PN pair the client already
   learned (`FailedPrecondition` without it); the core never resolves it itself.

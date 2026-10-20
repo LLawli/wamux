@@ -1,4 +1,4 @@
-//! NewsletterService through the socket (#70): all 6 RPCs over a real Unix
+//! NewsletterService through the socket (#70): all 10 RPCs over a real Unix
 //! socket and tonic client, with the account logged in against `MockWaServer`.
 //!
 //! The five reads are answered with what WhatsApp's server sent on 2026-10-02
@@ -17,6 +17,7 @@ mod common;
 mod captured;
 mod harness;
 mod jid_fields;
+mod membership;
 mod not_found;
 mod reads;
 mod statuses;
