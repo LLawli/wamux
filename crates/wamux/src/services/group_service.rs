@@ -3,6 +3,10 @@
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
+use wacore::iq::groups::MembershipApprovalMode;
+use wamux_types::group_setting_modes::{
+    parse_member_add_mode, parse_member_link_mode, parse_member_share_history_mode,
+};
 use wamux_types::{GroupJid, Jid};
 
 use super::client_of;
@@ -303,5 +307,57 @@ impl GroupService for GroupSvc {
         )
         .await?;
         Ok(Response::new(results))
+    }
+
+    async fn set_group_membership_approval(
+        &self,
+        request: Request<pb::GroupToggleRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let group = GroupJid::from_required_wire(req.group)?;
+        let mode = if req.enabled {
+            MembershipApprovalMode::On
+        } else {
+            MembershipApprovalMode::Off
+        };
+        groups::set_membership_approval(&client, &group, mode).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn set_group_member_add_mode(
+        &self,
+        request: Request<pb::GroupMemberAddModeRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let group = GroupJid::from_required_wire(req.group)?;
+        let mode = parse_member_add_mode(req.mode)?;
+        groups::set_member_add_mode(&client, &group, mode).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn set_group_member_link_mode(
+        &self,
+        request: Request<pb::GroupMemberLinkModeRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let group = GroupJid::from_required_wire(req.group)?;
+        let mode = parse_member_link_mode(req.mode)?;
+        groups::set_member_link_mode(&client, &group, mode).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
+    async fn set_group_member_share_history_mode(
+        &self,
+        request: Request<pb::GroupMemberShareHistoryModeRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        let group = GroupJid::from_required_wire(req.group)?;
+        let mode = parse_member_share_history_mode(req.mode)?;
+        groups::set_member_share_history_mode(&client, &group, mode).await?;
+        Ok(Response::new(pb::Empty {}))
     }
 }

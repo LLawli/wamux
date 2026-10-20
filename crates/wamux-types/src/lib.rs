@@ -9,6 +9,7 @@ pub mod call_enums;
 pub mod error;
 pub mod event_enums;
 pub mod group_enums;
+pub mod group_setting_modes;
 pub mod jid;
 pub mod lid;
 pub mod media_kind;
@@ -49,6 +50,8 @@ mod event_enums_tests;
 mod group_enums_tests;
 #[cfg(test)]
 mod group_jid_wire_tests;
+#[cfg(test)]
+mod group_setting_modes_tests;
 #[cfg(test)]
 mod jid_relay_tests;
 #[cfg(test)]

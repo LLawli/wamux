@@ -14,6 +14,8 @@ use crate::common::{self, LoggedIn};
 
 pub const G2: &str = "w:g2";
 pub const PICTURE: &str = "w:profile:picture";
+/// The namespace of a MEX (GraphQL) query: the link and history modes (#198).
+pub const MEX: &str = "w:mex";
 
 /// The daemon serving a registry whose account is logged in against `mock`.
 pub struct Fixture {
@@ -86,7 +88,7 @@ pub fn participant_jids(operation: &Node) -> Vec<String> {
         .collect()
 }
 
-/// Every one of the 21 RPCs, called with arguments that are valid in shape,
+/// Every one of the 25 RPCs, called with arguments that are valid in shape,
 /// for the tests that check a status common to all of them. The name is the
 /// proto RPC, so a failure says which one.
 pub async fn call_every_rpc(
@@ -235,6 +237,46 @@ pub async fn call_every_rpc(
     note(
         "RejectMembershipRequests",
         groups.reject_membership_requests(parts()).await.map(drop),
+    );
+    note(
+        "SetGroupMembershipApproval",
+        groups
+            .set_group_membership_approval(toggle())
+            .await
+            .map(drop),
+    );
+    note(
+        "SetGroupMemberAddMode",
+        groups
+            .set_group_member_add_mode(pb::GroupMemberAddModeRequest {
+                account: a(),
+                group: group(),
+                mode: pb::GroupMemberAddMode::AdminAdd as i32,
+            })
+            .await
+            .map(drop),
+    );
+    note(
+        "SetGroupMemberLinkMode",
+        groups
+            .set_group_member_link_mode(pb::GroupMemberLinkModeRequest {
+                account: a(),
+                group: group(),
+                mode: pb::GroupMemberLinkMode::AdminLink as i32,
+            })
+            .await
+            .map(drop),
+    );
+    note(
+        "SetGroupMemberShareHistoryMode",
+        groups
+            .set_group_member_share_history_mode(pb::GroupMemberShareHistoryModeRequest {
+                account: a(),
+                group: group(),
+                mode: pb::GroupMemberShareHistoryMode::AdminShare as i32,
+            })
+            .await
+            .map(drop),
     );
     out
 }

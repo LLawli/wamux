@@ -1,4 +1,4 @@
-//! GroupService through the socket (#68): all 21 RPCs over a real Unix socket
+//! GroupService through the socket (#68): all 25 RPCs over a real Unix socket
 //! and tonic client, with the account logged in against `MockWaServer`.
 //!
 //! The five reads are answered with what WhatsApp's server sent on 2026-10-02
@@ -21,5 +21,6 @@ mod harness;
 mod jid_fields;
 mod participants;
 mod reads;
+mod settings;
 mod statuses;
 mod writes;

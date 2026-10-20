@@ -81,7 +81,11 @@ are noted here.
     contacts", and the audience chooses no recipients: a status goes to the
     `recipients` the edge posts it to.
 - **MediaService**: `DownloadMedia` (server stream: meta frame + byte chunks).
-- **GroupService**, **NewsletterService**: group and channel operations.
+- **GroupService**, **NewsletterService**: group and channel operations. The group
+  settings an admin sets by mode (`SetGroupMemberAddMode`, `SetGroupMemberLinkMode`,
+  `SetGroupMemberShareHistoryMode`) take the enum `GetGroupMetadata` reports;
+  UNSPECIFIED and UNKNOWN are `InvalidArgument`. The link and history modes go out
+  as a MEX mutation, the other settings as `w:g2` IQs.
 - **ContactService**: lookups, profile, push name, about text, presence subscription,
   identity, blocklist. `BlockContact` needs the LID<->PN pair the client already
   learned (`FailedPrecondition` without it); the core never resolves it itself.

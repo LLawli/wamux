@@ -5,7 +5,8 @@ use std::sync::Arc;
 use wacore::iq::contacts::SetProfilePictureSpec;
 use wacore::iq::groups::{
     GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupParticipatingIq,
-    GroupSubject, ParticipantChangeResponse,
+    GroupSubject, MemberAddMode, MemberLinkMode, MemberShareHistoryMode, MembershipApprovalMode,
+    ParticipantChangeResponse,
 };
 use wamux_types::{GroupJid, Jid, relay_jid, relay_lib_jid, relay_optional_lib_jid};
 use whatsapp_rust::Client;
@@ -307,6 +308,54 @@ pub async fn set_locked(client: &Client, group: &GroupJid, locked: bool) -> Resu
     client
         .groups()
         .set_locked(group.as_lib(), locked)
+        .await
+        .map_err(client_err)
+}
+
+pub async fn set_membership_approval(
+    client: &Client,
+    group: &GroupJid,
+    mode: MembershipApprovalMode,
+) -> Result<(), WamuxError> {
+    client
+        .groups()
+        .set_membership_approval(group.as_lib(), mode)
+        .await
+        .map_err(client_err)
+}
+
+pub async fn set_member_add_mode(
+    client: &Client,
+    group: &GroupJid,
+    mode: MemberAddMode,
+) -> Result<(), WamuxError> {
+    client
+        .groups()
+        .set_member_add_mode(group.as_lib(), mode)
+        .await
+        .map_err(client_err)
+}
+
+pub async fn set_member_link_mode(
+    client: &Client,
+    group: &GroupJid,
+    mode: MemberLinkMode,
+) -> Result<(), WamuxError> {
+    client
+        .groups()
+        .set_member_link_mode(group.as_lib(), mode)
+        .await
+        .map_err(client_err)
+}
+
+pub async fn set_member_share_history_mode(
+    client: &Client,
+    group: &GroupJid,
+    mode: MemberShareHistoryMode,
+) -> Result<(), WamuxError> {
+    client
+        .groups()
+        .set_member_share_history_mode(group.as_lib(), mode)
         .await
         .map_err(client_err)
 }

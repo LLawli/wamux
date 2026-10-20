@@ -14,6 +14,19 @@ has to follow them.
 
 ### Added
 
+- **`GroupService`: membership approval, who may add members, who may share the
+  invite link and the history** (issue #198). The core already relayed all four
+  as state (`GetGroupMetadata`) and as `GroupUpdate` events, but the edge could
+  not change them. `SetGroupMembershipApproval` takes a `GroupToggleRequest`, like
+  `SetGroupAnnounce` and `SetGroupLocked`. `SetGroupMemberAddMode`,
+  `SetGroupMemberLinkMode` and `SetGroupMemberShareHistoryMode` take the same
+  enum `GetGroupMetadata` reports for that setting; UNSPECIFIED (an omitted
+  field), UNKNOWN or a number outside the enum is `InvalidArgument` with the
+  accepted names, and nothing reaches the server. The link and history modes go
+  out as a MEX mutation: when the server answers it without applying the change,
+  the status is `Unavailable` today. `scripts/ci.sh` now expects 25 GroupService
+  RPCs covered by the socket suite. Additive: no field or RPC changes for
+  existing clients.
 - **`ContactService`: block, unblock, read the blocklist, set the about text**
   (issue #197). None of these could be composed from the RPCs the core already
   had, so the edge could not do them at all. `BlockContact` and `UnblockContact`

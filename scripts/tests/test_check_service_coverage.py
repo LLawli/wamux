@@ -65,9 +65,9 @@ class CheckServiceCoverage(unittest.TestCase):
             self.assertIn(needle, output)
 
     def test_group_service_passes_on_the_repo(self):
-        result = run_check(REPO, "GroupService", "crates/wamux/tests/group_service", "21")
+        result = run_check(REPO, "GroupService", "crates/wamux/tests/group_service", "25")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("service coverage ok: GroupService, 21 RPCs", result.stdout)
+        self.assertIn("service coverage ok: GroupService, 25 RPCs", result.stdout)
 
     def test_every_rpc_called_passes(self):
         with tempfile.TemporaryDirectory() as tmp:

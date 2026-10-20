@@ -59,8 +59,9 @@ See [`docs/SPEC.md`](SPEC.md) for the technical design.
    descriptor; client calls `DownloadMedia` later).
 9. **Groups**: create, list the ones the account is in, leave, add/remove,
    promote/demote, subject/description/photo, settings (announce, locked,
-   ephemeral), metadata, invite link (get/revoke/preview), join via invite,
-   membership requests (list/approve/reject).
+   ephemeral, membership approval, who may add members, share the invite link
+   and share the history), metadata, invite link (get/revoke/preview), join via
+   invite, membership requests (list/approve/reject).
 10. **Contacts/profile**: check-number-on-WhatsApp, profile picture (get anyone's,
     set/remove the account's own), the account's own push name (get/set), a
     contact's about text and the account's own (set), business profile, subscribe
