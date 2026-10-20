@@ -19,4 +19,13 @@ ignore = [
     # entry together with that module and the dependency, and refuses a store
     # that is still bincode (#84, #179).
     "RUSTSEC-2025-0141",
+
+    # RUSTSEC-2026-0381: webpki-roots trusted the distrusted emSign
+    # intermediates, fixed in 1.0.10, which Cargo.lock holds. What is still
+    # flagged is webpki-roots 0.26.11, pulled by sqlx-core 0.8 (tls-rustls):
+    # the last 0.26 release, whose lib.rs only re-exports webpki-roots 1, so
+    # the roots sqlx uses are the patched 1.0.10. No 0.26 release can satisfy
+    # `>=1.0.10`. Remove this entry when sqlx stops pulling 0.26 (#209, sqlx
+    # 0.9), or if `cargo tree -i webpki-roots` ever shows a 1.x below 1.0.10.
+    "RUSTSEC-2026-0381",
 ]
