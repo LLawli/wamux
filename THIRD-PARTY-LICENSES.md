@@ -231,7 +231,7 @@ dev-dependencies are excluded because they never reach the binary.
 | rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types | 1.14.1 | MIT OR Apache-2.0 |
-| rustls-webpki | 0.103.15 | ISC |
+| rustls-webpki | 0.103.16 | ISC |
 | rustversion | 1.0.22 | MIT OR Apache-2.0 |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 |
@@ -338,7 +338,7 @@ dev-dependencies are excluded because they never reach the binary.
 | want | 0.3.1 | MIT |
 | waproto | 0.7.0 | MIT |
 | webpki-roots | 0.26.11 | CDLA-Permissive-2.0 |
-| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 |
+| webpki-roots | 1.0.10 | CDLA-Permissive-2.0 |
 | whatsapp-rust | 0.7.0 | MIT |
 | whatsapp-rust-tokio-transport | 0.7.0 | MIT |
 | whatsapp-rust-ureq-http-client | 0.7.0 | MIT |
@@ -3726,7 +3726,7 @@ SOFTWARE.
 
 ### LICENSE: 2 crate(s)
 
-<details><summary>webpki-roots 0.26.11, webpki-roots 1.0.9</summary>
+<details><summary>webpki-roots 0.26.11, webpki-roots 1.0.10</summary>
 
 ```
 # Community Data License Agreement - Permissive - Version 2.0
@@ -4700,7 +4700,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### LICENSE: 1 crate(s)
 
-<details><summary>rustls-webpki 0.103.15</summary>
+<details><summary>rustls-webpki 0.103.16</summary>
 
 ```
 Except as otherwise noted, this project is licensed under the following
