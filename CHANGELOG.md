@@ -12,6 +12,8 @@ has to follow them.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-21
+
 ### Added
 
 - **`CallService`: reject an incoming call** (issue #200). A call reaches the
@@ -1721,6 +1723,7 @@ reconnection policy, and any HTTP API. The core exposes the primitives (a
 `SendResult.message_id`, `Receipt` events, connection-state events) and lets
 the edge compose the policy. See the "Core purity" section in `CLAUDE.md`.
 
-[Unreleased]: https://github.com/LLawli/wamux/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/LLawli/wamux/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/LLawli/wamux/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/LLawli/wamux/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/LLawli/wamux/releases/tag/v0.1.0
