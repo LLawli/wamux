@@ -72,17 +72,32 @@ has to follow them.
   new RPC fails CI until a test calls it. Additive: no field or RPC changes for
   existing clients.
 
+### Changed
+
+- **sqlx 0.9** (issue #209), from 0.8. The code change is small: sqlx 0.9
+  refuses SQL built at run time unless it is marked safe, so the conversion
+  statements (built only from the closed `sealed_columns()` table) are wrapped
+  in `AssertSqlSafe`, and the Signal delete helper takes a `&'static str`.
+  SQLite is now `sqlite-bundled` plus `sqlite-unlock-notify` instead of the
+  `sqlite` umbrella; the bundled engine stays libsqlite3-sys 0.30.1 (SQLite
+  3.46.0). `wamux-tools` moves from ureq 2 to ureq 3, the version the daemon
+  already uses. One behavior change from sqlx: a Postgres `.pgpass` file now
+  interprets backslash escapes (sqlx #3993). Nothing changes on the wire or in
+  the config.
+
 ### Security
 
 - **rustls-webpki 0.103.16 and webpki-roots 1.0.10** (RUSTSEC-2026-0382 and
   RUSTSEC-2026-0381, CVE-2026-111943, published 2026-10-19 and 2026-10-20).
   Certificate verification could accept a path through the distrusted emSign
   intermediates, whose private keys are now public. These crates verify the
-  WhatsApp WebSocket transport, the media CDN client and sqlx's TLS. sqlx 0.8
-  still pulls `webpki-roots` 0.26.11, which only re-exports 1.x and so uses the
-  patched roots; cargo-audit flags it by version number, so it is ignored in
-  `.cargo/audit.toml` until sqlx moves past it (#209). Lockfile only; no code
-  or wire change.
+  WhatsApp WebSocket transport, the media CDN client and sqlx's TLS. Lockfile
+  only; no code or wire change.
+- **No more webpki-roots 0.26 shim** (issue #209). sqlx 0.9 and ureq 3 no
+  longer pull `webpki-roots` 0.26.11, so the `RUSTSEC-2026-0381` ignore in
+  `.cargo/audit.toml` is gone. The `RUSTSEC-2023-0071` ignore (`rsa`) is gone
+  too: the crate is no longer in the lockfile. SQLite is built without the
+  native extension loader (`load-extension`) and without `deserialize`.
 
 ## [0.2.0] - 2026-10-19
 

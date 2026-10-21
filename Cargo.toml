@@ -42,9 +42,14 @@ bytes = "1"
 # std does not offer. No default features: only `user` (and `fs` for the tests'
 # umask) is compiled.
 nix = { version = "0.31", default-features = false }
-sqlx = { version = "0.8", default-features = false, features = [
+# Not the `sqlite` umbrella: it would also compile `load-extension` (native
+# extension loading at runtime) and `deserialize`, which nothing here uses.
+# `sqlite-unlock-notify` keeps waiting on a shared-cache lock for a
+# `cache=shared` DSN.
+sqlx = { version = "0.9", default-features = false, features = [
     "postgres",
-    "sqlite",
+    "sqlite-bundled",
+    "sqlite-unlock-notify",
     "runtime-tokio",
     "tls-rustls",
     "macros",

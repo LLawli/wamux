@@ -151,7 +151,7 @@ struct Rigged {
 async fn rigged_postgres() -> Rigged {
     let name = format!("wamux_upgrade_{}", uuid::Uuid::new_v4().simple());
     let admin = PgPool::connect(&common::database_url()).await.unwrap();
-    sqlx::query(&format!("CREATE DATABASE {name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&admin)
         .await
         .unwrap();
@@ -161,7 +161,7 @@ async fn rigged_postgres() -> Rigged {
     let store = SqlStore::open_postgres(&url, 2)
         .await
         .expect("open throwaway postgres");
-    sqlx::raw_sql(&postgres_triggers())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(postgres_triggers()))
         .execute(common::pg_pool(&store))
         .await
         .expect("triggers");
@@ -179,7 +179,7 @@ async fn rigged_sqlite() -> Rigged {
     let SqlPool::Sqlite(conn) = store.pool() else {
         panic!("opened as sqlite, holds a postgres pool");
     };
-    sqlx::raw_sql(&sqlite_triggers())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sqlite_triggers()))
         .execute(&mut *conn.lock().await)
         .await
         .expect("triggers");
@@ -234,10 +234,12 @@ async fn unrig(rigged: Rigged) {
         return;
     };
     let admin = PgPool::connect(&common::database_url()).await.unwrap();
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
-        .execute(&admin)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
 }
 
 fn rejected<T: std::fmt::Debug>(result: wacore::store::error::Result<T>, what: &str) {

@@ -8,7 +8,9 @@
 //! ones by their progress row. The columns and the row keys come from
 //! `sealed_columns()`; the SQL from `statements::convert`.
 
-use sqlx::{ColumnIndex, Decode, Row, Type};
+use std::sync::Arc;
+
+use sqlx::{AssertSqlSafe, ColumnIndex, Decode, Row, Type};
 use wacore::store::error::{Result as StoreResult, StoreError};
 
 use super::{SqlPool, SqlTx, SqliteConn};
@@ -93,10 +95,10 @@ pub(super) async fn convert_column(
     device_id: i32,
     column: &SealedColumn,
 ) -> StoreResult<()> {
-    let select = select_rows(column);
-    let update = update_row(column);
+    let select = sealed_sql(select_rows(column));
+    let update: Arc<str> = Arc::from(update_row(column));
     let rows: Vec<StoredRow> = on_sql_tx!(tx, |conn| {
-        let fetched = sqlx::query(&select).bind(device_id).fetch_all(conn).await;
+        let fetched = sqlx::query(select).bind(device_id).fetch_all(conn).await;
         fetched.and_then(|rows| rows.iter().map(|row| read_row(row, column)).collect())
     })
     .map_err(db)?;
@@ -109,13 +111,15 @@ pub(super) async fn convert_column(
 
 async fn write_row(
     mut tx: &mut SqlTx<'_>,
-    update: &str,
+    update: &Arc<str>,
     device_id: i32,
     parts: &[RowPart],
     turned: Vec<u8>,
 ) -> StoreResult<()> {
     on_sql_tx!(tx, |conn| {
-        let mut query = sqlx::query(update).bind(turned).bind(device_id);
+        let mut query = sqlx::query(AssertSqlSafe(Arc::clone(update)))
+            .bind(turned)
+            .bind(device_id);
         for part in parts {
             query = match part {
                 RowPart::Text(text) => query.bind(text.clone()),
@@ -127,6 +131,14 @@ async fn write_row(
     })
     .map(drop)
     .map_err(db)
+}
+
+/// Mark SQL built by `statements::convert` as safe for sqlx 0.9, which refuses
+/// a runtime `String`. It is safe because those builders only splice table and
+/// column identifiers from the closed `sealed_columns()` table into the text;
+/// no request data ever reaches them (values go through `bind`).
+fn sealed_sql(sql: String) -> AssertSqlSafe<String> {
+    AssertSqlSafe(sql)
 }
 
 /// Decode one row: the key columns in list order, then the blob.
@@ -160,7 +172,7 @@ pub(super) async fn scrub_old_plaintext(pool: &SqlPool) -> StoreResult<()> {
     match pool {
         SqlPool::Pg(pool) => {
             for column in sealed_columns() {
-                sqlx::query(&vacuum_full(column))
+                sqlx::query(sealed_sql(vacuum_full(column)))
                     .execute(pool)
                     .await
                     .map_err(db)?;

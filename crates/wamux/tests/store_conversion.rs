@@ -56,7 +56,7 @@ async fn raw_pool(url: &str) -> SqlitePool {
         .unwrap()
 }
 
-async fn count(pool: &SqlitePool, sql: &str) -> i64 {
+async fn count(pool: &SqlitePool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 
@@ -64,10 +64,10 @@ async fn count(pool: &SqlitePool, sql: &str) -> i64 {
 /// conversion (or the decrypt) of that account does.
 async fn break_account(url: &str, device_id: i32) {
     let pool = raw_pool(url).await;
-    sqlx::raw_sql(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER stop_account BEFORE UPDATE ON sessions WHEN OLD.device_id = {device_id}
          BEGIN SELECT RAISE(ABORT, 'rejected by test'); END;"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();

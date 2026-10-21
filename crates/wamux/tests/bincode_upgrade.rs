@@ -224,7 +224,7 @@ struct ThrowawayPg {
 async fn create_pg_database() -> ThrowawayPg {
     let admin = PgPool::connect(&common::database_url()).await.unwrap();
     let name = format!("wamux_upgrade_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(&format!("CREATE DATABASE {name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&admin)
         .await
         .unwrap();
@@ -236,10 +236,13 @@ async fn create_pg_database() -> ThrowawayPg {
 
 async fn drop_pg_database(db: ThrowawayPg) {
     let admin = PgPool::connect(&common::database_url()).await.unwrap();
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", db.name))
-        .execute(&admin)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+        db.name
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
 }
 
 async fn legacy_pg(legacy: &LegacyAccount) -> (ThrowawayPg, i32) {

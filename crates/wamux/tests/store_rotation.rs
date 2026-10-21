@@ -99,10 +99,10 @@ async fn raw_pool(url: &str) -> SqlitePool {
 /// Abort every UPDATE of `sessions` for one account.
 async fn break_account(url: &str, device_id: i32) {
     let pool = raw_pool(url).await;
-    sqlx::raw_sql(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER stop_account BEFORE UPDATE ON sessions WHEN OLD.device_id = {device_id}
          BEGIN SELECT RAISE(ABORT, 'rejected by test'); END;"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();
