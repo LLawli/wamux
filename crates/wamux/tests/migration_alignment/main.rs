@@ -2,5 +2,6 @@
 //! to one rule. No database, no feature: it runs on every `cargo test`.
 
 mod check;
+mod checksums;
 mod repository;
 mod rules;
