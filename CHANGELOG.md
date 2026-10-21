@@ -74,6 +74,59 @@ has to follow them.
 
 ### Changed
 
+- **whatsapp-rust `eab45737`** (issue #205), from `6f07e3ab`: every crate of the
+  family moves together, and ureq goes to 3.4.2. The nightly toolchain stays
+  `nightly-2026-06-16`, the one upstream builds on. The wire contract does not
+  change: every field, every relayed value and every status code stays as it
+  was, except for the behavior the library itself now imposes, listed here.
+  - **Events keep arriving at a terminal shutdown.** The library's default
+    event delivery became a bounded queue that drops the newest event when full
+    and cancels in-flight callbacks at shutdown, which loses the `LoggedOut` a
+    `Logout` dispatches right before shutting the client down. The core now
+    registers a raw handler that spawns one task per event, as the delivery
+    before the bump did, so nothing is dropped or cancelled.
+  - **After `Logout`, `GetAccountStatus` reports `LOGGED_OUT`**, matching the
+    `LOGGED_OUT` event the subscriber gets. It used to report `DISCONNECTED`:
+    the stop that follows the logout overwrote the terminal state the event had
+    set. A stop now keeps `LOGGED_OUT` and `BANNED`, as the run loop's exit
+    already did.
+  - **`SendPoll` to a channel keeps working.** The library now builds a poll
+    only as an end-to-end creation and refuses a channel. Measured live, the
+    server still takes a channel poll, so for an `@newsletter` destination the
+    core builds the same poll message the library builds (v3 for one choice,
+    v1 otherwise, the same refusals with the same messages) and publishes it
+    as the channel's plaintext. The answer still carries the secret.
+  - **Delete-for-me relays the `participant`.** The core used to drop it, so
+    deleting someone else's message in a group failed. Without a participant,
+    someone else's message in a group or a status is now `InvalidArgument`.
+  - **Star, unstar and delete-for-me address the message the way WA Web does**:
+    the index carries `"0"` as the participant for your own message and in a
+    direct chat, without the device suffix. A channel message, or an empty
+    message id, is `InvalidArgument`.
+  - **`raw_message` is the library's encoding of the new schema**: field 117
+    (`newsletterAdminProfileMessageV2`, gone from the schema) no longer
+    appears, and fields 132 to 134 now can.
+  - **`GetProfilePicture` reports a rate limit**: a `429` the server puts inside
+    `<picture>` is `ResourceExhausted`, where it used to answer OK with an empty
+    URL.
+  - **A malformed media descriptor is `InvalidArgument`**: a media key or a
+    digest that is not 32 bytes is refused before the CDN, where it used to
+    fail as `Unavailable`. A CDN 403, 404 or 410 no longer makes the library
+    refresh `media_conn` and retry: retries are the edge's. A download URL no
+    longer carries the `media_conn` `auth` parameter (the library's choice).
+  - **The library refuses** `SendPoll` to a broadcast list and `SendPollVote` in
+    a channel or a broadcast list, before anything is sent.
+  - **Enum values the build does not name** (the library's protobuf enums are
+    now `#[non_exhaustive]`) cross as the wire enum's UNKNOWN, with the number
+    in `mode_code` for the status audience. None of them is reachable on this
+    schema.
+  - **Four new library events reach the edge as `RawEvent`**:
+    `ReachoutTimelockUpdate`, `CallLogHistory`, `UnarchiveChatsSettingUpdate`
+    and `LabelSublistUpdate`.
+  - Under a heavy inbound burst the library now bounds its incoming queues and
+    recycles the connection rather than grow without limit; the edge sees a
+    `DISCONNECTED` then `CONNECTED` pair. The limits are not configurable.
+
 - **sqlx 0.9** (issue #209), from 0.8. The code change is small: sqlx 0.9
   refuses SQL built at run time unless it is marked safe, so the conversion
   statements (built only from the closed `sealed_columns()` table) are wrapped
@@ -84,6 +137,15 @@ has to follow them.
   already uses. One behavior change from sqlx: a Postgres `.pgpass` file now
   interprets backslash escapes (sqlx #3993). Nothing changes on the wire or in
   the config.
+
+### Fixed
+
+- **`GetGroupMetadata`, `ListGroups` and `GroupCreated` report the three member
+  modes** (issue #205): `member_add_mode`, `member_link_mode` and
+  `member_share_history_mode` were UNSPECIFIED for every group even when the
+  server sent them, because their values are not protocol tokens, cross the
+  binary codec as bytes, and the library read them only as text. The library
+  reads both since upstream #1651, which the bump above brings in.
 
 ### Security
 
