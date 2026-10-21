@@ -12,6 +12,24 @@ has to follow them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Events of one account arrive in `monotonic_seq` order, and a replay during
+  a burst no longer loses one** (issue #213). Each event was published from a
+  task of its own, so two events could be stamped in one order and delivered in
+  the other: a subscriber saw seq 32, 31, 30 inside one millisecond during an
+  offline drain, and about 0.8% of a long recording arrived after a higher seq.
+  The replay ring held them out of order too, and the core's own replay dedupe
+  skips every live envelope at or below the highest seq it replayed, so a
+  subscriber that joined with `replay_from_ring` in the middle of a burst could
+  lose an event for good. Every account now publishes through one queue drained
+  by one task, the send echo included, and `SendResult` still returns only once
+  the echo is replayable. The contract now says so on
+  `EventEnvelope.monotonic_seq`: strictly increasing per account, in the order
+  the library dispatched, and back to 0 when the daemon restarts. No field
+  changes. Measured on a 100,000-event burst: no inversion, and 4 to 5 times
+  faster than a task per event.
+
 ## [0.2.1] - 2026-10-21
 
 ### Added
