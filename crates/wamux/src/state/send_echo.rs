@@ -23,10 +23,8 @@ use wamux_types::{Jid, MessageId};
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use super::account_handle::AccountHandle;
-use super::event_bridge::replayable;
 use crate::domain::event_mapping::map_sent;
 use crate::domain::messaging::sent_message_key;
-use crate::proto::v1 as pb;
 use crate::proto::v1::event_envelope::Event as WireEvent;
 
 /// Build the echo and put it on the bus. Best-effort by construction: a send
@@ -43,24 +41,18 @@ pub async fn publish_sent(
     chat: &Jid,
     sender: Option<&Jid>,
     message: &wa::Message,
-    replay_max_event_bytes: u64,
 ) {
     let key = sent_message_key(message_id.to_string(), chat.as_lib());
     let sender = sender.map(Jid::to_string).unwrap_or_default();
     let inbound = map_sent(key, &chat.to_string(), &sender, now_millis(), message);
-    let envelope = pb::EventEnvelope {
-        account_uuid: handle.uuid.to_string(),
-        monotonic_seq: handle.next_seq(),
-        ts_unix_ms: now_millis(),
-        event: Some(WireEvent::Message(inbound)),
-    };
-    // Replayable on the same terms as any other event: a consumer that
-    // reconnects and replays the ring is precisely the one that missed this.
-    if replayable(&envelope, replay_max_event_bytes) {
-        handle.ring.push(envelope.clone()).await;
-    }
-    // "No receivers" is normal: send-only clients and unsubscribed accounts.
-    let _ = handle.events_tx.send(envelope);
+    // The publisher stamps the seq and timestamp and puts the echo in the
+    // ring on the same terms as any other event: a consumer that reconnects
+    // and replays the ring is precisely the one that missed this. It waits
+    // until the echo is published so the response never outruns it.
+    handle
+        .publisher
+        .publish_wire(WireEvent::Message(inbound))
+        .await;
 }
 
 fn now_millis() -> i64 {

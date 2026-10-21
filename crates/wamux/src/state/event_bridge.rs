@@ -1,6 +1,7 @@
-//! The `on_event` bridge: maps each whatsapp-rust event to an `EventEnvelope`,
-//! stamps it with sequence + timestamp, pushes to the ring, and broadcasts it.
-//! Also tracks connection state into the per-account watch channel.
+//! Maps each whatsapp-rust event to an `EventEnvelope`, stamps it with
+//! sequence + timestamp, pushes to the ring, and broadcasts it. Also tracks
+//! connection state into the per-account watch channel. Driven only by the
+//! account's `EventPublisher` task.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -14,7 +15,7 @@ use crate::domain::event_mapping::map_event;
 use crate::proto::v1::event_envelope::Event as WireEvent;
 use crate::proto::v1::{ConnectionState, EventEnvelope};
 
-/// Cheap-to-clone capture set for the event handler closure.
+/// What the publisher task owns: the account's sequence, ring and broadcast.
 #[derive(Clone)]
 pub struct EventCtx {
     pub uuid: String,
@@ -26,35 +27,45 @@ pub struct EventCtx {
     pub replay_max_event_bytes: u64,
 }
 
-/// Handle one event: update connection state, then map+stamp+ring+broadcast.
-pub async fn dispatch(ctx: EventCtx, event: Arc<Event>) {
-    update_state(&ctx, &event);
+/// Publish one library event: update connection state, then map each wire
+/// event it fans out to and publish it. Called only by the account's
+/// publisher task, which is what makes the stamp-then-deliver steps below
+/// atomic with respect to other events (#213).
+pub(super) async fn dispatch(ctx: &EventCtx, event: &Event) {
+    update_state(ctx, event);
 
     // One lib event can fan out to several wire events: whatsapp-rust
     // delivers inbound messages in batches, and the wire contract is one
     // message per envelope. Each gets its own monotonic_seq, so the edge keeps
     // a total order and its replay cursor keeps meaning the same thing.
-    for inner in map_event(&event) {
-        let envelope = EventEnvelope {
-            account_uuid: ctx.uuid.clone(),
-            monotonic_seq: ctx.seq.fetch_add(1, Ordering::Relaxed),
-            ts_unix_ms: now_millis(),
-            event: Some(inner),
-        };
-        // History-sync blobs are bulk, not "live" replay, and would otherwise
-        // pin megabytes per account in the ring; keep them out (and any event
-        // over the configured size cap). They still broadcast live.
-        if replayable(&envelope, ctx.replay_max_event_bytes) {
-            ctx.ring.push(envelope.clone()).await;
-        }
-        // Ignore "no receivers": send-only / no-subscriber accounts are normal.
-        let _ = ctx.events_tx.send(envelope);
+    for inner in map_event(event) {
+        publish_wire_event(ctx, inner).await;
     }
 }
 
+/// Stamp `inner` with the next sequence and timestamp, push it to the ring,
+/// then broadcast it. The ring goes first: an envelope a subscriber can see
+/// live must already be replayable, or a subscriber attaching in between
+/// misses it.
+pub(super) async fn publish_wire_event(ctx: &EventCtx, inner: WireEvent) {
+    let envelope = EventEnvelope {
+        account_uuid: ctx.uuid.clone(),
+        monotonic_seq: ctx.seq.fetch_add(1, Ordering::Relaxed),
+        ts_unix_ms: now_millis(),
+        event: Some(inner),
+    };
+    // History-sync blobs are bulk, not "live" replay, and would otherwise
+    // pin megabytes per account in the ring; keep them out (and any event
+    // over the configured size cap). They still broadcast live.
+    if replayable(&envelope, ctx.replay_max_event_bytes) {
+        ctx.ring.push(envelope.clone()).await;
+    }
+    // Ignore "no receivers": send-only / no-subscriber accounts are normal.
+    let _ = ctx.events_tx.send(envelope);
+}
+
 /// Whether an event belongs in the bounded replay ring. The one gate for every
-/// writer of the ring (the bridge and the send echo), so the rule cannot drift
-/// (#80).
+/// writer of the ring, so the rule cannot drift (#80).
 pub(crate) fn replayable(envelope: &EventEnvelope, max_bytes: u64) -> bool {
     if matches!(envelope.event, Some(WireEvent::HistorySync(_))) {
         return false;

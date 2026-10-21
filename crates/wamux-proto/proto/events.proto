@@ -969,6 +969,14 @@ message EventEnvelope {
   // is a message (`AccountRef.uuid`, `Account.uuid`), so a wrapper here would
   // be the one uuid shaped differently from the rest.
   string account_uuid = 1;
+  // Per account, a stream delivers envelopes in strictly increasing
+  // monotonic_seq, which is the order the library dispatched the events in
+  // (the replay, then live, with no repeat between them). A subscriber may
+  // treat a seq at or below the highest it accepted as a duplicate. The only
+  // exceptions are the gap markers (seq -1). There is no order across
+  // accounts. The sequence lives in the daemon's memory: it starts again at 0
+  // when the daemon restarts, so a subscriber that keeps its highest seq across
+  // a restart must reset it when the stream ends (#213).
   int64 monotonic_seq = 2;
   int64 ts_unix_ms = 3;
   oneof event {

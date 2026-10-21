@@ -2,7 +2,7 @@
 //! event broadcast channel, the replay ring, and the connection-state watch.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use tokio::sync::{Mutex, RwLock, broadcast, watch};
@@ -10,6 +10,8 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 use whatsapp_rust::Client;
 
+use super::event_bridge::EventCtx;
+use super::event_publisher::EventPublisher;
 use super::event_ring::EventRing;
 use crate::proto::v1::{ConnectionState, EventEnvelope};
 use crate::storage::AccountRow;
@@ -37,6 +39,9 @@ pub struct AccountHandle {
     pub state_rx: watch::Receiver<ConnectionState>,
     /// Monotonic per-account event sequence.
     pub seq: Arc<AtomicI64>,
+    /// The one writer of this account's events (#213): every publish, from
+    /// the library or the send echo, goes through it.
+    pub publisher: EventPublisher,
     /// Grace period for `stop` before falling back to detaching the run loop.
     graceful_stop_timeout: Duration,
     client: RwLock<Option<Arc<Client>>>,
@@ -49,27 +54,36 @@ impl AccountHandle {
         ring_capacity: usize,
         broadcast_capacity: usize,
         graceful_stop_timeout: Duration,
+        replay_max_event_bytes: u64,
     ) -> Self {
         let (events_tx, _) = broadcast::channel(broadcast_capacity);
         let (state_tx, state_rx) = watch::channel(ConnectionState::Disconnected);
+        let ring = Arc::new(EventRing::new(ring_capacity));
+        let state_tx = Arc::new(state_tx);
+        let seq = Arc::new(AtomicI64::new(0));
+        let publisher = EventPublisher::spawn(EventCtx {
+            uuid: row.uuid.to_string(),
+            events_tx: events_tx.clone(),
+            ring: ring.clone(),
+            state_tx: state_tx.clone(),
+            seq: seq.clone(),
+            replay_max_event_bytes,
+        });
         Self {
             uuid: row.uuid,
             external_ref: row.external_ref.clone(),
             device_id: row.device_id,
             push_name: row.push_name.clone(),
             events_tx,
-            ring: Arc::new(EventRing::new(ring_capacity)),
-            state_tx: Arc::new(state_tx),
+            ring,
+            state_tx,
             state_rx,
-            seq: Arc::new(AtomicI64::new(0)),
+            seq,
+            publisher,
             graceful_stop_timeout,
             client: RwLock::new(None),
             running: Mutex::new(None),
         }
-    }
-
-    pub fn next_seq(&self) -> i64 {
-        self.seq.fetch_add(1, Ordering::Relaxed)
     }
 
     pub async fn set_client(&self, client: Arc<Client>) {
@@ -164,7 +178,7 @@ mod tests {
             push_name: None,
             created_at: 0,
         };
-        AccountHandle::new(&row, 8, 16, Duration::from_millis(10))
+        AccountHandle::new(&row, 8, 16, Duration::from_millis(10), 0)
     }
 
     #[tokio::test]

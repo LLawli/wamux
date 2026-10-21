@@ -14,7 +14,7 @@ use whatsapp_rust_tokio_transport::{Connector, TokioWebSocketTransportFactory};
 #[cfg(not(feature = "stress"))]
 use whatsapp_rust_ureq_http_client::UreqHttpClient;
 
-use crate::state::event_bridge::{self, EventCtx};
+use crate::state::EventPublisher;
 
 /// Construct (but do not run) a Bot on `backend` (already scoped to one
 /// account's device_id). Pass `pair_code` to start phone-number pairing on
@@ -25,7 +25,7 @@ use crate::state::event_bridge::{self, EventCtx};
 /// emitted as `HistorySyncEvent`s for the edge to backfill (e.g. a CRM).
 pub async fn build_bot(
     backend: Arc<dyn Backend>,
-    ctx: EventCtx,
+    publisher: EventPublisher,
     pair_code: Option<PairCodeOptions>,
     skip_history: bool,
     ws_url: Option<&str>,
@@ -53,7 +53,7 @@ pub async fn build_bot(
         .with_http_client(media_http_client())
         .with_runtime(TokioRuntime)
         .with_noise_cert_policy(cert_policy)
-        .with_event_handler(SpawnPerEvent { ctx });
+        .with_event_handler(QueueingHandler { publisher });
 
     if skip_history {
         builder = builder.skip_history_sync();
@@ -65,20 +65,20 @@ pub async fn build_bot(
     builder.build().await.map_err(|e| anyhow::anyhow!(e))
 }
 
-/// Hands every event to the bridge on its own task, with no queue and nothing
-/// that cancels it. The library's closure callbacks (`on_event`) sit behind a
-/// bounded queue that drops the newest event when full and cancel in-flight
-/// callbacks at shutdown; a relay cannot lose an event, and `logout` dispatches
-/// `LoggedOut` and shuts down right after, so that terminal event would die.
-/// A raw handler runs inline on the dispatch path, hence the spawn.
-struct SpawnPerEvent {
-    ctx: EventCtx,
+/// Enqueues every event on the account's publisher and returns. The library's
+/// closure callbacks (`on_event`) sit behind a bounded queue that drops the
+/// newest event when full and cancel in-flight callbacks at shutdown; a relay
+/// cannot lose an event, and `logout` dispatches `LoggedOut` and shuts down
+/// right after, so that terminal event would die. A raw handler runs inline on
+/// the dispatch path and the publisher's queue send is synchronous, so the
+/// event survives, and the one task draining it keeps the order (#213).
+struct QueueingHandler {
+    publisher: EventPublisher,
 }
 
-impl EventHandler for SpawnPerEvent {
+impl EventHandler for QueueingHandler {
     fn handle_event(&self, event: Arc<Event>) {
-        let ctx = self.ctx.clone();
-        tokio::spawn(event_bridge::dispatch(ctx, event));
+        self.publisher.publish_lib(event);
     }
 }
 

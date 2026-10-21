@@ -19,7 +19,6 @@ use crate::domain::bot_factory::build_bot;
 use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 use crate::state::account_handle::RunningBot;
-use crate::state::event_bridge::EventCtx;
 use crate::state::{AccountHandle, EventRing};
 use crate::storage::{AccountRow, StorageEngine};
 
@@ -106,6 +105,7 @@ impl AccountRegistry {
             self.tuning.ring_capacity,
             self.tuning.broadcast_capacity,
             self.tuning.graceful_stop_timeout,
+            self.tuning.replay_max_event_bytes,
         ));
         if let Some(external) = &handle.external_ref {
             self.by_external.insert(external.clone(), handle.uuid);
@@ -147,12 +147,6 @@ impl AccountRegistry {
     /// combine this with `list()` to get dynamic membership.
     pub fn subscribe_created(&self) -> broadcast::Receiver<Arc<AccountHandle>> {
         self.created_tx.subscribe()
-    }
-
-    /// The ring's per-event size cap, so a caller publishing onto the same bus
-    /// (issue #22's send echo) honours the same budget the event bridge does.
-    pub fn replay_max_event_bytes(&self) -> u64 {
-        self.tuning.replay_max_event_bytes
     }
 
     /// The handle `account` names. Shape errors ("missing account ref", "bad
@@ -202,17 +196,9 @@ impl AccountRegistry {
             )));
         }
         let _ = handle.state_tx.send(pb::ConnectionState::Connecting);
-        let ctx = EventCtx {
-            uuid: handle.uuid.to_string(),
-            events_tx: handle.events_tx.clone(),
-            ring: handle.ring.clone(),
-            state_tx: handle.state_tx.clone(),
-            seq: handle.seq.clone(),
-            replay_max_event_bytes: self.tuning.replay_max_event_bytes,
-        };
         let bot = build_bot(
             self.storage.device_backend(handle.device_id),
-            ctx,
+            handle.publisher.clone(),
             pair_code,
             skip_history,
             self.tuning.ws_url_override.as_deref(),
