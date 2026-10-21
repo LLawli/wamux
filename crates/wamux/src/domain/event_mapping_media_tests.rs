@@ -33,15 +33,17 @@ macro_rules! media_descriptor_test {
      { $($extra:ident : $value:expr),* }, $expected_caption:expr) => {
         #[test]
         fn $name() {
-            let (media, caption) = mapped_media(wa::Message {
-                $field: whatsapp_rust::buffa::MessageField::some(wa::message::$ty {
-                    mimetype: Some($mime.to_string()),
-                    file_length: Some(2048),
-                    direct_path: Some(concat!("/v/t62.", $kind).to_string()),
-                    $($extra: $value,)*
-                    ..Default::default()
-                }),
-                ..Default::default()
+            let (media, caption) = mapped_media({
+                let mut proto = wa::Message::default();
+                proto.$field = whatsapp_rust::buffa::MessageField::some({
+                    let mut proto = wa::message::$ty::default();
+                    proto.mimetype = Some($mime.to_string());
+                    proto.file_length = Some(2048);
+                    proto.direct_path = Some(concat!("/v/t62.", $kind).to_string());
+                    $(proto.$extra = $value;)*
+                    proto
+                });
+                proto
             });
             assert_eq!(media.media_type(), wire_of($kind));
             assert_eq!(media.mime_type, $mime);
@@ -74,14 +76,16 @@ media_descriptor_test!(
 // shape shared by all five kinds.
 #[test]
 fn media_descriptor_relays_key_material() {
-    let (media, _) = mapped_media(wa::Message {
-        image_message: whatsapp_rust::buffa::MessageField::some(wa::message::ImageMessage {
-            media_key: Some(vec![1, 2, 3]),
-            file_enc_sha256: Some(vec![4, 5]),
-            file_sha256: Some(vec![6, 7]),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let (media, _) = mapped_media({
+        let mut proto = wa::Message::default();
+        proto.image_message = whatsapp_rust::buffa::MessageField::some({
+            let mut proto = wa::message::ImageMessage::default();
+            proto.media_key = Some(vec![1, 2, 3]);
+            proto.file_enc_sha256 = Some(vec![4, 5]);
+            proto.file_sha256 = Some(vec![6, 7]);
+            proto
+        });
+        proto
     });
     assert_eq!(media.media_key, [1u8, 2, 3]);
     assert_eq!(media.file_enc_sha256, [4u8, 5]);
@@ -94,16 +98,18 @@ fn media_descriptor_relays_key_material() {
 #[test]
 fn a_sticker_pack_maps_to_its_archive_and_summary() {
     use wa::message::StickerPackMessage;
-    let out = super::tests::mapped_inbound(wa::Message {
-        sticker_pack_message: whatsapp_rust::buffa::MessageField::some(StickerPackMessage {
-            name: Some("A pack".to_string()),
-            caption: Some("for you".to_string()),
-            direct_path: Some("/v/t62.15575-24/pack.enc".to_string()),
-            file_length: Some(501_859),
-            thumbnail_direct_path: Some("/v/t62.15575-24/thumb.enc".to_string()),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let out = super::tests::mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.sticker_pack_message = whatsapp_rust::buffa::MessageField::some({
+            let mut proto = StickerPackMessage::default();
+            proto.name = Some("A pack".to_string());
+            proto.caption = Some("for you".to_string());
+            proto.direct_path = Some("/v/t62.15575-24/pack.enc".to_string());
+            proto.file_length = Some(501_859);
+            proto.thumbnail_direct_path = Some("/v/t62.15575-24/thumb.enc".to_string());
+            proto
+        });
+        proto
     });
     let media = out.media.expect("a pack yields a descriptor");
     assert_eq!(media.media_type(), pb::MediaType::StickerPack);
@@ -120,12 +126,14 @@ fn a_sticker_pack_maps_to_its_archive_and_summary() {
 // Only a pack sets the summary; a single sticker keeps it unset.
 #[test]
 fn a_single_sticker_carries_no_pack_summary() {
-    let out = super::tests::mapped_inbound(wa::Message {
-        sticker_message: whatsapp_rust::buffa::MessageField::some(wa::message::StickerMessage {
-            direct_path: Some("/v/t62.sticker".to_string()),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let out = super::tests::mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.sticker_message = whatsapp_rust::buffa::MessageField::some({
+            let mut proto = wa::message::StickerMessage::default();
+            proto.direct_path = Some("/v/t62.sticker".to_string());
+            proto
+        });
+        proto
     });
     assert!(out.sticker_pack.is_none());
 }

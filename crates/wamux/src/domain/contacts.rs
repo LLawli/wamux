@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use wamux_types::{Jid, relay_lib_jid};
-use whatsapp_rust::Client;
+use whatsapp_rust::{
+    Client, ProfilePictureRequest, ProfilePictureTarget, ProfilePictureType, PushNameOutcome,
+};
 
 use crate::domain::business_profile::business_profile_of;
 use crate::error::{WamuxError, client_err};
@@ -37,13 +39,19 @@ pub async fn get_profile_picture(
     client: &Client,
     jid: &Jid,
 ) -> Result<pb::ProfilePictureResponse, WamuxError> {
-    let picture = client
-        .contacts()
-        .get_profile_picture(jid.as_lib(), false)
+    let request = ProfilePictureRequest::new(
+        ProfilePictureTarget::Contact(jid.as_lib()),
+        ProfilePictureType::Full,
+    );
+    let lookup = client
+        .pictures()
+        .lookup(request)
         .await
         .map_err(client_err)?;
+    // Only a freshly found URL is relayed: "unchanged", "not found" and "not
+    // authorized" all read as no URL, as they always did.
     Ok(pb::ProfilePictureResponse {
-        url: picture.map(|p| p.url).unwrap_or_default(),
+        url: lookup.into_found().map(|p| p.url).unwrap_or_default(),
         image: Vec::new(),
     })
 }
@@ -75,11 +83,18 @@ pub async fn get_push_name(client: &Client) -> Result<pb::PushNameResponse, Wamu
 
 pub async fn set_push_name(client: &Client, name: &str) -> Result<(), WamuxError> {
     validate_push_name(name)?;
-    client
+    let outcome = client
         .profile()
         .set_push_name(name)
         .await
-        .map_err(client_err)
+        .map_err(client_err)?;
+    // The name is set and presence was sent either way; only the app-state sync
+    // to the other devices is pending. The wire has no field for that, so it is
+    // logged for the operator and the edge can retry by setting the name again.
+    if let PushNameOutcome::SyncPending { source } = outcome {
+        tracing::warn!(error = %source, "push name set, app-state sync pending");
+    }
+    Ok(())
 }
 
 /// An empty push name is structurally invalid: the lib rejects it locally,

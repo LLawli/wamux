@@ -52,9 +52,9 @@ fn participant_of(info: &ParticipantInfo) -> Option<pb::CallLogParticipant> {
     })
 }
 
-/// One arm per library variant, no wildcard: a variant added upstream fails
-/// the build instead of being relayed as a wrong case (#149 rule). Absent is
-/// UNSPECIFIED; UNKNOWN is never emitted because the enum is closed.
+/// Absent is UNSPECIFIED. A variant this build does not name (the waproto enums
+/// are `#[non_exhaustive]`) is UNKNOWN, never relayed as a wrong case (#149
+/// rule); the library gives no number to carry alongside.
 fn call_result_of(result: Option<CallResult>) -> pb::CallLogResult {
     use pb::CallLogResult as Kind;
     let Some(result) = result else {
@@ -72,6 +72,7 @@ fn call_result_of(result: Option<CallResult>) -> pb::CallLogResult {
         CallResult::FAILED => Kind::Failed,
         CallResult::ABANDONED => Kind::Abandoned,
         CallResult::ONGOING => Kind::Ongoing,
+        _ => Kind::Unknown,
     }
 }
 
@@ -86,6 +87,7 @@ fn silence_reason_of(reason: Option<SilenceReason>) -> pb::CallLogSilenceReason 
         SilenceReason::SCHEDULED => Kind::Scheduled,
         SilenceReason::PRIVACY => Kind::Privacy,
         SilenceReason::LIGHTWEIGHT => Kind::Lightweight,
+        _ => Kind::Unknown,
     }
 }
 
@@ -99,6 +101,7 @@ fn call_type_of(call_type: Option<CallType>) -> pb::CallLogType {
         CallType::REGULAR => Kind::Regular,
         CallType::SCHEDULED_CALL => Kind::ScheduledCall,
         CallType::VOICE_CHAT => Kind::VoiceChat,
+        _ => Kind::Unknown,
     }
 }
 

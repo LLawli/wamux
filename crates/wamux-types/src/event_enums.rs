@@ -9,7 +9,7 @@
 //! upstream fails the build at the bump instead of reaching the edge unnamed.
 
 use wacore::types::events::{ConnectFailureReason, TempBanReason, UnavailableType};
-use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
+use wacore::types::presence::{ChatActivity, ReceiptType};
 use wamux_proto::v1 as pb;
 
 /// The receipt's type, and the stanza attribute verbatim when it is UNKNOWN
@@ -37,13 +37,16 @@ pub fn receipt_type_of(receipt: &ReceiptType) -> (pb::ReceiptType, String) {
     (known, String::new())
 }
 
-/// The chat state the edge draws. The library models "recording" as composing
-/// with audio media.
-pub fn chat_state_of(state: ChatPresence, media: ChatPresenceMedia) -> pb::ChatState {
-    match (state, media) {
-        (ChatPresence::Composing, ChatPresenceMedia::Audio) => pb::ChatState::Recording,
-        (ChatPresence::Composing, ChatPresenceMedia::Text) => pb::ChatState::Composing,
-        (ChatPresence::Paused, _) => pb::ChatState::Paused,
+/// The chat state the edge draws. The library models "recording" as its own
+/// activity, which the wire spells `composing` with audio media.
+pub fn chat_state_of(activity: ChatActivity) -> pb::ChatState {
+    match activity {
+        ChatActivity::Typing => pb::ChatState::Composing,
+        ChatActivity::RecordingAudio => pb::ChatState::Recording,
+        ChatActivity::Idle => pb::ChatState::Paused,
+        // `#[non_exhaustive]`: an activity this build does not name relays as
+        // UNKNOWN instead of being mislabelled as one it does.
+        _ => pb::ChatState::Unknown,
     }
 }
 

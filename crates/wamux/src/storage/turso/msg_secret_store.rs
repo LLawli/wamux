@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use wacore::store::error::Result;
-use wacore::store::traits::{MsgSecretEntry, MsgSecretStore};
+use wacore::store::traits::{MsgSecretEntry, MsgSecretStore, StoredMessageSecret};
 
 use super::exec::binds;
 use super::row_values::{blob, first_blob, int};
@@ -60,14 +60,15 @@ impl MsgSecretStore for TursoBackend {
             .transpose()
     }
 
-    /// Overridden rather than defaulted: the default pairs the secret with a
-    /// hardcoded `0`, which would silently disable the edit-processing window.
-    async fn get_msg_secret_with_ts(
+    /// Required by the trait: the read that carries the parent time. The
+    /// time must come back from the row, or the edit-processing window would
+    /// be silently disabled.
+    async fn get_stored_msg_secret(
         &self,
         chat: &str,
         sender: &str,
         msg_id: &str,
-    ) -> Result<Option<(Vec<u8>, i64)>> {
+    ) -> Result<Option<StoredMessageSecret>> {
         let binds = binds![chat, sender, msg_id, self.device_id];
         let row = self
             .conn
@@ -76,7 +77,7 @@ impl MsgSecretStore for TursoBackend {
         let row_key = secret_row(chat, sender, msg_id);
         row.map(|row| {
             let secret = self.open_at("msg_secrets", "secret", &row_key, &blob(&row, 0)?)?;
-            Ok((secret, int(&row, 1)?))
+            StoredMessageSecret::from_stored_bytes(&secret, int(&row, 1)?)
         })
         .transpose()
     }

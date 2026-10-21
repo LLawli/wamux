@@ -149,9 +149,10 @@ fn a_native_flow_reply_relays_its_payload_verbatim() {
 /// those bytes (`InboundMessage.raw_message`); the core relays them decoded.
 #[test]
 fn the_offer_payload_rides_in_the_quote_when_supplied() {
-    let offer = wa::Message {
-        conversation: Some("Escolha uma opção".to_string()),
-        ..Default::default()
+    let offer = {
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("Escolha uma opção".to_string());
+        proto
     };
     let request = InteractiveReply {
         quoted_message: offer.encode_to_vec(),

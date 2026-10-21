@@ -41,9 +41,10 @@ fn row(server_id: &str, kind: Option<&str>) -> NodeBuilder {
 }
 
 fn text_payload(text: &str) -> Vec<u8> {
-    wa::Message {
-        conversation: Some(text.to_string()),
-        ..Default::default()
+    {
+        let mut proto = wa::Message::default();
+        proto.conversation = Some(text.to_string());
+        proto
     }
     .encode_to_vec()
 }

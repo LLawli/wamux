@@ -43,20 +43,20 @@ fn jid(value: &str) -> pb::Jid {
 /// "My contacts except..." as measured live on 2026-10-08 (#149), plus a
 /// custom list, so every field of the setting has something to carry.
 fn deny_list() -> StatusPrivacyAction {
-    StatusPrivacyAction {
-        mode: Some(StatusDistributionMode::DENY_LIST.into()),
-        modes: vec![StatusDistributionMode::DENY_LIST.into()],
-        user_jid: vec![EXCLUDED_A.into(), EXCLUDED_B.into()],
-        share_to_fb: Some(false),
-        custom_lists: vec![CustomList {
-            list_id: Some("work".into()),
-            name: Some("Trabalho".into()),
-            is_selected: Some(true),
-            user_jid: vec![LISTED.into()],
-            ..Default::default()
-        }],
-        ..Default::default()
-    }
+    let mut proto = StatusPrivacyAction::default();
+    proto.mode = Some(StatusDistributionMode::DENY_LIST.into());
+    proto.modes = vec![StatusDistributionMode::DENY_LIST.into()];
+    proto.user_jid = vec![EXCLUDED_A.into(), EXCLUDED_B.into()];
+    proto.share_to_fb = Some(false);
+    proto.custom_lists = vec![{
+        let mut proto = CustomList::default();
+        proto.list_id = Some("work".into());
+        proto.name = Some("Trabalho".into());
+        proto.is_selected = Some(true);
+        proto.user_jid = vec![LISTED.into()];
+        proto
+    }];
+    proto
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -99,10 +99,11 @@ async fn status_audience_keeps_an_unknown_mode_as_its_number() {
     let mut f = fixture_shaped(
         "status_audience_keeps_an_unknown_mode_as_its_number",
         |device| {
-            device.status_privacy = Some(Arc::new(StatusPrivacyAction {
-                mode: Some(EnumValue::Unknown(99)),
-                modes: vec![EnumValue::Unknown(99)],
-                ..Default::default()
+            device.status_privacy = Some(Arc::new({
+                let mut proto = StatusPrivacyAction::default();
+                proto.mode = Some(EnumValue::Unknown(99));
+                proto.modes = vec![EnumValue::Unknown(99)];
+                proto
             }));
         },
     )

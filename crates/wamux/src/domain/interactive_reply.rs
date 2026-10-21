@@ -113,15 +113,16 @@ fn build_button_reply(
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::Message {
     use wa::message::buttons_response_message::{Response, Type};
-    wa::Message {
-        buttons_response_message: buffa::MessageField::some(wa::message::ButtonsResponseMessage {
-            selected_button_id: nonempty_string(selected_id),
-            response: nonempty_string(display_text).map(Response::SelectedDisplayText),
-            context_info: context,
-            r#type: Some(Type::DisplayText),
-        }),
-        ..Default::default()
-    }
+    // waproto's structs are `#[non_exhaustive]`: built by assigning fields on a
+    // default, never by a literal.
+    let mut reply = wa::message::ButtonsResponseMessage::default();
+    reply.selected_button_id = nonempty_string(selected_id);
+    reply.response = nonempty_string(display_text).map(Response::SelectedDisplayText);
+    reply.context_info = context;
+    reply.r#type = Some(Type::DisplayText);
+    let mut message = wa::Message::default();
+    message.buttons_response_message = buffa::MessageField::some(reply);
+    message
 }
 
 /// `listType = SINGLE_SELECT` is set here, not relayed: 4 of 4 captured replies
@@ -133,18 +134,17 @@ fn build_list_reply(
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::Message {
     use wa::message::list_response_message::{ListType, SingleSelectReply};
-    wa::Message {
-        list_response_message: buffa::MessageField::some(wa::message::ListResponseMessage {
-            title: nonempty_string(title),
-            list_type: Some(ListType::SingleSelect),
-            single_select_reply: buffa::MessageField::some(SingleSelectReply {
-                selected_row_id: nonempty_string(selected_row_id),
-            }),
-            context_info: context,
-            description: nonempty_string(description),
-        }),
-        ..Default::default()
-    }
+    let mut selected = SingleSelectReply::default();
+    selected.selected_row_id = nonempty_string(selected_row_id);
+    let mut reply = wa::message::ListResponseMessage::default();
+    reply.title = nonempty_string(title);
+    reply.list_type = Some(ListType::SingleSelect);
+    reply.single_select_reply = buffa::MessageField::some(selected);
+    reply.context_info = context;
+    reply.description = nonempty_string(description);
+    let mut message = wa::Message::default();
+    message.list_response_message = buffa::MessageField::some(reply);
+    message
 }
 
 /// `selected_index` relays verbatim, INCLUDING 0: it is the first button's
@@ -157,18 +157,14 @@ fn build_template_reply(
     selected_index: u32,
     context: buffa::MessageField<wa::ContextInfo>,
 ) -> wa::Message {
-    wa::Message {
-        template_button_reply_message: buffa::MessageField::some(
-            wa::message::TemplateButtonReplyMessage {
-                selected_id: nonempty_string(selected_id),
-                selected_display_text: nonempty_string(display_text),
-                context_info: context,
-                selected_index: Some(selected_index),
-                ..Default::default()
-            },
-        ),
-        ..Default::default()
-    }
+    let mut reply = wa::message::TemplateButtonReplyMessage::default();
+    reply.selected_id = nonempty_string(selected_id);
+    reply.selected_display_text = nonempty_string(display_text);
+    reply.context_info = context;
+    reply.selected_index = Some(selected_index);
+    let mut message = wa::Message::default();
+    message.template_button_reply_message = buffa::MessageField::some(reply);
+    message
 }
 
 /// The shape with no capture behind it (see the module note). Everything here
@@ -183,25 +179,19 @@ fn build_native_flow_reply(
     use wa::message::interactive_response_message::{
         Body, InteractiveResponseMessage as Which, NativeFlowResponseMessage,
     };
-    wa::Message {
-        interactive_response_message: buffa::MessageField::some(
-            wa::message::InteractiveResponseMessage {
-                body: buffa::MessageField::some(Body {
-                    text: nonempty_string(body_text),
-                    ..Default::default()
-                }),
-                context_info: context,
-                interactive_response_message: Some(Which::NativeFlowResponseMessage(Box::new(
-                    NativeFlowResponseMessage {
-                        name: nonempty_string(name),
-                        params_json: nonempty_string(params_json),
-                        version: nonzero_i32(version),
-                    },
-                ))),
-            },
-        ),
-        ..Default::default()
-    }
+    let mut body = Body::default();
+    body.text = nonempty_string(body_text);
+    let mut flow = NativeFlowResponseMessage::default();
+    flow.name = nonempty_string(name);
+    flow.params_json = nonempty_string(params_json);
+    flow.version = nonzero_i32(version);
+    let mut reply = wa::message::InteractiveResponseMessage::default();
+    reply.body = buffa::MessageField::some(body);
+    reply.context_info = context;
+    reply.interactive_response_message = Some(Which::NativeFlowResponseMessage(Box::new(flow)));
+    let mut message = wa::Message::default();
+    message.interactive_response_message = buffa::MessageField::some(reply);
+    message
 }
 
 #[cfg(test)]

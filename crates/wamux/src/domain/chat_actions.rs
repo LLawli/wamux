@@ -6,6 +6,7 @@
 use wamux_types::{Jid, MessageTarget};
 use whatsapp_rust::Client;
 
+use crate::domain::messaging::message_ref_of;
 use crate::error::{WamuxError, client_err};
 
 /// Star or unstar a single message. The message-locating fields all come off
@@ -16,18 +17,12 @@ pub async fn star_message(
     target: &MessageTarget,
     starred: bool,
 ) -> Result<(), WamuxError> {
-    let chat = target.chat.as_lib();
-    let participant = target.participant.as_ref().map(Jid::as_lib);
-    let id = target.id.as_str();
+    let message_ref = message_ref_of(target)?;
     let actions = client.chat_actions();
     let result = if starred {
-        actions
-            .star_message(chat, participant, id, target.from_me)
-            .await
+        actions.star_message(&message_ref).await
     } else {
-        actions
-            .unstar_message(chat, participant, id, target.from_me)
-            .await
+        actions.unstar_message(&message_ref).await
     };
     result.map_err(client_err)
 }

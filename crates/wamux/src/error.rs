@@ -38,7 +38,7 @@ fn invalid_request_message(cause: &(dyn std::error::Error + 'static)) -> Option<
 
 /// The lib surfaces server rejections as five types depending on the path:
 /// `ServerErrorCode` (its own cross-crate wrapper), the high-level `IqError`,
-/// wacore's `IqError`, a MEX query's `ExtensionError`, or `GroupError::
+/// wacore's `IqError`, a MEX query's `GraphQl` error, or `GroupError::
 /// DescriptionConflict`. Probe all five.
 fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
     use wacore::request::{IqError as WacoreIq, ServerErrorCode};
@@ -73,7 +73,7 @@ fn iq_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16
 /// is not an HTTP-style status and stays an opaque client error.
 fn mex_server_rejection(cause: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
     use whatsapp_rust::features::MexError;
-    let Some(MexError::ExtensionError { code, message }) = cause.downcast_ref::<MexError>() else {
+    let Some(MexError::GraphQl { code, message, .. }) = cause.downcast_ref::<MexError>() else {
         return None;
     };
     Some((u16::try_from(*code).ok()?, message.clone()))
@@ -167,10 +167,22 @@ mod tests {
     }
 
     fn mex(code: i32, message: &str) -> anyhow::Error {
-        anyhow::Error::new(whatsapp_rust::features::MexError::ExtensionError {
+        anyhow::Error::new(graphql_error(code, message))
+    }
+
+    /// Built the way the library classifies a fatal GraphQL error: the typed
+    /// `MexFatalError` inside an `IqError::ParseError`, kept as the source.
+    fn graphql_error(code: i32, message: &str) -> whatsapp_rust::features::MexError {
+        let fatal = wacore::iq::mex::MexFatalError {
+            query: "test",
             code,
             message: message.into(),
-        })
+        };
+        whatsapp_rust::features::MexError::GraphQl {
+            code,
+            message: message.into(),
+            source: Box::new(IqError::ParseError(anyhow::Error::new(fatal))),
+        }
     }
 
     // #56: measured in production on a channel the account does not follow.
@@ -186,12 +198,8 @@ mod tests {
     // still finds it.
     #[test]
     fn mex_rejection_is_found_under_a_newsletter_error() {
-        let wrapped = whatsapp_rust::features::NewsletterError::Mex(
-            whatsapp_rust::features::MexError::ExtensionError {
-                code: 404,
-                message: "Not Found".into(),
-            },
-        );
+        let wrapped =
+            whatsapp_rust::features::NewsletterError::Mex(graphql_error(404, "Not Found"));
         assert_eq!(
             status_for(anyhow::Error::new(wrapped)).code(),
             tonic::Code::NotFound

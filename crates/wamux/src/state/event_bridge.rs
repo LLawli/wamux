@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use prost::Message;
 use tokio::sync::{broadcast, watch};
 use wacore::types::events::Event;
-use whatsapp_rust::Client;
 
 use super::event_ring::EventRing;
 use crate::domain::event_mapping::map_event;
@@ -28,7 +27,7 @@ pub struct EventCtx {
 }
 
 /// Handle one event: update connection state, then map+stamp+ring+broadcast.
-pub async fn dispatch(ctx: EventCtx, event: Arc<Event>, _client: Arc<Client>) {
+pub async fn dispatch(ctx: EventCtx, event: Arc<Event>) {
     update_state(&ctx, &event);
 
     // One lib event can fan out to several wire events: whatsapp-rust

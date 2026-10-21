@@ -314,11 +314,15 @@ async fn probe_once(
     receipts: &ReceiptMap,
 ) -> Option<Duration> {
     let t0 = Instant::now();
-    let message = wa::Message {
-        conversation: Some(text.to_string()),
-        ..Default::default()
-    };
-    let id = client.send_message(dest, message).await.ok()?.message_id;
+    let mut message = wa::Message::default();
+    message.conversation = Some(text.to_string());
+    // The receipt map is keyed by the wire string.
+    let id = client
+        .send_message(dest, message)
+        .await
+        .ok()?
+        .message_id
+        .into_string();
 
     let deadline = t0 + PROBE_WINDOW;
     loop {

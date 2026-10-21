@@ -18,21 +18,22 @@ fn wire(value: &str) -> Option<pb::Jid> {
 }
 
 fn group(id: &str, subject: Option<&str>, members: usize) -> GroupMetadata {
-    GroupMetadata {
-        id: Jid::from_str(id).unwrap(),
-        subject: subject.map(str::to_string),
-        participants: (0..members)
-            .map(|i| GroupParticipant {
-                jid: Jid::from_str(&format!("55119990001{i:02}@s.whatsapp.net")).unwrap(),
-                phone_number: None,
-                lid: None,
-                username: None,
-                participant_type: ParticipantType::Member,
-                details: None,
-            })
-            .collect(),
-        ..GroupMetadata::default()
-    }
+    let mut metadata = GroupMetadata::new(Jid::from_str(id).unwrap());
+    metadata.subject = subject.map(str::to_string);
+    metadata.participants = (0..members)
+        .map(|i| {
+            let mut participant = GroupParticipant::new(
+                Jid::from_str(&format!("55119990001{i:02}@s.whatsapp.net")).unwrap(),
+            );
+            participant.phone_number = None;
+            participant.lid = None;
+            participant.username = None;
+            participant.participant_type = ParticipantType::Member;
+            participant.details = None;
+            participant
+        })
+        .collect();
+    metadata
 }
 
 // ListGroups projects full metadata (#30): upstream's `list_participating`

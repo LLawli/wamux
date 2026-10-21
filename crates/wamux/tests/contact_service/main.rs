@@ -16,4 +16,5 @@ mod about;
 mod blocking;
 mod blocklist;
 mod harness;
+mod picture;
 mod statuses;

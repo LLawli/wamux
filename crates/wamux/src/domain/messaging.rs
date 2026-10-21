@@ -10,7 +10,10 @@ use wamux_types::{
 use whatsapp_rust::buffa::{Enumeration, MessageField};
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::PreviewType;
-use whatsapp_rust::{Client, Jid as LibJid, RevokeType, SendResult};
+use whatsapp_rust::{
+    Client, EditOptions, Jid as LibJid, MessageId, MessageRef, MessageRefError, RevokeType,
+    SendResult,
+};
 
 use crate::domain::outgoing_context::outgoing_context;
 use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_i32};
@@ -48,24 +51,26 @@ pub async fn send_text(
 pub(crate) fn build_text_message(text: &OutgoingText) -> Result<wa::Message, WamuxError> {
     let plain = text.context == OutgoingContext::default() && text.link_preview.is_none();
     if plain {
-        return Ok(wa::Message {
-            conversation: Some(text.text.clone()),
-            ..Default::default()
-        });
+        return Ok(conversation_message(&text.text));
     }
-    Ok(wa::Message {
-        extended_text_message: MessageField::some(extended_text(text)?),
-        ..Default::default()
-    })
+    let mut message = wa::Message::default();
+    message.extended_text_message = MessageField::some(extended_text(text)?);
+    Ok(message)
+}
+
+/// A plain `conversation` message. waproto's structs are `#[non_exhaustive]`, so
+/// they are built by assigning fields on a default, never by a literal.
+fn conversation_message(text: &str) -> wa::Message {
+    let mut message = wa::Message::default();
+    message.conversation = Some(text.to_string());
+    message
 }
 
 fn extended_text(text: &OutgoingText) -> Result<wa::message::ExtendedTextMessage, WamuxError> {
-    let mut extended = wa::message::ExtendedTextMessage {
-        text: Some(text.text.clone()),
-        // Unset for a preview-only message: shared builder, see outgoing_context.
-        context_info: outgoing_context(&text.context),
-        ..Default::default()
-    };
+    let mut extended = wa::message::ExtendedTextMessage::default();
+    extended.text = Some(text.text.clone());
+    // Unset for a preview-only message: shared builder, see outgoing_context.
+    extended.context_info = outgoing_context(&text.context);
     if let Some(preview) = &text.link_preview {
         copy_link_preview(&mut extended, preview)?;
     }
@@ -105,14 +110,11 @@ pub async fn send_reaction(
 ) -> Result<SendResult, WamuxError> {
     let to = target.chat.clone().into_lib();
     let key = wa_message_key(target);
-    let message = wa::Message {
-        reaction_message: MessageField::some(wa::message::ReactionMessage {
-            key: MessageField::some(key),
-            text: Some(emoji.to_string()),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    let mut reaction = wa::message::ReactionMessage::default();
+    reaction.key = MessageField::some(key);
+    reaction.text = Some(emoji.to_string());
+    let mut message = wa::Message::default();
+    message.reaction_message = MessageField::some(reaction);
     client.send_message(to, message).await.map_err(client_err)
 }
 
@@ -122,16 +124,15 @@ pub async fn edit_message(
     new_text: &str,
 ) -> Result<SendResult, WamuxError> {
     let to = target.chat.clone().into_lib();
-    let new = wa::Message {
-        conversation: Some(new_text.to_string()),
-        ..Default::default()
-    };
+    let new = conversation_message(new_text);
     // The library builds the edit container itself and hands it back on
     // `SendResult::message` (upstream #1406), which is what lets the service
     // echo an edit at all (#38). `message_id` is the edit stanza's own fresh
-    // id, not the target's.
+    // id, not the target's. The `_raw` form, not the typed `EditRequest`: the
+    // core relays the addressing it was given, and the typed form adds its own
+    // refusals (ownership, origin) that are the edge's policy to apply.
     client
-        .edit_message(to, target.id.to_string(), new)
+        .edit_message_raw(to, target.id.to_string(), new, EditOptions::default())
         .await
         .map_err(client_err)
 }
@@ -160,16 +161,18 @@ pub async fn delete_message(
         // A revoke is a message the library builds and sends, so it comes back
         // to be echoed like an edit (#38).
         let result = client
-            .revoke_message(to, target.id.to_string(), RevokeType::Sender)
+            .revoke_message_raw(to, target.id.to_string(), RevokeType::Sender)
             .await
             .map_err(client_err)?;
         return Ok(Some(result));
     }
     // Delete-for-me is an app-state mutation: nothing goes to the chat, so
-    // there is no message to echo.
+    // there is no message to echo. The participant rides in the mutation's
+    // index (a group message or a status needs it to be found again).
+    let message_ref = message_ref_of(target)?;
     client
         .chat_actions()
-        .delete_message_for_me(&to, None, target.id.as_str(), target.from_me, false, None)
+        .delete_message_for_me(&message_ref, false, None)
         .await
         .map_err(client_err)?;
     Ok(None)
@@ -257,12 +260,32 @@ pub async fn mark_read(
 /// The wa key of a target. An absent participant (a DM) relays as the absent
 /// field, never `Some("")` (#20).
 pub(crate) fn wa_message_key(target: &MessageTarget) -> wa::MessageKey {
-    wa::MessageKey {
-        remote_jid: Some(target.chat.to_string()),
-        id: Some(target.id.to_string()),
-        from_me: Some(target.from_me),
-        participant: target.participant.as_ref().map(Jid::to_string),
-    }
+    let mut key = wa::MessageKey::default();
+    key.remote_jid = Some(target.chat.to_string());
+    key.id = Some(target.id.to_string());
+    key.from_me = Some(target.from_me);
+    key.participant = target.participant.as_ref().map(Jid::to_string);
+    key
+}
+
+/// The library's typed reference to the request's message, built from exactly
+/// the fields the request carried (chat, id, participant, from_me). The
+/// library validates the addressing (no newsletter, a sender for someone
+/// else's group message); a refusal is a bad request, not an upstream fault.
+pub(crate) fn message_ref_of(target: &MessageTarget) -> Result<MessageRef<'_>, WamuxError> {
+    let id = lib_message_id(target.id.as_str())?;
+    let participant = target.participant.as_ref().map(Jid::as_lib);
+    MessageRef::new(target.chat.as_lib(), id, participant, target.from_me)
+        .map_err(invalid_message_ref)
+}
+
+/// The library's validated message id (it only refuses an empty one).
+pub(crate) fn lib_message_id(id: &str) -> Result<MessageId, WamuxError> {
+    MessageId::new(id).map_err(invalid_message_ref)
+}
+
+fn invalid_message_ref(err: MessageRefError) -> WamuxError {
+    WamuxError::InvalidArgument(err.to_string())
 }
 
 /// Takes the fields instead of the whole `SendResult`: that struct is

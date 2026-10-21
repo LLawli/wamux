@@ -14,13 +14,17 @@ const LID_JID: &str = "169815004184633@lid";
 const MUTATION_MS: i64 = 1_758_800_000_123;
 
 fn favorites_event(ids: &[Option<&str>]) -> Event {
-    let action = FavoritesAction {
-        favorites: ids
+    let action = {
+        let mut proto = FavoritesAction::default();
+        proto.favorites = ids
             .iter()
-            .map(|id| Favorite {
-                id: id.map(str::to_string),
+            .map(|id| {
+                let mut proto = Favorite::default();
+                proto.id = id.map(str::to_string);
+                proto
             })
-            .collect(),
+            .collect();
+        proto
     };
     Event::FavoritesUpdate(
         FavoritesUpdate::builder()

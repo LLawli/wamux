@@ -70,17 +70,17 @@ pub(crate) fn every_field_device() -> Device {
 /// A status audience with every part set: a mode, extra modes, an allow list
 /// and a custom list (#86, upstream #1565).
 pub(crate) fn status_privacy_action() -> StatusPrivacyAction {
-    StatusPrivacyAction {
-        mode: Some(StatusDistributionMode::CUSTOM_LIST.into()),
-        modes: vec![StatusDistributionMode::CLOSE_FRIENDS.into()],
-        user_jid: vec!["120363000000000042@lid".into()],
-        custom_lists: vec![CustomList {
-            list_id: Some("friends".into()),
-            user_jid: vec!["120363000000000043@lid".into()],
-            ..Default::default()
-        }],
-        ..Default::default()
-    }
+    let mut proto = StatusPrivacyAction::default();
+    proto.mode = Some(StatusDistributionMode::CUSTOM_LIST.into());
+    proto.modes = vec![StatusDistributionMode::CLOSE_FRIENDS.into()];
+    proto.user_jid = vec!["120363000000000042@lid".into()];
+    proto.custom_lists = vec![{
+        let mut proto = CustomList::default();
+        proto.list_id = Some("friends".into());
+        proto.user_jid = vec!["120363000000000043@lid".into()];
+        proto
+    }];
+    proto
 }
 
 /// Every stored field of two devices, as bincode sees them: Device has no

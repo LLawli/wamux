@@ -245,7 +245,10 @@ fn row_to_inbound(row: &NewsletterMessage, chat: &Jid) -> pb::InboundMessage {
     let mut out = pb::InboundMessage {
         key: Some(pb::MessageKey {
             chat: relay_jid(chat_text.clone()),
-            id: row.message_id.clone(),
+            id: row
+                .message_id
+                .as_ref()
+                .map_or_else(String::new, |id| id.as_str().to_string()),
             from_me: row.is_sender,
             participant: None,
         }),

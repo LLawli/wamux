@@ -17,21 +17,21 @@ const CHANNEL: &str = "120363144038483540@newsletter";
 /// The live WhatsApp channel, as the library parses the answer captured from
 /// the production accounts.
 fn metadata() -> NewsletterMetadata {
-    NewsletterMetadata {
-        jid: CHANNEL.parse().expect("channel jid"),
-        name: "WhatsApp".into(),
-        description: Some("WhatsApp's official channel.".into()),
-        subscriber_count: 4242,
-        verification: NewsletterVerification::Verified,
-        state: NewsletterState::Active,
-        picture_url: None,
-        preview_url: Some("/v/t61.24694-24/416962407.jpg".into()),
-        invite_code: Some("0029Va4K0PZ5a245NkngBA2M".into()),
-        role: Some(NewsletterRole::Subscriber),
-        creation_time: Some(1_688_746_895),
-        muted: None,
-        follower_activity_muted: None,
-    }
+    NewsletterMetadata::builder()
+        .jid(CHANNEL.parse().expect("channel jid"))
+        .name("WhatsApp".into())
+        .description("WhatsApp's official channel.".into())
+        .subscriber_count(4242)
+        .verification(NewsletterVerification::Verified)
+        .state(NewsletterState::Active)
+        .maybe_picture_url(None)
+        .preview_url("/v/t61.24694-24/416962407.jpg".into())
+        .invite_code("0029Va4K0PZ5a245NkngBA2M".into())
+        .role(NewsletterRole::Subscriber)
+        .creation_time(1_688_746_895)
+        .maybe_muted(None)
+        .maybe_follower_activity_muted(None)
+        .build()
 }
 
 // The whole point of issue #6: the name has to survive the projection.

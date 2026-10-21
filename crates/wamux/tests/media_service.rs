@@ -168,11 +168,14 @@ async fn download_streams_meta_then_64k_chunks_of_the_decrypted_bytes() {
     let sizes: Vec<usize> = chunks_of(&frames).iter().map(Vec::len).collect();
     assert_eq!(sizes, [CHUNK, CHUNK, 150_000 - 2 * CHUNK]);
     let asked = f.cdn.requests();
+    // Whether the URL also carries the media_conn `auth` is the library's
+    // choice (it stopped sending it on downloads); the route and the token are
+    // what the core relies on.
     assert!(
-        asked.iter().any(|r| r.starts_with(&format!("{path}?"))
-            && r.contains("auth=mock-auth")
-            && r.contains("token=")),
-        "the CDN must see the direct path with the media auth and token: {asked:?}"
+        asked
+            .iter()
+            .any(|r| r.starts_with(&format!("{path}?")) && r.contains("token=")),
+        "the CDN must see the direct path with the token: {asked:?}"
     );
     let media_conn_iqs = f.mock.client_iqs().into_iter().filter(|iq| {
         iq.attrs
@@ -396,6 +399,52 @@ async fn a_missing_descriptor_is_invalid_argument() {
     let (frames, status) = download(&mut f, None).await;
     assert!(frames.is_empty());
     assert_eq!(status.expect("must fail").code(), Code::InvalidArgument);
+    assert!(f.cdn.requests().is_empty(), "nothing goes to the CDN");
+    f.logged.cleanup().await;
+}
+
+// #205: a key or digest that is not 32 bytes is the caller's mistake, refused
+// before the CDN, encrypted or keyless alike.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_malformed_descriptor_is_invalid_argument() {
+    let mut f = fixture("a_malformed_descriptor_is_invalid_argument").await;
+    let short = vec![0x5a; 31];
+    let keyless = pb::MediaDescriptor {
+        media_key: Vec::new(),
+        file_enc_sha256: Vec::new(),
+        file_sha256: short.clone(),
+        ..some_descriptor()
+    };
+    let cases = [
+        (
+            "media_key",
+            pb::MediaDescriptor {
+                media_key: short.clone(),
+                ..some_descriptor()
+            },
+        ),
+        (
+            "file_sha256",
+            pb::MediaDescriptor {
+                file_sha256: short.clone(),
+                ..some_descriptor()
+            },
+        ),
+        (
+            "file_enc_sha256",
+            pb::MediaDescriptor {
+                file_enc_sha256: short.clone(),
+                ..some_descriptor()
+            },
+        ),
+        ("keyless file_sha256", keyless),
+    ];
+    for (case, descriptor) in cases {
+        let (frames, status) = download(&mut f, Some(descriptor)).await;
+        assert!(frames.is_empty(), "{case}");
+        let status = status.expect(case);
+        assert_eq!(status.code(), Code::InvalidArgument, "{case}: {status:?}");
+    }
     assert!(f.cdn.requests().is_empty(), "nothing goes to the CDN");
     f.logged.cleanup().await;
 }

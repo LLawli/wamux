@@ -350,6 +350,13 @@ stage "stress tests (call service)"
 must_run_tests --features stress --test call_service
 WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test call_service
 
+# Logout through the socket (#205): the LoggedOut event reaches a subscriber
+# and the account is left logged out, which the library's own callback queue
+# does not guarantee.
+stage "stress tests (logout events)"
+must_run_tests --features stress --test logout_events
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test logout_events
+
 # MediaService through the socket (#69): DownloadMedia against a loopback CDN,
 # reached by the production ureq client behind a loopback-only https rewrite.
 stage "stress tests (media service)"

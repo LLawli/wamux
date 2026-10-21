@@ -55,7 +55,7 @@ impl MessagingSvc {
     ) {
         // An echo without an id cannot be deduplicated by a consumer, so it is
         // worse than no echo; the send itself already happened (#115).
-        let Ok(message_id) = MessageId::new(result.message_id.clone()) else {
+        let Ok(message_id) = MessageId::new(result.message_id.as_str()) else {
             tracing::warn!(chat = %result.to, "library returned an empty message id; echo skipped");
             return;
         };
@@ -105,7 +105,7 @@ impl MessagingSvc {
     ) -> Response<pb::SendResult> {
         self.echo(handle, client, &result).await;
         Response::new(send_result_to_proto(
-            result.message_id,
+            result.message_id.into_string(),
             &result.to,
             result.recipient_fanout,
         ))
@@ -180,7 +180,7 @@ impl MessagingService for MessagingSvc {
         Ok(Response::new(pb::SendResult {
             key: Some(pb::MessageKey {
                 chat: raw_key.chat,
-                id: result.message_id,
+                id: result.message_id.into_string(),
                 from_me: true,
                 participant: None,
             }),
@@ -373,7 +373,10 @@ impl MessagingService for MessagingSvc {
         // The poll key is the same key every send answers with; the
         // message_secret rides alongside so the edge can decrypt incoming votes.
         Ok(Response::new(pb::SendPollResult {
-            key: Some(sent_message_key(result.message_id, &result.to)),
+            key: Some(sent_message_key(
+                result.message_id.into_string(),
+                &result.to,
+            )),
             message_secret,
             recipient_fanout: result.recipient_fanout.map(recipient_fanout_to_proto),
         }))

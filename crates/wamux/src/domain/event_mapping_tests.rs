@@ -11,7 +11,7 @@ use wacore::types::events::{
     UnavailableType, UndecryptableMessage,
 };
 use wacore::types::message::MessageSource;
-use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
+use wacore::types::presence::{ChatActivity, PresenceStatus, ReceiptType};
 use whatsapp_rust::buffa::MessageField;
 use whatsapp_rust::{Jid, OwnedNodeRef};
 
@@ -119,9 +119,10 @@ pub(super) fn mapped_media(msg: wa::Message) -> (pb::MediaDescriptor, String) {
 /// one concept.
 #[test]
 fn a_sent_text_echoes_with_the_inbound_shape() {
-    let msg = wa::Message {
-        conversation: Some("oi".to_string()),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("oi".to_string());
+        proto
     };
     let out = crate::domain::event_mapping::map_sent(
         pb::MessageKey {
@@ -149,9 +150,10 @@ fn a_sent_text_echoes_with_the_inbound_shape() {
 /// raw_message (polls, stickers) must get the real payload.
 #[test]
 fn an_echo_carries_the_bytes_that_went_out() {
-    let msg = wa::Message {
-        conversation: Some("oi".to_string()),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("oi".to_string());
+        proto
     };
     let out = crate::domain::event_mapping::map_sent(
         pb::MessageKey::default(),
@@ -167,15 +169,17 @@ fn an_echo_carries_the_bytes_that_went_out() {
 /// its own send exactly like anyone else's.
 #[test]
 fn a_sent_image_echoes_its_descriptor_and_caption() {
-    let msg = wa::Message {
-        image_message: whatsapp_rust::buffa::MessageField::some(wa::message::ImageMessage {
-            mimetype: Some("image/jpeg".to_string()),
-            direct_path: Some("/v/t62.sent".to_string()),
-            file_length: Some(4096),
-            caption: Some("a cat".to_string()),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.image_message = whatsapp_rust::buffa::MessageField::some({
+            let mut proto = wa::message::ImageMessage::default();
+            proto.mimetype = Some("image/jpeg".to_string());
+            proto.direct_path = Some("/v/t62.sent".to_string());
+            proto.file_length = Some(4096);
+            proto.caption = Some("a cat".to_string());
+            proto
+        });
+        proto
     };
     let out = crate::domain::event_mapping::map_sent(
         pb::MessageKey::default(),
@@ -198,23 +202,28 @@ fn a_sent_image_echoes_its_descriptor_and_caption() {
 fn a_sent_edit_echoes_as_an_edit_of_its_target() {
     use wa::message::protocol_message::Type;
     let chat = "5511999999999@s.whatsapp.net";
-    let msg = wa::Message {
-        protocol_message: MessageField::some(wa::message::ProtocolMessage {
-            key: MessageField::some(wa::MessageKey {
-                remote_jid: Some(chat.to_string()),
-                from_me: Some(true),
-                id: Some("3EB0ORIGINAL".to_string()),
-                participant: None,
-            }),
-            r#type: Some(Type::MESSAGE_EDIT),
-            edited_message: MessageField::some(wa::Message {
-                conversation: Some("fixed typo".to_string()),
-                ..Default::default()
-            }),
-            timestamp_ms: Some(1_756_800_000_000),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.protocol_message = MessageField::some({
+            let mut proto = wa::message::ProtocolMessage::default();
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(chat.to_string());
+                proto.from_me = Some(true);
+                proto.id = Some("3EB0ORIGINAL".to_string());
+                proto.participant = None;
+                proto
+            });
+            proto.r#type = Some(Type::MESSAGE_EDIT);
+            proto.edited_message = MessageField::some({
+                let mut proto = wa::Message::default();
+                proto.conversation = Some("fixed typo".to_string());
+                proto
+            });
+            proto.timestamp_ms = Some(1_756_800_000_000);
+            proto
+        });
+        proto
     };
     let out = crate::domain::event_mapping::map_sent(
         sent_key(chat, "3EB0EDITSTANZA"),
@@ -240,18 +249,22 @@ fn a_sent_edit_echoes_as_an_edit_of_its_target() {
 fn a_sent_revoke_echoes_as_a_delete_of_its_target() {
     use wa::message::protocol_message::Type;
     let chat = "120363041234567890@g.us";
-    let msg = wa::Message {
-        protocol_message: MessageField::some(wa::message::ProtocolMessage {
-            key: MessageField::some(wa::MessageKey {
-                remote_jid: Some(chat.to_string()),
-                from_me: Some(true),
-                id: Some("3EB0GONE".to_string()),
-                participant: None,
-            }),
-            r#type: Some(Type::REVOKE),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.protocol_message = MessageField::some({
+            let mut proto = wa::message::ProtocolMessage::default();
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(chat.to_string());
+                proto.from_me = Some(true);
+                proto.id = Some("3EB0GONE".to_string());
+                proto.participant = None;
+                proto
+            });
+            proto.r#type = Some(Type::REVOKE);
+            proto
+        });
+        proto
     };
     let out = crate::domain::event_mapping::map_sent(
         sent_key(chat, "3EB0REVOKESTANZA"),
@@ -273,18 +286,22 @@ fn a_sent_revoke_echoes_as_a_delete_of_its_target() {
 fn a_sent_status_revoke_echoes_as_a_delete_of_the_status() {
     use wa::message::protocol_message::Type;
     let chat = "status@broadcast";
-    let msg = wa::Message {
-        protocol_message: MessageField::some(wa::message::ProtocolMessage {
-            key: MessageField::some(wa::MessageKey {
-                remote_jid: Some(chat.to_string()),
-                from_me: Some(true),
-                id: Some("3EB0STATUS".to_string()),
-                participant: None,
-            }),
-            r#type: Some(Type::REVOKE),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.protocol_message = MessageField::some({
+            let mut proto = wa::message::ProtocolMessage::default();
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(chat.to_string());
+                proto.from_me = Some(true);
+                proto.id = Some("3EB0STATUS".to_string());
+                proto.participant = None;
+                proto
+            });
+            proto.r#type = Some(Type::REVOKE);
+            proto
+        });
+        proto
     };
     let out = crate::domain::event_mapping::map_sent(
         sent_key(chat, "3EB0STATUSREVOKE"),
@@ -329,9 +346,10 @@ fn mapped_presence(event: &Event) -> pb::PresenceUpdate {
 
 #[test]
 fn maps_conversation_text_message_with_key_and_metadata() {
-    let out = mapped_inbound(wa::Message {
-        conversation: Some("hello world".to_string()),
-        ..Default::default()
+    let out = mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("hello world".to_string());
+        proto
     });
     assert_eq!(out.text, "hello world");
     assert_eq!(out.chat, wire(CHAT_JID));
@@ -369,9 +387,10 @@ fn relays_the_stanza_alt_jids_of_a_lid_sender() {
         ..sample_info()
     };
     let event = message_event(
-        wa::Message {
-            conversation: Some("oi".to_string()),
-            ..Default::default()
+        {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some("oi".to_string());
+            proto
         },
         info,
     );
@@ -389,9 +408,10 @@ fn relays_the_stanza_alt_jids_of_a_lid_sender() {
 // #122: absent is an unset Jid, never `Jid { value: "" }`.
 #[test]
 fn absent_alt_jids_stay_unset_never_synthesized() {
-    let out = mapped_inbound(wa::Message {
-        conversation: Some("hello".to_string()),
-        ..Default::default()
+    let out = mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("hello".to_string());
+        proto
     });
     assert_eq!(out.sender_alt, None);
     assert_eq!(out.recipient_alt, None);
@@ -399,18 +419,21 @@ fn absent_alt_jids_stay_unset_never_synthesized() {
 
 #[test]
 fn maps_extended_text_with_mentions_and_quote() {
-    let out = mapped_inbound(wa::Message {
-        extended_text_message: MessageField::some(wa::message::ExtendedTextMessage {
-            text: Some("hey @55117770001".to_string()),
-            context_info: MessageField::some(wa::ContextInfo {
-                mentioned_jid: vec!["55117770001@s.whatsapp.net".to_string()],
-                stanza_id: Some("QUOTED-STANZA-1".to_string()),
-                participant: Some("55116660002@s.whatsapp.net".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let out = mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.extended_text_message = MessageField::some({
+            let mut proto = wa::message::ExtendedTextMessage::default();
+            proto.text = Some("hey @55117770001".to_string());
+            proto.context_info = MessageField::some({
+                let mut proto = wa::ContextInfo::default();
+                proto.mentioned_jid = vec!["55117770001@s.whatsapp.net".to_string()];
+                proto.stanza_id = Some("QUOTED-STANZA-1".to_string());
+                proto.participant = Some("55116660002@s.whatsapp.net".to_string());
+                proto
+            });
+            proto
+        });
+        proto
     });
     assert_eq!(out.text, "hey @55117770001");
     assert_eq!(
@@ -430,19 +453,23 @@ fn maps_extended_text_with_mentions_and_quote() {
 
 #[test]
 fn maps_reaction_message_with_target_key() {
-    let out = mapped_inbound(wa::Message {
-        reaction_message: MessageField::some(wa::message::ReactionMessage {
-            key: MessageField::some(wa::MessageKey {
-                remote_jid: Some(CHAT_JID.to_string()),
-                id: Some("TARGET-MSG-1".to_string()),
-                from_me: Some(true),
-                participant: Some(SENDER_JID.to_string()),
-            }),
+    let out = mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.reaction_message = MessageField::some({
+            let mut proto = wa::message::ReactionMessage::default();
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(CHAT_JID.to_string());
+                proto.id = Some("TARGET-MSG-1".to_string());
+                proto.from_me = Some(true);
+                proto.participant = Some(SENDER_JID.to_string());
+                proto
+            });
             // Reaction payloads are emoji on the wire by protocol.
-            text: Some("\u{1F44D}".to_string()),
-            ..Default::default()
-        }),
-        ..Default::default()
+            proto.text = Some("\u{1F44D}".to_string());
+            proto
+        });
+        proto
     });
     assert_eq!(out.reaction, "\u{1F44D}");
     let target = out
@@ -460,18 +487,22 @@ fn maps_reaction_message_with_target_key() {
 // revoke stanza id, not the target).
 #[test]
 fn maps_inbound_revoke_to_is_delete_with_target() {
-    let out = mapped_inbound(wa::Message {
-        protocol_message: MessageField::some(wa::message::ProtocolMessage {
-            r#type: Some(wa::message::protocol_message::Type::REVOKE),
-            key: MessageField::some(wa::MessageKey {
-                remote_jid: Some(CHAT_JID.to_string()),
-                id: Some("REVOKED-MSG-1".to_string()),
-                from_me: Some(true),
-                participant: Some(SENDER_JID.to_string()),
-            }),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let out = mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.protocol_message = MessageField::some({
+            let mut proto = wa::message::ProtocolMessage::default();
+            proto.r#type = Some(wa::message::protocol_message::Type::REVOKE);
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(CHAT_JID.to_string());
+                proto.id = Some("REVOKED-MSG-1".to_string());
+                proto.from_me = Some(true);
+                proto.participant = Some(SENDER_JID.to_string());
+                proto
+            });
+            proto
+        });
+        proto
     });
     assert!(out.is_delete);
     assert!(!out.is_edit);
@@ -489,22 +520,27 @@ fn maps_inbound_revoke_to_is_delete_with_target() {
 // new text, and carry the edited message's key in protocol_target.
 #[test]
 fn maps_inbound_edit_to_is_edit_with_new_text_and_target() {
-    let out = mapped_inbound(wa::Message {
-        protocol_message: MessageField::some(wa::message::ProtocolMessage {
-            r#type: Some(wa::message::protocol_message::Type::MESSAGE_EDIT),
-            key: MessageField::some(wa::MessageKey {
-                remote_jid: Some(CHAT_JID.to_string()),
-                id: Some("EDITED-MSG-1".to_string()),
-                from_me: Some(false),
-                participant: Some(SENDER_JID.to_string()),
-            }),
-            edited_message: MessageField::some(wa::Message {
-                conversation: Some("edited text".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let out = mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.protocol_message = MessageField::some({
+            let mut proto = wa::message::ProtocolMessage::default();
+            proto.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(CHAT_JID.to_string());
+                proto.id = Some("EDITED-MSG-1".to_string());
+                proto.from_me = Some(false);
+                proto.participant = Some(SENDER_JID.to_string());
+                proto
+            });
+            proto.edited_message = MessageField::some({
+                let mut proto = wa::Message::default();
+                proto.conversation = Some("edited text".to_string());
+                proto
+            });
+            proto
+        });
+        proto
     });
     assert!(out.is_edit);
     assert!(!out.is_delete);
@@ -521,27 +557,35 @@ fn maps_inbound_edit_to_is_edit_with_new_text_and_target() {
 // unwrap edited_message before projecting.
 #[test]
 fn maps_wrapped_inbound_edit_to_is_edit_with_new_text_and_target() {
-    let out = mapped_inbound(wa::Message {
-        edited_message: MessageField::some(wa::message::FutureProofMessage {
-            message: MessageField::some(wa::Message {
-                protocol_message: MessageField::some(wa::message::ProtocolMessage {
-                    r#type: Some(wa::message::protocol_message::Type::MESSAGE_EDIT),
-                    key: MessageField::some(wa::MessageKey {
-                        remote_jid: Some(CHAT_JID.to_string()),
-                        id: Some("WRAPPED-EDIT-1".to_string()),
-                        from_me: Some(false),
-                        participant: Some(SENDER_JID.to_string()),
-                    }),
-                    edited_message: MessageField::some(wa::Message {
-                        conversation: Some("wrapped new text".to_string()),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-        }),
-        ..Default::default()
+    let out = mapped_inbound({
+        let mut proto = wa::Message::default();
+        proto.edited_message = MessageField::some({
+            let mut proto = wa::message::FutureProofMessage::default();
+            proto.message = MessageField::some({
+                let mut proto = wa::Message::default();
+                proto.protocol_message = MessageField::some({
+                    let mut proto = wa::message::ProtocolMessage::default();
+                    proto.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+                    proto.key = MessageField::some({
+                        let mut proto = wa::MessageKey::default();
+                        proto.remote_jid = Some(CHAT_JID.to_string());
+                        proto.id = Some("WRAPPED-EDIT-1".to_string());
+                        proto.from_me = Some(false);
+                        proto.participant = Some(SENDER_JID.to_string());
+                        proto
+                    });
+                    proto.edited_message = MessageField::some({
+                        let mut proto = wa::Message::default();
+                        proto.conversation = Some("wrapped new text".to_string());
+                        proto
+                    });
+                    proto
+                });
+                proto
+            });
+            proto
+        });
+        proto
     });
     assert!(out.is_edit);
     assert!(!out.is_delete);
@@ -609,7 +653,7 @@ fn maps_presence_offline_with_last_seen_seconds() {
     let p = mapped_presence(&Event::Presence(
         PresenceUpdate::builder()
             .from(jid_of(SENDER_JID))
-            .unavailable(true)
+            .status(PresenceStatus::Unavailable)
             .last_seen(wacore::time::from_secs(1_717_932_000).unwrap())
             .build(),
     ));
@@ -628,7 +672,7 @@ fn maps_presence_online_without_last_seen() {
     let p = mapped_presence(&Event::Presence(
         PresenceUpdate::builder()
             .from(jid_of(SENDER_JID))
-            .unavailable(false)
+            .status(PresenceStatus::Available)
             .build(),
     ));
     assert_eq!(p.online, Some(true));
@@ -640,8 +684,7 @@ fn maps_chat_presence_to_composing_state() {
     let p = mapped_presence(&Event::ChatPresence(
         ChatPresenceUpdate::builder()
             .source(sample_source())
-            .state(ChatPresence::Composing)
-            .media(ChatPresenceMedia::Text)
+            .state(ChatActivity::Typing)
             .build(),
     ));
     assert_eq!(p.jid, wire(SENDER_JID));
@@ -660,8 +703,7 @@ fn chat_presence_in_a_group_names_the_group_not_only_the_sender() {
     let p = mapped_presence(&Event::ChatPresence(
         ChatPresenceUpdate::builder()
             .source(sample_source())
-            .state(ChatPresence::Composing)
-            .media(ChatPresenceMedia::Text)
+            .state(ChatActivity::Typing)
             .build(),
     ));
     assert_eq!(p.jid, wire(SENDER_JID));
@@ -678,23 +720,21 @@ fn chat_presence_in_a_direct_chat_names_the_contact_as_the_conversation() {
     let p = mapped_presence(&Event::ChatPresence(
         ChatPresenceUpdate::builder()
             .source(source)
-            .state(ChatPresence::Paused)
-            .media(ChatPresenceMedia::Text)
+            .state(ChatActivity::Idle)
             .build(),
     ));
     assert_eq!(p.chat, wire(SENDER_JID));
     assert_eq!(p.chat_state(), pb::ChatState::Paused);
 }
 
-// The lib has no Recording variant: it models recording as Composing with
-// media=Audio. The wire contract flattens that pair back to "recording".
+// The lib models recording as `ChatActivity::RecordingAudio` (Composing with
+// media=Audio on the wire). The wire contract flattens it back to "recording".
 #[test]
 fn maps_chat_presence_audio_to_recording_state() {
     let p = mapped_presence(&Event::ChatPresence(
         ChatPresenceUpdate::builder()
             .source(sample_source())
-            .state(ChatPresence::Composing)
-            .media(ChatPresenceMedia::Audio)
+            .state(ChatActivity::RecordingAudio)
             .build(),
     ));
     assert_eq!(p.chat_state(), pb::ChatState::Recording);
@@ -707,13 +747,15 @@ fn maps_chat_presence_audio_to_recording_state() {
 #[test]
 fn maps_history_sync_with_raw_passthrough() {
     let sync_type = wa::history_sync::HistorySyncType::RECENT;
-    let proto = wa::HistorySync {
-        sync_type,
-        conversations: vec![wa::Conversation {
-            id: CHAT_JID.to_string(),
-            ..Default::default()
-        }],
-        ..Default::default()
+    let proto = {
+        let mut proto = wa::HistorySync::default();
+        proto.sync_type = sync_type;
+        proto.conversations = vec![{
+            let mut proto = wa::Conversation::default();
+            proto.id = CHAT_JID.to_string();
+            proto
+        }];
+        proto
     };
     let raw = proto.encode_to_vec();
     // The library keeps the chunk zlib-compressed behind the lazy handle, so

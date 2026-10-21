@@ -128,40 +128,46 @@ pub fn payload(server_id: u64, mediatype: &str) -> wa::Message {
     let sha = Some(vec![server_id as u8; 32]);
     let caption = Some(media_caption(server_id));
     match mediatype {
-        "image" => wa::Message {
-            image_message: MessageField::some(wa::message::ImageMessage {
-                mimetype: Some("image/jpeg".into()),
-                direct_path: path,
-                file_sha256: sha,
-                file_length: Some(120_000),
-                caption,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        "gif" => wa::Message {
-            video_message: MessageField::some(wa::message::VideoMessage {
-                mimetype: Some("video/mp4".into()),
-                direct_path: path,
-                file_sha256: sha,
-                file_length: Some(240_000),
-                caption,
-                gif_playback: Some(true),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        _ => wa::Message {
-            audio_message: MessageField::some(wa::message::AudioMessage {
-                mimetype: Some("audio/ogg; codecs=opus".into()),
-                direct_path: path,
-                file_sha256: sha,
-                file_length: Some(36_000),
-                ptt: Some(true),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
+        "image" => {
+            let mut proto = wa::Message::default();
+            proto.image_message = MessageField::some({
+                let mut proto = wa::message::ImageMessage::default();
+                proto.mimetype = Some("image/jpeg".into());
+                proto.direct_path = path;
+                proto.file_sha256 = sha;
+                proto.file_length = Some(120_000);
+                proto.caption = caption;
+                proto
+            });
+            proto
+        }
+        "gif" => {
+            let mut proto = wa::Message::default();
+            proto.video_message = MessageField::some({
+                let mut proto = wa::message::VideoMessage::default();
+                proto.mimetype = Some("video/mp4".into());
+                proto.direct_path = path;
+                proto.file_sha256 = sha;
+                proto.file_length = Some(240_000);
+                proto.caption = caption;
+                proto.gif_playback = Some(true);
+                proto
+            });
+            proto
+        }
+        _ => {
+            let mut proto = wa::Message::default();
+            proto.audio_message = MessageField::some({
+                let mut proto = wa::message::AudioMessage::default();
+                proto.mimetype = Some("audio/ogg; codecs=opus".into());
+                proto.direct_path = path;
+                proto.file_sha256 = sha;
+                proto.file_length = Some(36_000);
+                proto.ptt = Some(true);
+                proto
+            });
+            proto
+        }
     }
 }
 

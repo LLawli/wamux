@@ -8,7 +8,7 @@ use wamux::proto::v1 as pb;
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::harness::{
-    Fixture, assert_only_the_probe_was_sent, fixture, jid, key, patches_sent, sent_patch,
+    Fixture, GROUP, assert_only_the_probe_was_sent, fixture, jid, key, patches_sent, sent_patch,
     wire_count,
 };
 
@@ -211,6 +211,34 @@ async fn delete_chat_sends_its_mutation() {
     let delete = mutation_after(&f, "regular_high", sent).await;
     assert_eq!(delete.index, index(&["deleteChat", &chat, "1"]));
     assert!(value(&delete).delete_chat_action.as_option().is_some());
+    f.cleanup().await;
+}
+
+// #205: someone else's message in a group is keyed by its sender. The core
+// relays the participant the edge sent; without it the library has no
+// sender to key the mutation by.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_message_for_me_relays_the_group_participant() {
+    let mut f = fixture("delete_message_for_me_relays_the_group_participant").await;
+    let author = f.other.pn().to_string();
+    let target = pb::MessageKey {
+        chat: jid(GROUP),
+        id: "3EB0THEIRS".to_string(),
+        from_me: false,
+        participant: jid(&author),
+    };
+    let request = pb::DeleteMessageRequest {
+        account: f.a(),
+        target: Some(target),
+        for_everyone: false,
+    };
+    let sent = patches_sent(&f.mock);
+    f.messages.delete_message(request).await.expect("delete");
+    let delete = mutation_after(&f, "regular_high", sent).await;
+    assert_eq!(
+        delete.index,
+        index(&["deleteMessageForMe", GROUP, "3EB0THEIRS", "0", &author])
+    );
     f.cleanup().await;
 }
 

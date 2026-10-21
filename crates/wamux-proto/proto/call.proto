@@ -248,15 +248,16 @@ message CallLogParticipant {
   CallLogResult result = 2;
 }
 
-// The three enums below are closed in the library (whatsapp.proto is proto2
-// and waproto/build.rs does not open them): a number it does not know is
-// dropped as absent. So they cross as UNSPECIFIED when absent, never emit
-// UNKNOWN and carry no `*_code` (#149 rule, MediaType #127 precedent).
+// The three enums below are `#[non_exhaustive]` in the library and the decoder
+// drops a number it does not know as absent. They cross as UNSPECIFIED when
+// absent and as UNKNOWN for a variant this build does not name yet; there is
+// no `*_code`, because the library never hands the number over (#149 rule,
+// MediaType #127 precedent).
 
 // `wa.CallLogRecord.CallResult`.
 enum CallLogResult {
   CALL_LOG_RESULT_UNSPECIFIED = 0;
-  CALL_LOG_RESULT_UNKNOWN = 1;  // never emitted (closed in the library)
+  CALL_LOG_RESULT_UNKNOWN = 1;  // a variant this build does not name
   CALL_LOG_RESULT_CONNECTED = 2;
   CALL_LOG_RESULT_REJECTED = 3;
   CALL_LOG_RESULT_CANCELLED = 4;
@@ -273,7 +274,7 @@ enum CallLogResult {
 // `wa.CallLogRecord.SilenceReason`.
 enum CallLogSilenceReason {
   CALL_LOG_SILENCE_REASON_UNSPECIFIED = 0;
-  CALL_LOG_SILENCE_REASON_UNKNOWN = 1;  // never emitted (closed in the library)
+  CALL_LOG_SILENCE_REASON_UNKNOWN = 1;  // a variant this build does not name
   CALL_LOG_SILENCE_REASON_NONE = 2;
   CALL_LOG_SILENCE_REASON_SCHEDULED = 3;
   CALL_LOG_SILENCE_REASON_PRIVACY = 4;
@@ -283,7 +284,7 @@ enum CallLogSilenceReason {
 // `wa.CallLogRecord.CallType`.
 enum CallLogType {
   CALL_LOG_TYPE_UNSPECIFIED = 0;
-  CALL_LOG_TYPE_UNKNOWN = 1;  // never emitted (closed in the library)
+  CALL_LOG_TYPE_UNKNOWN = 1;  // a variant this build does not name
   CALL_LOG_TYPE_REGULAR = 2;
   CALL_LOG_TYPE_SCHEDULED_CALL = 3;
   CALL_LOG_TYPE_VOICE_CHAT = 4;

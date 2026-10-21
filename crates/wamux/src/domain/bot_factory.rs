@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use wacore::handshake::NoiseCertPolicy;
+use wacore::types::events::{Event, EventHandler};
 use whatsapp_rust::TokioRuntime;
 use whatsapp_rust::bot::Bot;
 use whatsapp_rust::pair_code::PairCodeOptions;
@@ -52,12 +53,7 @@ pub async fn build_bot(
         .with_http_client(media_http_client())
         .with_runtime(TokioRuntime)
         .with_noise_cert_policy(cert_policy)
-        .on_event(move |event, client| {
-            let ctx = ctx.clone();
-            async move {
-                event_bridge::dispatch(ctx, event, client).await;
-            }
-        });
+        .with_event_handler(SpawnPerEvent { ctx });
 
     if skip_history {
         builder = builder.skip_history_sync();
@@ -67,6 +63,23 @@ pub async fn build_bot(
     }
 
     builder.build().await.map_err(|e| anyhow::anyhow!(e))
+}
+
+/// Hands every event to the bridge on its own task, with no queue and nothing
+/// that cancels it. The library's closure callbacks (`on_event`) sit behind a
+/// bounded queue that drops the newest event when full and cancel in-flight
+/// callbacks at shutdown; a relay cannot lose an event, and `logout` dispatches
+/// `LoggedOut` and shuts down right after, so that terminal event would die.
+/// A raw handler runs inline on the dispatch path, hence the spawn.
+struct SpawnPerEvent {
+    ctx: EventCtx,
+}
+
+impl EventHandler for SpawnPerEvent {
+    fn handle_event(&self, event: Arc<Event>) {
+        let ctx = self.ctx.clone();
+        tokio::spawn(event_bridge::dispatch(ctx, event));
+    }
 }
 
 /// The HTTP client for media transfers. A `stress` build wraps the production

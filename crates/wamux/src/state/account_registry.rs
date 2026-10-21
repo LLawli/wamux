@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use wamux_types::AccountRef;
+use whatsapp_rust::DeregistrationOutcome;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use crate::config::DEFAULT_REPLAY_MAX_EVENT_BYTES;
@@ -232,7 +233,7 @@ impl AccountRegistry {
         //
         // The handle must stay owned by THIS task: dropping a BotHandle aborts
         // the bot. `AccountHandle::stop` still stops gracefully because it calls
-        // `client.disconnect()` first and only then awaits this task.
+        // `client.shutdown()` first and only then awaits this task.
         let supervised = handle.clone();
         let connected = self.connected.clone();
         let supervisor = tokio::spawn(async move {
@@ -262,14 +263,19 @@ impl AccountRegistry {
     /// otherwise — the edge decides whether to connect first.
     pub async fn logout(&self, handle: &Arc<AccountHandle>) -> Result<(), WamuxError> {
         let client = handle.client().await.ok_or(WamuxError::NotConnected)?;
-        if !client.is_connected() {
+        if !client.is_socket_connected() {
             return Err(WamuxError::NotConnected);
         }
-        // Logout is infallible: it fires the IQ best-effort and always
-        // tears the local session down, so there is no failure left to report.
-        // The `is_connected` guard above is what still gives the edge a
+        // The report is observation, not an error: the deregistration IQ is
+        // best-effort and the local session is torn down whatever it says, so
+        // the RPC succeeds either way. A failed IQ means the server may still
+        // list this device as linked, which the operator needs to see. The
+        // `is_socket_connected` guard above is what still gives the edge a
         // `NotConnected` instead of a silent no-op.
-        client.logout().await;
+        let report = client.logout().await;
+        if let DeregistrationOutcome::Failed { source } = &report.deregistration {
+            tracing::warn!(account = %handle.uuid, error = %source, "logout deregistration failed");
+        }
         handle.stop().await;
         Ok(())
     }

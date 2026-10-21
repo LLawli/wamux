@@ -436,9 +436,16 @@ fn every_action() -> Vec<(CallAction, Action)> {
     all
 }
 
-/// The minimal call the library's test constructor builds around `action`.
+/// The minimal call the library's test constructor builds around `action`,
+/// spelled through the builder that constructor wraps.
 fn bare_call(action: CallAction) -> IncomingCall {
-    IncomingCall::new_for_test(lib(CALLER), STANZA_ID.to_string(), at!(SECONDS), action)
+    IncomingCall::builder()
+        .from(lib(CALLER))
+        .stanza_id(STANZA_ID.to_string())
+        .timestamp(at!(SECONDS))
+        .offline(false)
+        .action(action)
+        .build()
 }
 
 /// What a bare call maps to around `action`: every optional unset.

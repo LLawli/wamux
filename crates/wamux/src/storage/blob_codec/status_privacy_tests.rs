@@ -27,16 +27,18 @@ fn device_status_privacy_is_stored_as_the_librarys_own_bytes() {
 fn device_status_privacy_keeps_unknown_modes_and_lists() {
     // Modes this build has no name for must come back as the same numbers,
     // not as absent or as a default a consumer would read as "all contacts".
-    let action = StatusPrivacyAction {
-        mode: Some(EnumValue::Unknown(99)),
-        modes: vec![EnumValue::Unknown(100)],
-        user_jid: vec!["120363000000000042@lid".into()],
-        custom_lists: vec![CustomList {
-            list_id: Some("close".into()),
-            user_jid: vec!["120363000000000044@lid".into()],
-            ..Default::default()
-        }],
-        ..Default::default()
+    let action = {
+        let mut proto = StatusPrivacyAction::default();
+        proto.mode = Some(EnumValue::Unknown(99));
+        proto.modes = vec![EnumValue::Unknown(100)];
+        proto.user_jid = vec!["120363000000000042@lid".into()];
+        proto.custom_lists = vec![{
+            let mut proto = CustomList::default();
+            proto.list_id = Some("close".into());
+            proto.user_jid = vec!["120363000000000044@lid".into()];
+            proto
+        }];
+        proto
     };
     let mut device = every_field_device();
     device.status_privacy = Some(Arc::new(action.clone()));

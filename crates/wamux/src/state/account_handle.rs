@@ -100,26 +100,22 @@ impl AccountHandle {
     pub async fn on_bot_exited(&self) {
         self.running.lock().await.take();
         *self.client.write().await = None;
-        let terminal = matches!(
-            self.current_state(),
-            ConnectionState::LoggedOut | ConnectionState::Banned
-        );
-        if !terminal {
+        if !self.is_terminal_state() {
             let _ = self.state_tx.send(ConnectionState::Disconnected);
         }
     }
 
-    /// Graceful stop: ask the library to exit its run loop (`disconnect` flushes
+    /// Graceful stop: ask the library to exit its run loop (`shutdown` flushes
     /// outbound + closes the transport, flipping `is_running` off), then wait for
     /// the supervisor to observe the exit. On timeout we detach rather than abort
-    /// — `disconnect` already requested the exit, so the run loop self-terminates
-    /// and no task is orphaned.
+    /// (`shutdown` already requested the exit, so the run loop self-terminates
+    /// and no task is orphaned).
     pub async fn stop(&self) {
         let client = self.client().await;
         let supervisor = self.running.lock().await.take().map(|r| r.supervisor);
 
         if let Some(client) = &client {
-            client.disconnect().await;
+            client.shutdown().await;
         }
         if let Some(supervisor) = supervisor
             && tokio::time::timeout(self.graceful_stop_timeout, supervisor)
@@ -133,7 +129,18 @@ impl AccountHandle {
         }
 
         *self.client.write().await = None;
-        let _ = self.state_tx.send(ConnectionState::Disconnected);
+        if !self.is_terminal_state() {
+            let _ = self.state_tx.send(ConnectionState::Disconnected);
+        }
+    }
+
+    /// LOGGED_OUT and BANNED come from an event that already recorded the
+    /// truth; a stop after a logout must not overwrite it with DISCONNECTED.
+    fn is_terminal_state(&self) -> bool {
+        matches!(
+            self.current_state(),
+            ConnectionState::LoggedOut | ConnectionState::Banned
+        )
     }
 
     pub fn current_state(&self) -> ConnectionState {

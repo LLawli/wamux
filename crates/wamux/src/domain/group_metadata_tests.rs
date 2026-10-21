@@ -1,8 +1,10 @@
 //! #132: the typed projection of a library `GroupMetadata`, asserted as the
 //! whole message so a field the mapping forgets shows up as a difference.
-//! The library value sets every field to something other than its default;
-//! the literal below names every field (no `..Default::default()`), so a
-//! field added upstream or to the proto breaks this test at compile time.
+//! The library value sets every field to something other than its default.
+//! The expected proto literal names every field (no `..Default::default()`),
+//! so a field added to the proto breaks this test at compile time. The
+//! library's `GroupMetadata` is `#[non_exhaustive]` and is built by field
+//! assignment, so a field added upstream does not: check its fields on a bump.
 
 use std::str::FromStr;
 
@@ -62,14 +64,13 @@ fn every_detail_on_the_wire() -> pb::GroupParticipantDetails {
 /// REGRESSION (issue #1): a LID-addressed member keeps the phone number the
 /// roster carries beside the `@lid`, and the admin role with it.
 fn member_with_details() -> GroupParticipant {
-    GroupParticipant {
-        jid: lib(MEMBER_LID),
-        phone_number: Some(lib(MEMBER_PN)),
-        lid: Some(lib(MEMBER_LID)),
-        username: Some("fulano".into()),
-        participant_type: ParticipantType::SuperAdmin,
-        details: Some(Box::new(every_detail())),
-    }
+    let mut participant = GroupParticipant::new(lib(MEMBER_LID));
+    participant.phone_number = Some(lib(MEMBER_PN));
+    participant.lid = Some(lib(MEMBER_LID));
+    participant.username = Some("fulano".into());
+    participant.participant_type = ParticipantType::SuperAdmin;
+    participant.details = Some(Box::new(every_detail()));
+    participant
 }
 
 fn member_with_details_on_the_wire() -> pb::GroupParticipant {
@@ -84,70 +85,69 @@ fn member_with_details_on_the_wire() -> pb::GroupParticipant {
 }
 
 fn every_field() -> GroupMetadata {
-    GroupMetadata {
-        id: lib(GROUP),
-        subject: Some("subject".to_string()),
-        notify: Some("notify".to_string()),
-        participants: vec![member_with_details()],
-        addressing_mode: AddressingMode::Lid,
-        creator: Some(lib(OWNER_LID)),
-        creator_pn: Some(lib(OWNER_PN)),
-        creator_username: Some("creator.user".to_string()),
-        creator_country_code: Some("BR".to_string()),
-        creation_time: Some(1_790_947_599),
-        participant_version_id: Some("1790947897308104".to_string()),
-        admin_version_id: Some("1790947599193645".to_string()),
-        open_thread_id: Some("thread".to_string()),
-        has_missing_participant_identification: true,
-        subject_time: Some(1_790_947_600),
-        subject_owner: Some(lib(MEMBER_LID)),
-        subject_owner_pn: Some(lib(MEMBER_PN)),
-        subject_owner_username: Some("subject.user".to_string()),
-        description: Some("description".to_string()),
-        description_id: Some("DESC1".to_string()),
-        description_owner: Some(lib(OWNER_LID)),
-        description_owner_pn: Some(lib(OWNER_PN)),
-        description_owner_username: Some("description.user".to_string()),
-        description_time: Some(1_790_947_601),
-        is_locked: true,
-        is_announcement: true,
-        ephemeral: Some(GroupEphemeralSettings {
-            expiration: Some(86_400),
-            trigger: Some(2),
-        }),
-        membership_approval: true,
-        member_add_mode: Some(MemberAddMode::AllMemberAdd),
-        member_link_mode: Some(MemberLinkMode::AdminLink),
-        size: Some(3),
-        is_parent_group: true,
-        parent_membership_approval_required: true,
-        parent_group_jid: Some(lib(PARENT)),
-        is_default_sub_group: true,
-        is_general_chat: true,
-        allow_non_admin_sub_group_creation: true,
-        no_frequently_forwarded: true,
-        member_share_history_mode: Some(MemberShareHistoryMode::AllMemberShare),
-        growth_locked: Some(GrowthLockInfo {
-            lock_type: "invite".to_string(),
-            expiration: 1_790_950_000,
-        }),
-        is_suspended: true,
-        suspension_can_auto_file: true,
-        appeal_status: Some(GroupAppealStatus::InReview),
-        appeal_update_time: Some(1_790_947_602),
-        is_support_group: true,
-        allow_admin_reports: true,
-        is_hidden_group: true,
-        is_incognito: true,
-        has_group_history: true,
-        is_auto_add_disabled: true,
-        has_capi: true,
-        evolution_version: Some(4),
-        has_group_safety_check: true,
-        participant_label_enabled: true,
-        is_limit_sharing_enabled: true,
-        limit_sharing_trigger: Some(7),
-    }
+    let mut metadata = GroupMetadata::new(lib(GROUP));
+    metadata.subject = Some("subject".to_string());
+    metadata.notify = Some("notify".to_string());
+    metadata.participants = vec![member_with_details()];
+    metadata.addressing_mode = AddressingMode::Lid;
+    metadata.creator = Some(lib(OWNER_LID));
+    metadata.creator_pn = Some(lib(OWNER_PN));
+    metadata.creator_username = Some("creator.user".to_string());
+    metadata.creator_country_code = Some("BR".to_string());
+    metadata.creation_time = Some(1_790_947_599);
+    metadata.participant_version_id = Some("1790947897308104".to_string());
+    metadata.admin_version_id = Some("1790947599193645".to_string());
+    metadata.open_thread_id = Some("thread".to_string());
+    metadata.has_missing_participant_identification = true;
+    metadata.subject_time = Some(1_790_947_600);
+    metadata.subject_owner = Some(lib(MEMBER_LID));
+    metadata.subject_owner_pn = Some(lib(MEMBER_PN));
+    metadata.subject_owner_username = Some("subject.user".to_string());
+    metadata.description = Some("description".to_string());
+    metadata.description_id = Some("DESC1".to_string());
+    metadata.description_owner = Some(lib(OWNER_LID));
+    metadata.description_owner_pn = Some(lib(OWNER_PN));
+    metadata.description_owner_username = Some("description.user".to_string());
+    metadata.description_time = Some(1_790_947_601);
+    metadata.is_locked = true;
+    metadata.is_announcement = true;
+    metadata.ephemeral = Some(GroupEphemeralSettings {
+        expiration: Some(86_400),
+        trigger: Some(2),
+    });
+    metadata.membership_approval = true;
+    metadata.member_add_mode = Some(MemberAddMode::AllMemberAdd);
+    metadata.member_link_mode = Some(MemberLinkMode::AdminLink);
+    metadata.participant_count = Some(3);
+    metadata.is_parent_group = true;
+    metadata.parent_membership_approval_required = true;
+    metadata.parent_group_jid = Some(lib(PARENT));
+    metadata.is_default_sub_group = true;
+    metadata.is_general_chat = true;
+    metadata.allow_non_admin_sub_group_creation = true;
+    metadata.no_frequently_forwarded = true;
+    metadata.member_share_history_mode = Some(MemberShareHistoryMode::AllMemberShare);
+    metadata.growth_locked = Some(GrowthLockInfo {
+        lock_type: "invite".to_string(),
+        expiration: 1_790_950_000,
+    });
+    metadata.is_suspended = true;
+    metadata.suspension_can_auto_file = true;
+    metadata.appeal_status = Some(GroupAppealStatus::InReview);
+    metadata.appeal_update_time = Some(1_790_947_602);
+    metadata.is_support_group = true;
+    metadata.allow_admin_reports = true;
+    metadata.is_hidden_group = true;
+    metadata.is_incognito = true;
+    metadata.has_group_history = true;
+    metadata.is_auto_add_disabled = true;
+    metadata.has_capi = true;
+    metadata.evolution_version = Some(4);
+    metadata.has_group_safety_check = true;
+    metadata.participant_label_enabled = true;
+    metadata.is_limit_sharing_enabled = true;
+    metadata.limit_sharing_trigger = Some(7);
+    metadata
 }
 
 fn every_field_on_the_wire() -> pb::GroupMetadata {
@@ -229,10 +229,7 @@ fn group_metadata_maps_every_field() {
 /// library, so its default (PN) crosses as PN.
 #[test]
 fn group_metadata_absent_fields_stay_unset() {
-    let metadata = GroupMetadata {
-        id: lib(GROUP),
-        ..GroupMetadata::default()
-    };
+    let metadata = GroupMetadata::new(lib(GROUP));
     let expected = pb::GroupMetadata {
         id: wire(GROUP),
         addressing_mode: pb::GroupAddressingMode::Pn as i32,
@@ -243,10 +240,10 @@ fn group_metadata_absent_fields_stay_unset() {
 
 #[test]
 fn participant_maps_every_field_with_details() {
-    let metadata = GroupMetadata {
-        id: lib(GROUP),
-        participants: vec![member_with_details()],
-        ..GroupMetadata::default()
+    let metadata = {
+        let mut metadata = GroupMetadata::new(lib(GROUP));
+        metadata.participants = vec![member_with_details()];
+        metadata
     };
     assert_eq!(
         group_metadata_of(&metadata).participants,
@@ -256,18 +253,19 @@ fn participant_maps_every_field_with_details() {
 
 #[test]
 fn participant_without_details_leaves_details_unset() {
-    let bare = GroupParticipant {
-        jid: lib(MEMBER_PN),
-        phone_number: None,
-        lid: None,
-        username: None,
-        participant_type: ParticipantType::Member,
-        details: None,
+    let bare = {
+        let mut participant = GroupParticipant::new(lib(MEMBER_PN));
+        participant.phone_number = None;
+        participant.lid = None;
+        participant.username = None;
+        participant.participant_type = ParticipantType::Member;
+        participant.details = None;
+        participant
     };
-    let metadata = GroupMetadata {
-        id: lib(GROUP),
-        participants: vec![bare],
-        ..GroupMetadata::default()
+    let metadata = {
+        let mut metadata = GroupMetadata::new(lib(GROUP));
+        metadata.participants = vec![bare];
+        metadata
     };
     let expected = pb::GroupParticipant {
         jid: wire(MEMBER_PN),

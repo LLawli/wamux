@@ -310,15 +310,12 @@ async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::
     let cert = build_cert_chain_bytes(&server_static_arr);
     let enc_cert = noise.encrypt(&cert).map_err(|e| anyhow!("enc cert: {e}"))?;
 
-    let server_hello = HandshakeMessage {
-        server_hello: buffa::MessageField::some(wa::handshake_message::ServerHello {
-            ephemeral: Some(server_ephemeral_pub),
-            r#static: Some(enc_static),
-            payload: Some(enc_cert),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    let mut hello = wa::handshake_message::ServerHello::default();
+    hello.ephemeral = Some(server_ephemeral_pub);
+    hello.r#static = Some(enc_static);
+    hello.payload = Some(enc_cert);
+    let mut server_hello = HandshakeMessage::default();
+    server_hello.server_hello = buffa::MessageField::some(hello);
     send_frame(&mut ws, &server_hello.encode_to_vec()).await?;
 
     // <- s, se  (ClientFinish: enc(client static), enc(payload))

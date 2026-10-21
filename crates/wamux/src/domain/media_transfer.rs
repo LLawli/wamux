@@ -3,7 +3,7 @@
 use wacore::download::MediaType;
 use wamux_types::{DownloadableMedia, Jid, MediaKind, OutgoingMedia};
 use whatsapp_rust::buffa;
-use whatsapp_rust::download::DownloadParams;
+use whatsapp_rust::download::{DownloadLimits, DownloadParams};
 use whatsapp_rust::upload::UploadResponse;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::{
@@ -111,62 +111,64 @@ pub(crate) fn build_media_message(
     // all three are the proto3 default), same composition as the text path.
     let context = outgoing_context(&header.context);
     let kind = header.kind;
-    let message = match kind {
-        MediaKind::Image => wa::Message {
-            image_message: buffa::MessageField::some(image_submessage(header, up, context)),
-            ..Default::default()
-        },
+    let mut message = wa::Message::default();
+    match kind {
+        MediaKind::Image => {
+            message.image_message =
+                buffa::MessageField::some(image_submessage(header, up, context));
+        }
         // PTV (video note, the round "instant video") is the SAME VideoMessage
         // wire shape, just carried in a different Message slot. The edge sets
         // header.ptv; the core only relays it into ptv_message vs video_message.
-        MediaKind::Video if header.ptv => wa::Message {
-            ptv_message: buffa::MessageField::some(video_submessage(header, up, context)),
-            ..Default::default()
-        },
-        MediaKind::Video => wa::Message {
-            video_message: buffa::MessageField::some(video_submessage(header, up, context)),
-            ..Default::default()
-        },
-        MediaKind::Audio => wa::Message {
-            audio_message: buffa::MessageField::some(audio_submessage(header, up, context)),
-            ..Default::default()
-        },
-        MediaKind::Document => wa::Message {
-            document_message: buffa::MessageField::some(document_submessage(header, up, context)),
-            ..Default::default()
-        },
-        MediaKind::Sticker => wa::Message {
-            sticker_message: buffa::MessageField::some(sticker_submessage(header, up, context)),
-            ..Default::default()
-        },
+        MediaKind::Video if header.ptv => {
+            message.ptv_message = buffa::MessageField::some(video_submessage(header, up, context));
+        }
+        MediaKind::Video => {
+            message.video_message =
+                buffa::MessageField::some(video_submessage(header, up, context));
+        }
+        MediaKind::Audio => {
+            message.audio_message =
+                buffa::MessageField::some(audio_submessage(header, up, context));
+        }
+        MediaKind::Document => {
+            message.document_message =
+                buffa::MessageField::some(document_submessage(header, up, context));
+        }
+        MediaKind::Sticker => {
+            message.sticker_message =
+                buffa::MessageField::some(sticker_submessage(header, up, context));
+        }
         MediaKind::StickerPack | MediaKind::StickerPackThumbnail => {
             return Err(kind.refused_as_sendable());
         }
-    };
+    }
     Ok(message)
 }
 
 /// The five wa media sub-messages duplicate the exact same upload/mime/context
 /// field names, but the protobuf generator (buffa since 0.7) emits no shared
-/// trait to abstract over them, so this macro expands the struct literal and
-/// each builder states only its type-specific fields.
+/// trait to abstract over them, so this macro expands the shared field
+/// assignments and each builder states only its type-specific fields. The
+/// structs are `#[non_exhaustive]`, so they are assigned on a default.
 macro_rules! submessage_with_upload {
     ($ty:ident { $($field:ident : $value:expr),* $(,)? }, $header:expr, $up:expr, $context:expr) => {
-        $ty {
-            url: Some($up.url),
-            direct_path: Some($up.direct_path),
-            media_key: Some($up.media_key.to_vec()),
-            file_sha256: Some($up.file_sha256.to_vec()),
-            file_enc_sha256: Some($up.file_enc_sha256.to_vec()),
-            file_length: Some($up.file_length),
+        {
+            let mut sub = $ty::default();
+            sub.url = Some($up.url);
+            sub.direct_path = Some($up.direct_path);
+            sub.media_key = Some($up.media_key.to_vec());
+            sub.file_sha256 = Some($up.file_sha256.to_vec());
+            sub.file_enc_sha256 = Some($up.file_enc_sha256.to_vec());
+            sub.file_length = Some($up.file_length);
             // Unconditional `Some`, matching the library's own builders: this
             // comes from the finished upload, not from the wire, so it is never
             // the proto3 default the wire-defaults rule is about.
-            media_key_timestamp: Some($up.media_key_timestamp),
-            mimetype: nonempty_string(&$header.mime_type),
-            context_info: $context,
-            $($field: $value,)*
-            ..Default::default()
+            sub.media_key_timestamp = Some($up.media_key_timestamp);
+            sub.mimetype = nonempty_string(&$header.mime_type);
+            sub.context_info = $context;
+            $(sub.$field = $value;)*
+            sub
         }
     };
 }
@@ -275,8 +277,13 @@ pub async fn download(
         declared => declared,
     };
     let slot = spool.begin_download(reserve).await?;
+    // Built after the reservation so an oversize descriptor stays
+    // ResourceExhausted whatever else is wrong with it.
+    let params = download_params(descriptor)?;
+    // No library-side cap: the spool reservation above is the ceiling, and the
+    // writer refuses to outgrow it.
     let writer = client
-        .download_from_params_to_writer(&download_params(descriptor), slot.writer)
+        .download_to_writer(&params, slot.writer, DownloadLimits::default())
         .await
         .map_err(client_err)?;
     SpooledDownload::seal(writer, slot.reservation)
@@ -286,29 +293,38 @@ pub async fn download(
 ///
 /// A channel's media carries NO key (#6): a newsletter `ImageMessage` has no
 /// `media_key` and no `file_enc_sha256` at all, because that media is served in
-/// the clear and authenticated by `file_sha256` alone.
-/// `DownloadParams::encrypted` cannot express that, so the params are built
-/// field by field and the key is optional.
+/// the clear and authenticated by `file_sha256` alone. An empty key therefore
+/// selects `DownloadParams::plaintext`, which verifies `file_sha256` rather than
+/// skipping verification, so this widens what the core can relay without
+/// loosening what it checks. `file_enc_sha256` is only meaningful alongside a
+/// key: it is the hash of the ENCRYPTED bytes.
 ///
-/// Absence is the proto3 default (empty bytes), the same rule the outbound side
-/// uses, and the library already has the branch: `media_key: None` takes
-/// `MediaDecryption::Plaintext`, which verifies `file_sha256` rather than
-/// skipping verification. So this widens what the core can relay without
-/// loosening what it checks.
+/// The library validates the descriptor (key and hash lengths, a media type
+/// that fits the chosen form) and refuses a malformed one before any fetch.
 ///
 /// The kind may be one of the two a received sticker pack names (issue #58);
 /// SendMedia still refuses those, through `MediaKind::parse_sendable`.
-fn download_params(descriptor: &DownloadableMedia) -> DownloadParams {
-    let encrypted = !descriptor.media_key.is_empty();
-    DownloadParams {
-        direct_path: descriptor.direct_path.clone(),
-        media_key: encrypted.then(|| descriptor.media_key.clone()),
-        file_sha256: descriptor.file_sha256.clone(),
-        // Only meaningful alongside a key: it is the hash of the ENCRYPTED bytes.
-        file_enc_sha256: encrypted.then(|| descriptor.file_enc_sha256.clone()),
-        file_length: descriptor.file_length,
-        media_type: descriptor.kind.media_type(),
-    }
+fn download_params(descriptor: &DownloadableMedia) -> Result<DownloadParams, WamuxError> {
+    let media_type = descriptor.kind.media_type();
+    let params = if descriptor.media_key.is_empty() {
+        DownloadParams::plaintext(
+            descriptor.direct_path.as_str(),
+            &descriptor.file_sha256,
+            descriptor.file_length,
+            media_type,
+        )
+    } else {
+        DownloadParams::encrypted(
+            descriptor.direct_path.as_str(),
+            &descriptor.media_key,
+            &descriptor.file_sha256,
+            &descriptor.file_enc_sha256,
+            descriptor.file_length,
+            media_type,
+        )
+    };
+    // A descriptor the library refuses is a bad request, not a core that is down.
+    params.map_err(|e| WamuxError::InvalidArgument(e.to_string()))
 }
 
 #[cfg(test)]

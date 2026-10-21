@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use wacore::store::traits::MsgSecretEntry;
+use wacore::store::traits::{MsgSecretEntry, StoredMessageSecret};
 
 use crate::harness::{self, Harness};
 
@@ -21,12 +21,17 @@ fn entry(msg_id: &str, secret: u8, expires_at: i64, message_ts: i64) -> MsgSecre
     }
 }
 
+/// The secret's bytes and parent time, as `get_stored_msg_secret` reports them.
+fn bytes_and_ts(stored: Option<StoredMessageSecret>) -> Option<(Vec<u8>, Option<i64>)> {
+    stored.map(|s| (s.secret.as_bytes().to_vec(), s.message_ts))
+}
+
 async fn msg_secrets_round_trip_with_ts_and_isolate(h: Harness) {
     let t = h.two_accounts("msg-secrets").await;
     assert_eq!(t.ba.put_msg_secrets(Vec::new()).await.unwrap(), 0);
     assert_eq!(t.ba.get_msg_secret(CHAT, ME, "M1").await.unwrap(), None);
     assert_eq!(
-        t.ba.get_msg_secret_with_ts(CHAT, ME, "M1").await.unwrap(),
+        bytes_and_ts(t.ba.get_stored_msg_secret(CHAT, ME, "M1").await.unwrap()),
         None
     );
 
@@ -44,13 +49,13 @@ async fn msg_secrets_round_trip_with_ts_and_isolate(h: Harness) {
         Some(vec![1; 32])
     );
     assert_eq!(
-        t.ba.get_msg_secret_with_ts(CHAT, ME, "M1").await.unwrap(),
-        Some((vec![1; 32], 1_700)),
+        bytes_and_ts(t.ba.get_stored_msg_secret(CHAT, ME, "M1").await.unwrap()),
+        Some((vec![1; 32], Some(1_700))),
         "the real message_ts, not the trait default's hardcoded 0"
     );
     assert_eq!(
-        t.ba.get_msg_secret_with_ts(CHAT, ME, "M2").await.unwrap(),
-        Some((vec![2; 32], 0))
+        bytes_and_ts(t.ba.get_stored_msg_secret(CHAT, ME, "M2").await.unwrap()),
+        Some((vec![2; 32], None))
     );
     assert_eq!(
         t.ba.get_msg_secret(CHAT, CHAT, "M1").await.unwrap(),
@@ -58,8 +63,8 @@ async fn msg_secrets_round_trip_with_ts_and_isolate(h: Harness) {
         "sender is part of the key"
     );
     assert_eq!(
-        t.bb.get_msg_secret_with_ts(CHAT, ME, "M1").await.unwrap(),
-        Some((vec![9; 32], 9_900))
+        bytes_and_ts(t.bb.get_stored_msg_secret(CHAT, ME, "M1").await.unwrap()),
+        Some((vec![9; 32], Some(9_900)))
     );
     h.drop_accounts(t).await;
 }
@@ -106,8 +111,8 @@ async fn msg_secret_upsert_never_shortens_retention(h: Harness) {
         Some(vec![2; 32])
     );
     assert_eq!(
-        t.ba.get_msg_secret_with_ts(CHAT, ME, "TS").await.unwrap(),
-        Some((vec![3; 32], 1_700)),
+        bytes_and_ts(t.ba.get_stored_msg_secret(CHAT, ME, "TS").await.unwrap()),
+        Some((vec![3; 32], Some(1_700))),
         "the secret moves, the known message_ts stays"
     );
     assert_eq!(

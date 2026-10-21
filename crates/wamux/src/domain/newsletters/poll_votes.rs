@@ -26,14 +26,16 @@ pub async fn send_poll_vote(
 ) -> Result<pb::SendNewsletterPollVoteResponse, WamuxError> {
     let stanza_id = client
         .newsletter()
-        .send_poll_vote(
+        .send_poll_vote_raw(
             vote.jid.as_jid().as_lib(),
             vote.server_id,
             &vote.option_hashes,
         )
         .await
         .map_err(client_err)?;
-    Ok(pb::SendNewsletterPollVoteResponse { stanza_id })
+    Ok(pb::SendNewsletterPollVoteResponse {
+        stanza_id: stanza_id.into_string(),
+    })
 }
 
 /// This account's own reaction and poll vote on a channel's recent messages.
