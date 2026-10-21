@@ -2,7 +2,7 @@
 //! a value it does not name lands in UNKNOWN with the original token or code.
 
 use wacore::types::events::{ConnectFailureReason, TempBanReason, UnavailableType};
-use wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType};
+use wacore::types::presence::{ChatActivity, ReceiptType};
 use wamux_proto::v1 as pb;
 
 use crate::event_enums::{
@@ -51,21 +51,12 @@ fn an_other_receipt_type_is_unknown_with_its_token() {
 fn every_chat_state_maps_to_its_value() {
     use pb::ChatState as P;
     let table = [
-        (
-            ChatPresence::Composing,
-            ChatPresenceMedia::Text,
-            P::Composing,
-        ),
-        (
-            ChatPresence::Composing,
-            ChatPresenceMedia::Audio,
-            P::Recording,
-        ),
-        (ChatPresence::Paused, ChatPresenceMedia::Text, P::Paused),
-        (ChatPresence::Paused, ChatPresenceMedia::Audio, P::Paused),
+        (ChatActivity::Typing, P::Composing),
+        (ChatActivity::RecordingAudio, P::Recording),
+        (ChatActivity::Idle, P::Paused),
     ];
-    for (state, media, wire) in table {
-        assert_eq!(chat_state_of(state, media), wire, "{state:?}/{media:?}");
+    for (activity, wire) in table {
+        assert_eq!(chat_state_of(activity), wire, "{activity:?}");
     }
 }
 

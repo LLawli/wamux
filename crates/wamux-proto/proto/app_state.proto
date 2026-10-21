@@ -170,7 +170,7 @@ message LabelMessageAssociation {
 // `wa.SyncActionValue.LabelEditAction.ListType`.
 enum LabelListType {
   LABEL_LIST_TYPE_UNSPECIFIED = 0;
-  LABEL_LIST_TYPE_UNKNOWN = 1;  // never emitted (closed in the library)
+  LABEL_LIST_TYPE_UNKNOWN = 1;  // a list type this build does not name
   LABEL_LIST_TYPE_NONE = 2;
   LABEL_LIST_TYPE_UNREAD = 3;
   LABEL_LIST_TYPE_GROUPS = 4;

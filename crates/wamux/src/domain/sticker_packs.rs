@@ -80,15 +80,17 @@ fn sticker_pack_entry(sticker: &Sticker) -> pb::StickerPackEntry {
     }
 }
 
-/// The enum is closed in the waproto, so an unknown number never reaches here:
-/// buffa's decoder leaves the field `None` when `from_i32` fails, so it relays
-/// UNSPECIFIED, and the number survives only in `raw_message`. The match lives
-/// here because wacore does not re-export the waproto (#126).
+/// An unknown number never reaches here: buffa's decoder leaves the field
+/// `None` when `from_i32` fails, so it relays UNSPECIFIED, and the number
+/// survives only in `raw_message`. The enum is `#[non_exhaustive]`, so a variant
+/// this build does not name relays as UNKNOWN. The match lives here because
+/// wacore does not re-export the waproto (#126).
 fn origin_of(origin: StickerPackOrigin) -> pb::StickerPackOrigin {
     match origin {
         StickerPackOrigin::FIRST_PARTY => pb::StickerPackOrigin::FirstParty,
         StickerPackOrigin::THIRD_PARTY => pb::StickerPackOrigin::ThirdParty,
         StickerPackOrigin::USER_CREATED => pb::StickerPackOrigin::UserCreated,
+        _ => pb::StickerPackOrigin::Unknown,
     }
 }
 

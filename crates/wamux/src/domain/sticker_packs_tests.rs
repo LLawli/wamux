@@ -8,36 +8,34 @@ use super::*;
 use whatsapp_rust::waproto::whatsapp::message::sticker_pack_message::Sticker;
 
 fn sticker(file_name: &str, animated: bool) -> Sticker {
-    Sticker {
-        file_name: Some(file_name.to_string()),
-        is_animated: Some(animated),
-        emojis: vec!["😀".to_string(), "🎉".to_string()],
-        mimetype: Some("image/webp".to_string()),
-        ..Default::default()
-    }
+    let mut proto = Sticker::default();
+    proto.file_name = Some(file_name.to_string());
+    proto.is_animated = Some(animated);
+    proto.emojis = vec!["😀".to_string(), "🎉".to_string()];
+    proto.mimetype = Some("image/webp".to_string());
+    proto
 }
 
 fn pack() -> StickerPackMessage {
-    StickerPackMessage {
-        sticker_pack_id: Some("maker-app-pack-1".to_string()),
-        name: Some("A pack".to_string()),
-        publisher: Some("Someone".to_string()),
-        stickers: vec![sticker("01_aa.webp", false), sticker("02_bb.webp", true)],
-        file_length: Some(501_859),
-        file_sha256: Some(vec![6u8; 32]),
-        file_enc_sha256: Some(vec![7u8; 32]),
-        media_key: Some(vec![8u8; 32]),
-        direct_path: Some("/v/t62.15575-24/pack.enc".to_string()),
-        tray_icon_file_name: Some("maker-app-pack-1.png".to_string()),
-        thumbnail_direct_path: Some("/v/t62.15575-24/thumb.enc".to_string()),
-        thumbnail_sha256: Some(vec![16u8; 32]),
-        thumbnail_enc_sha256: Some(vec![17u8; 32]),
-        thumbnail_height: Some(252),
-        thumbnail_width: Some(252),
-        sticker_pack_size: Some(501_503),
-        sticker_pack_origin: Some(StickerPackOrigin::THIRD_PARTY),
-        ..Default::default()
-    }
+    let mut proto = StickerPackMessage::default();
+    proto.sticker_pack_id = Some("maker-app-pack-1".to_string());
+    proto.name = Some("A pack".to_string());
+    proto.publisher = Some("Someone".to_string());
+    proto.stickers = vec![sticker("01_aa.webp", false), sticker("02_bb.webp", true)];
+    proto.file_length = Some(501_859);
+    proto.file_sha256 = Some(vec![6u8; 32]);
+    proto.file_enc_sha256 = Some(vec![7u8; 32]);
+    proto.media_key = Some(vec![8u8; 32]);
+    proto.direct_path = Some("/v/t62.15575-24/pack.enc".to_string());
+    proto.tray_icon_file_name = Some("maker-app-pack-1.png".to_string());
+    proto.thumbnail_direct_path = Some("/v/t62.15575-24/thumb.enc".to_string());
+    proto.thumbnail_sha256 = Some(vec![16u8; 32]);
+    proto.thumbnail_enc_sha256 = Some(vec![17u8; 32]);
+    proto.thumbnail_height = Some(252);
+    proto.thumbnail_width = Some(252);
+    proto.sticker_pack_size = Some(501_503);
+    proto.sticker_pack_origin = Some(StickerPackOrigin::THIRD_PARTY);
+    proto
 }
 
 // Each token decrypts under its own HKDF info: the thumbnail shares the pack's
@@ -91,9 +89,10 @@ fn the_thumbnail_descriptor_pairs_its_own_hashes_with_the_pack_key() {
 
 #[test]
 fn no_thumbnail_path_means_no_thumbnail_descriptor() {
-    let info = sticker_pack_info(&StickerPackMessage {
-        thumbnail_direct_path: None,
-        ..pack()
+    let info = sticker_pack_info(&{
+        let mut proto = pack();
+        proto.thumbnail_direct_path = None;
+        proto
     });
     assert!(info.thumbnail.is_none());
 }
@@ -134,9 +133,10 @@ fn each_origin_relays_as_its_enum_value() {
         ),
     ];
     for (origin, wire) in cases {
-        let info = sticker_pack_info(&StickerPackMessage {
-            sticker_pack_origin: Some(origin),
-            ..pack()
+        let info = sticker_pack_info(&{
+            let mut proto = pack();
+            proto.sticker_pack_origin = Some(origin);
+            proto
         });
         assert_eq!(info.origin(), wire);
     }
@@ -146,9 +146,10 @@ fn each_origin_relays_as_its_enum_value() {
 // UNSPECIFIED (#126).
 #[test]
 fn an_absent_origin_relays_unspecified_not_first_party() {
-    let info = sticker_pack_info(&StickerPackMessage {
-        sticker_pack_origin: None,
-        ..pack()
+    let info = sticker_pack_info(&{
+        let mut proto = pack();
+        proto.sticker_pack_origin = None;
+        proto
     });
     assert_eq!(info.origin(), pb::StickerPackOrigin::Unspecified);
 }

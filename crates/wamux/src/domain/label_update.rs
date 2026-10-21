@@ -82,10 +82,9 @@ fn label_edit_of(action: &LabelEditAction) -> pb::LabelEdit {
     }
 }
 
-/// One arm per library variant, no wildcard: a variant added upstream fails
-/// the build instead of being relayed as a wrong case (#149). Absent is
-/// UNSPECIFIED; UNKNOWN is never emitted because the library drops numbers
-/// it does not know while decoding.
+/// Absent is UNSPECIFIED (the library drops numbers it does not know while
+/// decoding). The enum is `#[non_exhaustive]`: a variant this build does not
+/// name is UNKNOWN, never relayed as a wrong case (#149).
 fn label_list_type_of(list_type: Option<ListType>) -> pb::LabelListType {
     use pb::LabelListType as Kind;
     let Some(list_type) = list_type else {
@@ -110,6 +109,7 @@ fn label_list_type_of(list_type: Option<ListType>) -> pb::LabelListType {
         ListType::THIRD_PARTY => Kind::ThirdParty,
         ListType::LEAD => Kind::Lead,
         ListType::MENTIONS_AND_REPLIES => Kind::MentionsAndReplies,
+        _ => Kind::Unknown,
     }
 }
 

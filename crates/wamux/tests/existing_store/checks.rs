@@ -213,10 +213,11 @@ async fn check_sent_and_secrets(b: &dyn Backend) {
     assert_eq!(sent.as_deref(), Some(SENT_PAYLOAD));
     let want = msg_secret();
     let got = b
-        .get_msg_secret_with_ts(&want.chat, &want.sender, &want.msg_id)
+        .get_stored_msg_secret(&want.chat, &want.sender, &want.msg_id)
         .await
-        .unwrap();
-    assert_eq!(got, Some((want.secret.to_vec(), want.message_ts)));
+        .unwrap()
+        .map(|s| (s.secret.as_bytes().to_vec(), s.message_ts));
+    assert_eq!(got, Some((want.secret.to_vec(), Some(want.message_ts))));
 }
 
 /// After the old rows: a new write on the old account reads back, a new

@@ -168,12 +168,12 @@ message StickerPackInfo {
 // One sticker inside a received pack, as the pack message lists it. `file_name`
 // is its entry in the ZIP, so an edge can match metadata to bytes after
 // unzipping.
-// The waproto enum is closed: the decoder drops a number it does not know, so
-// such a pack reads UNSPECIFIED and the number survives only in `raw_message`.
-// That is why there is no `origin_raw`.
+// The decoder drops a number it does not know, so such a pack reads UNSPECIFIED
+// and the number survives only in `raw_message`. UNKNOWN is a variant this
+// build does not name yet. That is why there is no `origin_raw`.
 enum StickerPackOrigin {
   STICKER_PACK_ORIGIN_UNSPECIFIED = 0;
-  STICKER_PACK_ORIGIN_UNKNOWN = 1;  // not emitted today: see above
+  STICKER_PACK_ORIGIN_UNKNOWN = 1;  // a variant this build does not name
   STICKER_PACK_ORIGIN_FIRST_PARTY = 2;
   STICKER_PACK_ORIGIN_THIRD_PARTY = 3;
   STICKER_PACK_ORIGIN_USER_CREATED = 4;
@@ -343,10 +343,11 @@ message PresenceUpdate {
 }
 
 // The library models "recording" as composing with audio media; the contract
-// keeps the three states the edge draws. A closed set: no raw.
+// keeps the three states the edge draws. No raw: the library never hands the
+// activity over as a number.
 enum ChatState {
   CHAT_STATE_UNSPECIFIED = 0;
-  CHAT_STATE_UNKNOWN = 1;    // not emitted today: the set is closed
+  CHAT_STATE_UNKNOWN = 1;    // an activity this build does not name
   CHAT_STATE_COMPOSING = 2;  // was "composing"
   CHAT_STATE_RECORDING = 3;  // was "recording"
   CHAT_STATE_PAUSED = 4;     // was "paused"

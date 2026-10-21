@@ -73,9 +73,10 @@ fn contact_update_names_the_contact_as_a_jid() {
 // yet. It is an unset Jid, never an empty string or `Jid { "" }`.
 #[test]
 fn an_echo_without_an_own_jid_leaves_sender_unset() {
-    let msg = wa::Message {
-        conversation: Some("oi".to_string()),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("oi".to_string());
+        proto
     };
     let out = map_sent(pb::MessageKey::default(), PHONE_JID, "", 0, &msg);
     assert_eq!(out.chat, wire(PHONE_JID));
@@ -98,9 +99,10 @@ struct InboundMessageBefore122 {
 // which is what "this edge was not updated" should look like.
 #[test]
 fn an_old_client_reads_a_retyped_event_field_as_absent() {
-    let msg = wa::Message {
-        conversation: Some("oi".to_string()),
-        ..Default::default()
+    let msg = {
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("oi".to_string());
+        proto
     };
     let out = map_sent(pb::MessageKey::default(), GROUP_JID, PHONE_JID, 0, &msg);
     let bytes = prost::Message::encode_to_vec(&out);

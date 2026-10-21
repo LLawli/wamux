@@ -403,12 +403,12 @@ pub async fn logged_in_companion(
 
 #[cfg(feature = "stress")]
 fn zeroed_adv_identity() -> whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity {
-    whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity {
-        details: Some(vec![0; 32]),
-        account_signature_key: Some(vec![0; 32]),
-        account_signature: Some(vec![0; 64]),
-        device_signature: Some(vec![0; 64]),
-    }
+    let mut proto = whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity::default();
+    proto.details = Some(vec![0; 32]);
+    proto.account_signature_key = Some(vec![0; 32]);
+    proto.account_signature = Some(vec![0; 64]);
+    proto.device_signature = Some(vec![0; 64]);
+    proto
 }
 
 /// Connect a registered account and wait (bounded) until it is logged in.

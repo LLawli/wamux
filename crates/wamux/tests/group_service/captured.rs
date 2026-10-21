@@ -64,15 +64,21 @@ fn group_head() -> NodeBuilder {
 
 /// GetGroupMetadata: `<iq xmlns="w:g2" type="get"><query request="interactive"/>`.
 pub fn metadata() -> Node {
+    metadata_with_modes("all_member_add", "admin_link", "all_member_share")
+}
+
+/// The captured metadata answer with the three member modes the test picks:
+/// the other value of each mode has no capture of its own (#205).
+pub fn metadata_with_modes(add: &str, link: &str, share: &str) -> Node {
     group_head()
         .attr("size", "1")
         .children([
             NodeBuilder::new("description").build(),
-            text("member_add_mode", "all_member_add"),
-            text("member_share_group_history_mode", "all_member_share"),
+            text("member_add_mode", add),
+            text("member_share_group_history_mode", share),
             ephemeral_off(),
             approval_on(),
-            text("member_link_mode", "admin_link"),
+            text("member_link_mode", link),
             owner_full(),
         ])
         .build()

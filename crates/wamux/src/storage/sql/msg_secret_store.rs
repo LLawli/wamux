@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use wacore::store::error::Result;
-use wacore::store::traits::{MsgSecretEntry, MsgSecretStore};
+use wacore::store::traits::{MsgSecretEntry, MsgSecretStore, StoredMessageSecret};
 
 use super::{SqlBackend, SqlTx};
 use crate::storage::blob_cipher::joined_row;
@@ -66,14 +66,15 @@ impl MsgSecretStore for SqlBackend {
             .transpose()
     }
 
-    /// Overridden rather than defaulted: the default pairs the secret with a
-    /// hardcoded `0`, which would silently disable the edit-processing window.
-    async fn get_msg_secret_with_ts(
+    /// Required by the trait: the read that carries the parent time. The
+    /// time must come back from the row, or the edit-processing window would
+    /// be silently disabled.
+    async fn get_stored_msg_secret(
         &self,
         chat: &str,
         sender: &str,
         msg_id: &str,
-    ) -> Result<Option<(Vec<u8>, i64)>> {
+    ) -> Result<Option<StoredMessageSecret>> {
         let found = row_optional_sql!(
             (Vec<u8>, i64),
             &self.pool,
@@ -85,7 +86,10 @@ impl MsgSecretStore for SqlBackend {
         )?;
         let row = secret_row(chat, sender, msg_id);
         found
-            .map(|(stored, ts)| Ok((self.open_at("msg_secrets", "secret", &row, &stored)?, ts)))
+            .map(|(stored, ts)| {
+                let secret = self.open_at("msg_secrets", "secret", &row, &stored)?;
+                StoredMessageSecret::from_stored_bytes(&secret, ts)
+            })
             .transpose()
     }
 

@@ -305,9 +305,8 @@ fn every_captured_notification_maps_whole() {
 }
 
 /// The group a `<create>` hands over, by value: the fields the edge reads
-/// first. The member modes are UNSPECIFIED today for the reason #132 pinned
-/// (the library at the pin drops them when they arrive as bytes, upstream
-/// #1651): the server did send `all_member_add` here.
+/// first. The three member modes arrive as bytes (`all_member_add` and the
+/// others are not protocol tokens) and are read like strings (#205).
 #[test]
 fn create_carries_the_group_metadata() {
     let notifications = captured();
@@ -330,7 +329,15 @@ fn create_carries_the_group_metadata() {
     assert_eq!(members, [wire(MEMBER_LID), wire(OWNER_LID)]);
     assert_eq!(
         metadata.member_add_mode,
-        pb::GroupMemberAddMode::Unspecified as i32
+        pb::GroupMemberAddMode::AllMemberAdd as i32
+    );
+    assert_eq!(
+        metadata.member_link_mode,
+        pb::GroupMemberLinkMode::AdminLink as i32
+    );
+    assert_eq!(
+        metadata.member_share_history_mode,
+        pb::GroupMemberShareHistoryMode::AllMemberShare as i32
     );
 }
 

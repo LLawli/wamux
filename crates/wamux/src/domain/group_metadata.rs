@@ -78,7 +78,7 @@ fn settings_part(md: &GroupMetadata) -> pb::GroupMetadata {
             .member_link_mode
             .map_or(pb::GroupMemberLinkMode::Unspecified, member_link_mode_of)
             as i32,
-        size: md.size,
+        size: md.participant_count,
         no_frequently_forwarded: md.no_frequently_forwarded,
         member_share_history_mode: md.member_share_history_mode.map_or(
             pb::GroupMemberShareHistoryMode::Unspecified,

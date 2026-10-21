@@ -3,7 +3,7 @@
 //! wire's enum value (#127); reading a descriptor's kind is tested in
 //! `wamux-types` (`messaging/media_tests.rs`).
 
-use wacore::download::MediaType;
+use wacore::download::{Downloadable, MediaType};
 use wamux_proto::v1 as pb;
 use wamux_types::{
     DownloadableMedia, Jid, MediaKind, MessageId, OutgoingContext, OutgoingMedia, QuotedRef,
@@ -105,11 +105,11 @@ fn downloadable(media_key: Vec<u8>, file_enc_sha256: Vec<u8>) -> DownloadableMed
 // Ordinary encrypted media: the key rides through and decryption happens.
 #[test]
 fn a_descriptor_with_a_key_downloads_as_encrypted() {
-    let params = download_params(&downloadable(vec![1u8; 32], vec![2u8; 32]));
-    assert_eq!(params.media_key.as_deref(), Some(&[1u8; 32][..]));
-    assert_eq!(params.file_enc_sha256.as_deref(), Some(&[2u8; 32][..]));
-    assert_eq!(params.file_sha256, vec![9u8; 32]);
-    assert_eq!(params.media_type, MediaType::Image);
+    let params = download_params(&downloadable(vec![1u8; 32], vec![2u8; 32])).expect("params");
+    assert_eq!(params.media_key(), Some(&[1u8; 32][..]));
+    assert_eq!(params.file_enc_sha256(), Some(&[2u8; 32][..]));
+    assert_eq!(params.file_sha256().expect("file_sha256"), vec![9u8; 32]);
+    assert_eq!(params.app_info(), MediaType::Image);
 }
 
 // Issue #58: the kind picks the HKDF info, so a pack's thumbnail downloads
@@ -121,7 +121,7 @@ fn the_descriptor_kind_picks_the_download_type() {
         ..downloadable(vec![1u8; 32], vec![2u8; 32])
     };
     assert_eq!(
-        download_params(&thumbnail).media_type,
+        download_params(&thumbnail).expect("params").app_info(),
         MediaType::StickerPackThumbnail
     );
 }
@@ -131,11 +131,11 @@ fn the_descriptor_kind_picks_the_download_type() {
 // it is the only thing authenticating those bytes.
 #[test]
 fn a_keyless_descriptor_downloads_as_plaintext_and_keeps_its_hash() {
-    let params = download_params(&downloadable(Vec::new(), Vec::new()));
-    assert!(params.media_key.is_none());
-    assert!(params.file_enc_sha256.is_none());
-    assert_eq!(params.file_sha256, vec![9u8; 32]);
-    assert_eq!(params.file_length, 2048);
+    let params = download_params(&downloadable(Vec::new(), Vec::new())).expect("params");
+    assert!(params.media_key().is_none());
+    assert!(params.file_enc_sha256().is_none());
+    assert_eq!(params.file_sha256().expect("file_sha256"), vec![9u8; 32]);
+    assert_eq!(params.file_length().expect("file_length"), 2048);
 }
 
 // An enc hash without a key is not a half-encrypted download: without the
@@ -143,9 +143,9 @@ fn a_keyless_descriptor_downloads_as_plaintext_and_keeps_its_hash() {
 // library to validate a hash of bytes it never produces.
 #[test]
 fn an_enc_hash_without_a_key_is_dropped() {
-    let params = download_params(&downloadable(Vec::new(), vec![2u8; 32]));
-    assert!(params.media_key.is_none());
-    assert!(params.file_enc_sha256.is_none());
+    let params = download_params(&downloadable(Vec::new(), vec![2u8; 32])).expect("params");
+    assert!(params.media_key().is_none());
+    assert!(params.file_enc_sha256().is_none());
 }
 
 fn fake_upload() -> MediaUpload {

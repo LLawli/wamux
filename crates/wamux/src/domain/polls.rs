@@ -29,7 +29,7 @@ pub async fn send_vote(
 ) -> Result<SendResult, WamuxError> {
     client
         .polls()
-        .vote(
+        .vote_raw(
             chat.into_lib(),
             vote.poll_id.as_str(),
             vote.creator.as_lib(),
@@ -79,7 +79,7 @@ async fn count_undecryptable(
     for (voter, ciphertext) in votes {
         let opened = client
             .polls()
-            .decrypt_vote(
+            .decrypt_vote_raw(
                 *ciphertext,
                 &tally.message_secret,
                 tally.poll_id.as_str(),

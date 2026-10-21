@@ -200,7 +200,7 @@ are noted here.
   `Client::upload_stream`, then the matching `wa::Message` is built.
 - Receive: inbound events carry a `MediaDescriptor`; the edge later calls
   `DownloadMedia`, which decrypts into the media spool
-  (`download_from_params_to_writer`), then streams a meta frame and byte chunks.
+  (`download_to_writer`), then streams a meta frame and byte chunks.
 - The spool (#79) keeps memory per transfer constant: spool files are unlinked
   from creation, `media_max_bytes` bounds one transfer, and
   `media_spool_max_bytes` bounds all transfers in flight (`ResourceExhausted`

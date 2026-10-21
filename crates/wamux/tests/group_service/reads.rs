@@ -64,20 +64,16 @@ fn captured_group_head(participant: pb::GroupParticipant) -> pb::GroupMetadata {
 /// GetGroupMetadata and ListGroups answered the member's view: the version ids,
 /// the three modes, and the full roster entry. Only GetGroupMetadata had `size`.
 ///
-/// TODAY the three modes are UNSPECIFIED, although the server sent
-/// `all_member_add`, `admin_link` and `all_member_share` (the capture, and live
-/// on 2026-10-07). The values are not protocol tokens, so they cross the binary
-/// codec as raw bytes, and the library at the pin (6f07e3a) reads them only as
-/// string content and drops them (`wacore/src/iq/groups.rs`). Upstream fixed it
-/// in #1651 (2026-10-05, after the pin): at the next bump these become the
-/// server's values and this test must be flipped back (#132).
+/// The server sent the modes as `all_member_add`, `admin_link` and
+/// `all_member_share`. Those values are not protocol tokens, so they cross the
+/// binary codec as raw bytes; the library reads them either way (#205).
 fn captured_member_view(size: Option<u32>) -> pb::GroupMetadata {
     pb::GroupMetadata {
         participant_version_id: Some("1790947897308104".to_string()),
         admin_version_id: Some("1790947599193645".to_string()),
-        member_add_mode: pb::GroupMemberAddMode::Unspecified as i32,
-        member_link_mode: pb::GroupMemberLinkMode::Unspecified as i32,
-        member_share_history_mode: pb::GroupMemberShareHistoryMode::Unspecified as i32,
+        member_add_mode: pb::GroupMemberAddMode::AllMemberAdd as i32,
+        member_link_mode: pb::GroupMemberLinkMode::AdminLink as i32,
+        member_share_history_mode: pb::GroupMemberShareHistoryMode::AllMemberShare as i32,
         size,
         ..captured_group_head(owner(Some(owner_details())))
     }
@@ -99,6 +95,36 @@ async fn get_group_metadata_relays_the_captured_roster() {
     assert_eq!(
         attr(operation(&iq).unwrap(), "request").as_deref(),
         Some("interactive")
+    );
+    f.cleanup().await;
+}
+
+/// The other value of each mode, the one the capture did not have: each of
+/// the three relays both ways, not just the value the server happened to send.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_group_metadata_relays_the_admin_member_modes() {
+    let mut f = fixture("get_group_metadata_relays_the_admin_member_modes").await;
+    let answer = captured::metadata_with_modes("admin_add", "all_member_link", "admin_share");
+    f.mock.answer_iq(G2, "get", "query", answer);
+    let metadata = f
+        .groups
+        .get_group_metadata(f.group_ref())
+        .await
+        .expect("metadata")
+        .into_inner()
+        .metadata
+        .expect("the group");
+    assert_eq!(
+        metadata.member_add_mode,
+        pb::GroupMemberAddMode::AdminAdd as i32
+    );
+    assert_eq!(
+        metadata.member_link_mode,
+        pb::GroupMemberLinkMode::AllMemberLink as i32
+    );
+    assert_eq!(
+        metadata.member_share_history_mode,
+        pb::GroupMemberShareHistoryMode::AdminShare as i32
     );
     f.cleanup().await;
 }

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use wacore::types::events::{Event, LoggedOut, Receipt, TemporaryBan};
 use wacore::types::message::MessageInfo;
+use wacore::types::presence::PresenceStatus;
 use wamux_types::event_enums::{
     ban_reason_of, chat_state_of, logout_reason_of, receipt_type_of, unavailable_reason_of,
 };
@@ -103,7 +104,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         // the other half empty instead of inventing one (issue #24).
         Event::Presence(p) => one(Pb::Presence(pb::PresenceUpdate {
             jid: relay_lib_jid(&p.from),
-            online: Some(!p.unavailable),
+            online: Some(!matches!(p.status, PresenceStatus::Unavailable)),
             last_seen: p.last_seen.map(|t| t.timestamp()).unwrap_or(0),
             chat_state: pb::ChatState::Unspecified as i32,
             // Unset, not empty: a real presence has no chat (#122).
@@ -116,7 +117,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             jid: relay_lib_jid(&c.source.sender),
             online: None,
             last_seen: 0,
-            chat_state: chat_state_of(c.state, c.media) as i32,
+            chat_state: chat_state_of(c.state) as i32,
             chat: relay_lib_jid(&c.source.chat),
         })),
 

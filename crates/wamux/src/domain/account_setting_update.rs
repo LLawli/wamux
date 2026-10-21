@@ -72,12 +72,20 @@ fn jids_of(values: &[String]) -> Vec<pb::Jid> {
 }
 
 /// The library keeps this enum open (#73): a number it does not know arrives
-/// as `Unknown(n)` and crosses as UNKNOWN plus `n`, never as a guess.
+/// as `Unknown(n)` and crosses as UNKNOWN plus `n`, never as a guess. The enum
+/// is also `#[non_exhaustive]`, so a variant this build does not name yet takes
+/// the same path, with its discriminant as the number.
 fn status_audience_of(mode: EnumValue<StatusDistributionMode>) -> pb::StatusAudience {
     match mode {
-        EnumValue::Known(known) => pb::StatusAudience {
-            mode: status_audience_mode_of(known) as i32,
-            mode_code: 0,
+        EnumValue::Known(known) => match status_audience_mode_of(known) {
+            pb::StatusAudienceMode::Unknown => pb::StatusAudience {
+                mode: pb::StatusAudienceMode::Unknown as i32,
+                mode_code: known as i32,
+            },
+            named => pb::StatusAudience {
+                mode: named as i32,
+                mode_code: 0,
+            },
         },
         EnumValue::Unknown(code) => pb::StatusAudience {
             mode: pb::StatusAudienceMode::Unknown as i32,
@@ -86,7 +94,6 @@ fn status_audience_of(mode: EnumValue<StatusDistributionMode>) -> pb::StatusAudi
     }
 }
 
-/// One arm per variant, no wildcard: a mode added upstream fails the build.
 fn status_audience_mode_of(mode: StatusDistributionMode) -> pb::StatusAudienceMode {
     use pb::StatusAudienceMode as Kind;
     match mode {
@@ -95,6 +102,7 @@ fn status_audience_mode_of(mode: StatusDistributionMode) -> pb::StatusAudienceMo
         StatusDistributionMode::CONTACTS => Kind::Contacts,
         StatusDistributionMode::CLOSE_FRIENDS => Kind::CloseFriends,
         StatusDistributionMode::CUSTOM_LIST => Kind::CustomList,
+        _ => Kind::Unknown,
     }
 }
 

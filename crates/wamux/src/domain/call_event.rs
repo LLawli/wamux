@@ -27,8 +27,9 @@ pub fn call_event_of(call: &IncomingCall) -> pb::CallEvent {
         version: call.version.clone(),
         participant: relay_optional_lib_jid(call.participant.as_ref()),
         recipient: relay_optional_lib_jid(call.recipient.as_ref()),
-        // The stanza's `t` is unix seconds; the contract's instants are ms.
-        timestamp: call.timestamp.timestamp_millis(),
+        // The stanza's `t` is unix seconds; the contract's instants are ms. The
+        // library leaves it unset for a rekey stanza that carries no `t`.
+        timestamp: call.timestamp.map_or(0, |t| t.timestamp_millis()),
         offline: call.offline,
         caller_username: call.caller_username.clone(),
         video_orientation: call.video_orientation.map(u32::from),

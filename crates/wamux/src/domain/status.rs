@@ -9,6 +9,7 @@ use whatsapp_rust::{Client, Jid as LibJid, SendResult, StatusSendOptions};
 
 use crate::domain::account_setting_update::status_privacy_of;
 use crate::domain::media_transfer;
+use crate::domain::messaging::lib_message_id;
 use crate::domain::wire_defaults::nonempty_string;
 use crate::error::{WamuxError, client_err};
 use crate::spool::StagedUpload;
@@ -37,9 +38,9 @@ pub async fn post_status_text(
             status.background_argb,
             font,
             &recipients,
-            // Privacy is the only StatusSendOptions field and defaults to
-            // "contacts"; per-status privacy lists are edge policy, not yet a
-            // wire field, so the core posts with the lib default.
+            // Privacy defaults to "contacts" and the operation id is generated
+            // by the library; per-status privacy lists are edge policy, not yet
+            // a wire field, so the core posts with the lib default.
             StatusSendOptions::default(),
         )
         .await
@@ -104,10 +105,11 @@ pub async fn revoke_status(
     client: &Client,
     revoke: StatusRevoke,
 ) -> Result<SendResult, WamuxError> {
+    let message_id = lib_message_id(&revoke.message_id.to_string())?;
     client
         .status()
         .revoke(
-            revoke.message_id.to_string(),
+            message_id,
             &lib_recipients(&revoke.recipients),
             StatusSendOptions::default(),
         )
