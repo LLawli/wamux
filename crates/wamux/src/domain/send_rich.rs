@@ -4,9 +4,11 @@
 
 use wamux_types::{ContactCard, Jid, NewPoll, OutgoingContext};
 use whatsapp_rust::buffa;
+use whatsapp_rust::wacore_binary::JidExt;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::{Client, SendResult};
 
+use crate::domain::newsletter_poll::send_newsletter_poll;
 use crate::domain::outgoing_context::outgoing_context;
 use crate::domain::wire_defaults::nonempty_string;
 use crate::error::{WamuxError, client_err};
@@ -34,15 +36,13 @@ pub(crate) fn build_contact_message(card: &ContactCard) -> wa::Message {
         quote: card.quote.clone(),
         ..Default::default()
     };
-    wa::Message {
-        contact_message: buffa::MessageField::some(wa::message::ContactMessage {
-            display_name: nonempty_string(&card.display_name),
-            vcard: nonempty_string(&card.vcard),
-            context_info: outgoing_context(&context),
-            ..Default::default()
-        }),
-        ..Default::default()
-    }
+    let mut contact = wa::message::ContactMessage::default();
+    contact.display_name = nonempty_string(&card.display_name);
+    contact.vcard = nonempty_string(&card.vcard);
+    contact.context_info = outgoing_context(&context);
+    let mut message = wa::Message::default();
+    message.contact_message = buffa::MessageField::some(contact);
+    message
 }
 
 /// Create a poll. The lib validates (2..=12 options, selectable_count
@@ -55,7 +55,13 @@ pub async fn send_poll(
     to: Jid,
     poll: &NewPoll,
 ) -> Result<(SendResult, Vec<u8>), WamuxError> {
-    client
+    // The library refuses a channel poll (no end-to-end session to keep the
+    // secret for), but the server takes one, so a channel is published by the
+    // core's own builder.
+    if to.as_lib().is_newsletter() {
+        return send_newsletter_poll(client, to, poll).await;
+    }
+    let created = client
         .polls()
         .create(
             to.as_lib(),
@@ -64,7 +70,9 @@ pub async fn send_poll(
             poll.selectable_count,
         )
         .await
-        .map_err(client_err)
+        .map_err(client_err)?;
+    let (result, _creator, secret) = created.into_parts();
+    Ok((result, secret.as_bytes().to_vec()))
 }
 
 #[cfg(test)]
