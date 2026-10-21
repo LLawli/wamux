@@ -46,13 +46,13 @@ where
     let sql = format!("SELECT {column} FROM {table} WHERE device_id = $1");
     let rows = match store.pool() {
         SqlPool::Pg(pool) => {
-            sqlx::query_scalar(&sql)
+            sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(device_id)
                 .fetch_all(pool)
                 .await
         }
         SqlPool::Sqlite(conn) => {
-            sqlx::query_scalar(&sql)
+            sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(device_id)
                 .fetch_all(conn.read_pool())
                 .await

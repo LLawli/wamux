@@ -60,8 +60,16 @@ impl Raw for SqlStore {
     async fn blobs(&self, table: &str, column: &str) -> Vec<Vec<u8>> {
         let sql = format!("SELECT {column} FROM {table} WHERE length({column}) > 0");
         match self.pool() {
-            SqlPool::Pg(pool) => sqlx::query_scalar(&sql).fetch_all(pool).await,
-            SqlPool::Sqlite(conn) => sqlx::query_scalar(&sql).fetch_all(conn.read_pool()).await,
+            SqlPool::Pg(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .fetch_all(pool)
+                    .await
+            }
+            SqlPool::Sqlite(conn) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .fetch_all(conn.read_pool())
+                    .await
+            }
         }
         .unwrap_or_else(|e| panic!("read {table}.{column}: {e}"))
     }
@@ -238,7 +246,7 @@ pub fn sqlite_url(dir: &Path) -> String {
 pub async fn throwaway_postgres() -> (String, String) {
     let name = format!("wamux_upgrade_{}", uuid::Uuid::new_v4().simple());
     let admin = PgPool::connect(&super::database_url()).await.unwrap();
-    sqlx::query(&format!("CREATE DATABASE {name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&admin)
         .await
         .unwrap();
@@ -252,9 +260,11 @@ pub async fn throwaway_postgres() -> (String, String) {
 /// must be closed first.
 pub async fn drop_throwaway_postgres(name: &str) {
     let admin = PgPool::connect(&super::database_url()).await.unwrap();
-    sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))
-        .execute(&admin)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {name} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
     admin.close().await;
 }

@@ -71,7 +71,7 @@ pub struct ThrowawayPg {
 pub async fn postgres() -> (SqlStore, ThrowawayPg) {
     let name = format!("wamux_upgrade_{}", Uuid::new_v4().simple());
     let admin = PgPool::connect(&common::database_url()).await.unwrap();
-    sqlx::query(&format!("CREATE DATABASE {name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&admin)
         .await
         .expect("create the throwaway database");
@@ -107,8 +107,11 @@ pub async fn drop_postgres(store: SqlStore, db: ThrowawayPg) {
         pool.close().await;
     }
     let admin = PgPool::connect(&common::database_url()).await.unwrap();
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", db.name))
-        .execute(&admin)
-        .await
-        .expect("drop the throwaway database");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+        db.name
+    )))
+    .execute(&admin)
+    .await
+    .expect("drop the throwaway database");
 }

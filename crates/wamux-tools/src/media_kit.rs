@@ -85,10 +85,16 @@ fn fetch_blocking(url: &str, cap: usize) -> Result<Vec<u8>, MediaKitError> {
     };
     let response = ureq::get(url).call().map_err(|e| failed(e.to_string()))?;
     let mut body: Vec<u8> = Vec::new();
-    // One byte past the cap is enough to know the body is too large.
+    // One byte past the cap is enough to know the body is too large. ureq 3
+    // refuses a body over 10 MiB by default, so its own limit is raised to the
+    // same cap + 1 and `take` stops the read before that limit can error.
+    let limit: u64 = cap as u64 + 1;
     response
-        .into_reader()
-        .take(cap as u64 + 1)
+        .into_body()
+        .into_with_config()
+        .limit(limit)
+        .reader()
+        .take(limit)
         .read_to_end(&mut body)
         .map_err(|e| failed(e.to_string()))?;
     if body.len() > cap {

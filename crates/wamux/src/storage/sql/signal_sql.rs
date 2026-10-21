@@ -149,7 +149,7 @@ async fn put_address_records(
 
 async fn delete_by_address(
     pool: &SqlPool,
-    sql: &str,
+    sql: &'static str,
     device_id: i32,
     addresses: &[Arc<str>],
 ) -> Result<()> {
