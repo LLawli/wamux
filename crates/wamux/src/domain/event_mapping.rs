@@ -14,14 +14,16 @@ use wamux_types::{MediaKind, relay_jid, relay_lib_jid, relay_optional_lib_jid};
 use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::waproto::whatsapp as wa;
 
-use crate::domain::account_setting_update::{link_previews_update_of, status_privacy_update_of};
+use crate::domain::account_setting_update::{
+    link_previews_update_of, status_privacy_update_of, unarchive_chats_update_of,
+};
 use crate::domain::app_state_update::{
     archive_update_of, clear_chat_update_of, delete_chat_update_of,
     delete_message_for_me_update_of, lock_chat_update_of, mark_read_update_of, mute_update_of,
     pin_update_of, star_update_of, user_status_mute_update_of,
 };
 use crate::domain::call_event::call_event_of;
-use crate::domain::call_log_update::call_log_update_of;
+use crate::domain::call_log_update::{call_log_history_of, call_log_update_of};
 use crate::domain::connection_notice::{
     app_state_sync_failed_notice_of, client_expiration_notice_of, client_outdated_notice_of,
     connect_failure_notice_of, stream_error_notice_of, stream_replaced_notice_of,
@@ -33,6 +35,7 @@ use crate::domain::contact_notice::{
 use crate::domain::contact_update::{contact_removed_of, contact_update_of};
 use crate::domain::device_notice::{device_list_notice_of, identity_notice_of};
 use crate::domain::group_update::group_update_of;
+use crate::domain::label_sublist_update::label_sublist_update_of;
 use crate::domain::label_update::{
     label_association_update_of, label_edit_update_of, message_label_association_update_of,
 };
@@ -42,6 +45,7 @@ use crate::domain::pairing_update::{
     pairing_code_error_of, pairing_code_refresh_of, pairing_qr_codes_exhausted_of,
 };
 use crate::domain::quick_reply_update::quick_reply_update_of;
+use crate::domain::reachout_timelock_update::reachout_timelock_update_of;
 use crate::domain::self_push_name_update::self_push_name_update_of;
 use crate::domain::stanza_node::stanza_node_of;
 use crate::domain::sticker_packs;
@@ -131,6 +135,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::ContactRemoved(c) => one(Pb::Contact(contact_removed_of(c))),
         Event::SelfPushNameUpdated(u) => one(Pb::SelfPushName(self_push_name_update_of(u))),
         Event::CallLogSync(c) => one(Pb::CallLog(call_log_update_of(c))),
+        Event::CallLogHistory(c) => one(Pb::CallLogHistory(call_log_history_of(c))),
 
         // Backfill: only ever dispatched when the account connected with history
         // enabled (or via FetchMessageHistory). Relayed verbatim — the edge
@@ -159,8 +164,12 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             one(Pb::Label(message_label_association_update_of(u)))
         }
         Event::QuickReplyUpdate(u) => one(Pb::QuickReply(quick_reply_update_of(u))),
+        Event::LabelSublistUpdate(u) => one(Pb::LabelSublist(label_sublist_update_of(u))),
         Event::DisableLinkPreviewsUpdate(u) => one(Pb::AccountSetting(link_previews_update_of(u))),
         Event::StatusPrivacyUpdate(u) => one(Pb::AccountSetting(status_privacy_update_of(u))),
+        Event::UnarchiveChatsSettingUpdate(u) => {
+            one(Pb::AccountSetting(unarchive_chats_update_of(u)))
+        }
         // Issue #48 (upstream #1544): one list for the whole account, not one
         // chat, so it is its own event rather than an AppStateUpdate kind.
         Event::FavoritesUpdate(f) => one(Pb::FavoritesChanged(favorites_changed(f))),
@@ -183,6 +192,9 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::DeviceListUpdate(u) => one(Pb::DeviceNotice(device_list_notice_of(u))),
         Event::IdentityChange(c) => one(Pb::DeviceNotice(identity_notice_of(c))),
         Event::MexNotification(n) => one(Pb::Mex(mex_notification_of(n))),
+        Event::ReachoutTimelockUpdate(u) => {
+            one(Pb::ReachoutTimelock(reachout_timelock_update_of(u)))
+        }
 
         // Issue #4: the server's own verdict on an outgoing stanza.
         // `SendResult` only says the library accepted the message; this says

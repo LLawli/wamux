@@ -241,6 +241,35 @@ message CallLogUpdate {
   CallLogType call_type = 17;
 }
 
+// One call-log record from a history sync (#215): calls the primary device
+// made or took before this companion was paired. The record fields are the
+// ones `CallLogUpdate` carries, mapped the same way; the identity fields differ
+// because a history record has no mutation index:
+// - `call_id` and `call_creator` come from the record itself. `call_creator` is
+//   unset when the record named none or one the library could not parse.
+// - `from_me` is unset when the creator is unknown or this account's own
+//   identity was not available, never a guess from the record's `isIncoming`.
+// There is no mutation time: `start_time` is when the call happened.
+message CallLogHistory {
+  optional string call_id = 1;
+  Jid call_creator = 2;
+  optional bool from_me = 3;
+  optional int32 sync_type = 4;      // the history notification's sync type
+  optional uint32 chunk_order = 5;   // the history chunk's order, when the phone sent one
+  CallLogResult result = 6;
+  optional bool is_dnd_mode = 7;
+  CallLogSilenceReason silence_reason = 8;
+  optional int64 duration_seconds = 9;  // seconds, verbatim
+  optional int64 start_time = 10;       // ms; the server sends seconds
+  optional bool is_video = 11;
+  optional bool is_call_link = 12;
+  optional string call_link_token = 13;
+  optional string scheduled_call_id = 14;
+  Jid group = 15;                       // set on a group call
+  repeated CallLogParticipant participants = 16;
+  CallLogType call_type = 17;
+}
+
 // One other party of the call and how the call ended for them. An entry with
 // no jid is skipped.
 message CallLogParticipant {

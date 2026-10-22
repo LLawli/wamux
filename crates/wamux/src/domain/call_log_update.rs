@@ -1,8 +1,8 @@
-//! One entry of the primary device's call log, synced through app state
-//! (#153).
+//! One entry of the primary device's call log: synced through app state
+//! (#153), or carried by a history sync (#215). Both map the record the same way.
 
-use wacore::types::events::CallLogSync;
-use wamux_types::{relay_jid, relay_lib_jid};
+use wacore::types::events::{CallLogHistory, CallLogSync};
+use wamux_types::{relay_jid, relay_lib_jid, relay_optional_lib_jid};
 use whatsapp_rust::waproto::whatsapp::CallLogRecord;
 use whatsapp_rust::waproto::whatsapp::call_log_record::{
     CallResult, CallType, ParticipantInfo, SilenceReason,
@@ -15,13 +15,47 @@ use crate::proto::v1 as pb;
 /// record's copies of the index (`call_id`, `call_creator_jid`) are left out
 /// (see `CallLogUpdate` in call.proto).
 pub fn call_log_update_of(sync: &CallLogSync) -> pb::CallLogUpdate {
-    let record: &CallLogRecord = &sync.record;
+    let fields: RecordFields = record_fields_of(&sync.record);
     pb::CallLogUpdate {
         call_creator: relay_lib_jid(&sync.call_creator_jid),
         call_id: sync.call_id.clone(),
         from_me: sync.from_me,
         timestamp: sync.timestamp.timestamp_millis(),
         from_full_sync: sync.from_full_sync,
+        result: fields.result,
+        is_dnd_mode: fields.is_dnd_mode,
+        silence_reason: fields.silence_reason,
+        duration_seconds: fields.duration_seconds,
+        start_time: fields.start_time,
+        is_video: fields.is_video,
+        is_call_link: fields.is_call_link,
+        call_link_token: fields.call_link_token,
+        scheduled_call_id: fields.scheduled_call_id,
+        group: fields.group,
+        participants: fields.participants,
+        call_type: fields.call_type,
+    }
+}
+
+/// What a `CallLogRecord` says about the call, in contract terms. One mapping
+/// for the app-state update and the history sync, so the two cannot drift.
+struct RecordFields {
+    result: i32,
+    is_dnd_mode: Option<bool>,
+    silence_reason: i32,
+    duration_seconds: Option<i64>,
+    start_time: Option<i64>,
+    is_video: Option<bool>,
+    is_call_link: Option<bool>,
+    call_link_token: Option<String>,
+    scheduled_call_id: Option<String>,
+    group: Option<pb::Jid>,
+    participants: Vec<pb::CallLogParticipant>,
+    call_type: i32,
+}
+
+fn record_fields_of(record: &CallLogRecord) -> RecordFields {
+    RecordFields {
         result: call_result_of(record.call_result) as i32,
         is_dnd_mode: record.is_dnd_mode,
         silence_reason: silence_reason_of(record.silence_reason) as i32,
@@ -105,6 +139,35 @@ fn call_type_of(call_type: Option<CallType>) -> pb::CallLogType {
     }
 }
 
+/// One call-log record from a history sync (#215): the record's fields as
+/// `call_log_update_of` maps them, and the identity the library derived.
+pub fn call_log_history_of(history: &CallLogHistory) -> pb::CallLogHistory {
+    let fields: RecordFields = record_fields_of(&history.record);
+    pb::CallLogHistory {
+        call_id: history.record.call_id.clone(),
+        call_creator: relay_optional_lib_jid(history.call_creator_jid.as_ref()),
+        from_me: history.from_me,
+        sync_type: history.sync_type,
+        chunk_order: history.chunk_order,
+        result: fields.result,
+        is_dnd_mode: fields.is_dnd_mode,
+        silence_reason: fields.silence_reason,
+        duration_seconds: fields.duration_seconds,
+        start_time: fields.start_time,
+        is_video: fields.is_video,
+        is_call_link: fields.is_call_link,
+        call_link_token: fields.call_link_token,
+        scheduled_call_id: fields.scheduled_call_id,
+        group: fields.group,
+        participants: fields.participants,
+        call_type: fields.call_type,
+    }
+}
+
 #[cfg(test)]
 #[path = "call_log_update_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "call_log_history_tests.rs"]
+mod history_tests;
