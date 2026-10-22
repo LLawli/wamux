@@ -12,8 +12,33 @@ has to follow them.
 
 ## [Unreleased]
 
+### Added
+
+- **The four events whatsapp-rust eab45737 added are typed** (issue #215). They
+  used to reach the edge as a `RawEvent` carrying the library's JSON, which is
+  not a contract and can change on any bump. Every field the library keeps
+  optional crosses as `optional`, so absent stays apart from false or 0.
+  - The "keep chats archived" setting is a new `AccountSettingUpdate` case,
+    `unarchive_chats` (`UnarchiveChatsSetting`). The flag is the inverse of the
+    phone's switch.
+  - `EventEnvelope.label_sublist = 38` (`LabelSublistUpdate`): one entry of a
+    label's sublist, keyed by `(predefined_id, chat)`, as an upsert of a sublist
+    id or a removal.
+  - `EventEnvelope.call_log_history = 39` (`CallLogHistory`, in `call.proto`): a
+    call-log record from a history sync, with the record fields `CallLogUpdate`
+    carries plus `call_id`, `call_creator`, an optional `from_me`, `sync_type`
+    and `chunk_order`.
+  - `EventEnvelope.reachout_timelock = 40` (`ReachoutTimelockUpdate`): the
+    account's reachout restriction as the server sent it, the deadline included
+    verbatim. The same notification still arrives right after as a
+    `MexNotification`.
+
 ### Changed
 
+- **A `RawEvent` with kind `UnarchiveChatsSettingUpdate`, `LabelSublistUpdate`,
+  `CallLogHistory` or `ReachoutTimelockUpdate` no longer arrives** (issue #215):
+  each now has its typed message (see Added). An edge that read their JSON
+  reads the typed fields instead.
 - **A poll sent to a channel follows WA Web, through the library** (issue #220,
   see `docs/BREAKING-CHANGES-2026-10-22.md`). whatsapp-rust now publishes a
   channel poll itself (`Newsletter::send_poll`, upstream #1778), so the core's
