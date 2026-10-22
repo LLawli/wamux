@@ -73,16 +73,16 @@ turso = { version = "=0.8.1", default-features = false }
 # so that reason is gone.)
 #
 # `simd` is gone: upstream removed it after measuring what it was worth (#1262).
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "eab45737fb79ef583e1ca39ba458d9ec2b900c3b" }
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "eab45737fb79ef583e1ca39ba458d9ec2b900c3b", default-features = false, features = [
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e", default-features = false, features = [
     "tokio-transport",
     "tokio-runtime",
     "ureq-client",
     "tokio-native",
     "signal",
 ] }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "eab45737fb79ef583e1ca39ba458d9ec2b900c3b" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "eab45737fb79ef583e1ca39ba458d9ec2b900c3b" }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e" }
 # Stress harness only; the members opt in with `optional = true`.
-wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "eab45737fb79ef583e1ca39ba458d9ec2b900c3b", default-features = false }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "eab45737fb79ef583e1ca39ba458d9ec2b900c3b", default-features = false }
+wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e", default-features = false }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e", default-features = false }

@@ -5,10 +5,7 @@ use tonic::Code;
 use wamux::proto::v1 as pb;
 use whatsapp_rust::waproto::whatsapp as wa;
 
-use wacore_binary::NodeContent;
-use whatsapp_rust::buffa::Message as _;
-
-use crate::common::mock_wire::{attr, sent_message};
+use crate::common::mock_wire::sent_message;
 use crate::harness::{
     OWN_PN_USER, assert_only_the_probe_was_sent, fixture, jid, key, sender, wire_count,
 };
@@ -117,60 +114,6 @@ async fn send_poll_reaches_the_peer_with_its_secret() {
     assert_eq!(names, vec![Some("azul".into()), Some("verde".into())]);
     assert_eq!(poll.selectable_options_count, Some(1));
     let context = opened
-        .message_context_info
-        .as_option()
-        .expect("context info");
-    assert_eq!(
-        context.message_secret.as_deref(),
-        Some(&sent.message_secret[..])
-    );
-    f.cleanup().await;
-}
-
-/// A channel the account publishes to (#205): nothing is served for it, a
-/// channel send is a plain stanza the mock only records.
-const CHANNEL: &str = "120363000000000205@newsletter";
-
-// #205: a channel has no end-to-end session, so the poll goes out as the
-// channel's plaintext, and the RPC still answers with the secret it carries,
-// as it does for a chat.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn send_poll_to_a_newsletter_publishes_it_and_returns_its_secret() {
-    let mut f = fixture("send_poll_to_a_newsletter_publishes_it_and_returns_its_secret").await;
-    let request = pb::SendPollRequest {
-        to: jid(CHANNEL),
-        ..poll_request(&f, 1)
-    };
-    let sent = f
-        .messages
-        .send_poll(request)
-        .await
-        .expect("poll")
-        .into_inner();
-    assert_eq!(sent.message_secret.len(), 32);
-    let key = sent.key.expect("key");
-    assert_eq!(key.chat, jid(CHANNEL));
-    let stanza = sent_message(&f.mock, &key.id).await;
-    assert_eq!(attr(&stanza, "to").as_deref(), Some(CHANNEL));
-    assert!(
-        stanza.get_optional_child("enc").is_none(),
-        "a channel is not end-to-end"
-    );
-    let plaintext = stanza
-        .get_optional_child("plaintext")
-        .expect("a channel send carries <plaintext>");
-    let Some(NodeContent::Bytes(bytes)) = &plaintext.content else {
-        panic!("<plaintext> carries no bytes: {plaintext:?}");
-    };
-    let message = wa::Message::decode_from_slice(bytes).expect("a wa::Message");
-    let poll = message
-        .poll_creation_message_v3
-        .as_option()
-        .expect("a single-choice poll is v3");
-    assert_eq!(poll.name.as_deref(), Some("Qual cor?"));
-    let names: Vec<_> = poll.options.iter().map(|o| o.option_name.clone()).collect();
-    assert_eq!(names, vec![Some("azul".into()), Some("verde".into())]);
-    let context = message
         .message_context_info
         .as_option()
         .expect("context info");

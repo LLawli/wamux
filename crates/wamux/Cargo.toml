@@ -99,9 +99,6 @@ http.workspace = true
 # aead 0.6 (no 0.10 line: that one would add a second chacha20).
 chacha20poly1305 = "0.11"
 sha2 = "0.11"
-# OS randomness for a channel poll's 32-byte secret (#205); 0.4 is the line the
-# graph already uses most.
-getrandom = "0.4"
 # #77: `socket_group` by name (NSS) and the chown that sets it.
 nix = { workspace = true, features = ["user"] }
 # #79: unnamed spool files (`tempfile_in`, O_TMPFILE) for media transfers.
