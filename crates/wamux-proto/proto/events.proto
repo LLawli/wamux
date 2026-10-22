@@ -552,6 +552,25 @@ message LabelUpdate {
   }
 }
 
+// One entry of a label's sublist changed on a linked device (#215): the entry
+// keyed by `(predefined_id, chat)`. Apply it as an upsert or a removal of that
+// key; delivery is not exactly once, and nothing synthesizes a removal when the
+// parent label goes away. `predefined_id` is in `LabelEdit.predefined_id`'s
+// namespace: it is neither a label id nor a list type.
+message LabelSublistUpdate {
+  int32 predefined_id = 1;
+  Jid chat = 2;             // PN or LID, as the mutation named it
+  // The mutation's own time (ms); unset when it carried none or one out of
+  // range. Zero is a time, not "absent".
+  optional int64 action_timestamp = 3;
+  bool from_full_sync = 4;  // replayed by a full app-state sync
+  // Unset for a change this build does not name (the library's enum is open).
+  oneof change {
+    int32 upsert_sub_list_id = 10;  // the entry's new sublist id; 0 is a value
+    Empty remove = 11;              // the wire does not carry the old sublist id
+  }
+}
+
 // A quick reply was created, edited or deleted on a linked device (#149).
 // Deleting is the same mutation with `deleted` true and empty texts, not a
 // removal, so check the flag.
@@ -576,7 +595,23 @@ message AccountSettingUpdate {
   oneof setting {
     LinkPreviewsSetting link_previews = 10;
     StatusPrivacySetting status_privacy = 11;
+    UnarchiveChatsSetting unarchive_chats = 12;  // #215
   }
+}
+
+// The account's reachout timelock changed (#215): WhatsApp restricting new
+// conversations this account may start. It reports state, not a policy the core
+// applies. Every field crosses as the server sent it: `is_active` false is a
+// lifted restriction, unset makes no claim, and the deadline is the server's
+// string (its format has not been seen on the wire). The same notification also
+// arrives right after as a `MexNotification`.
+message ReachoutTimelockUpdate {
+  optional string enforcement_type = 1;
+  optional bool is_active = 2;
+  optional string time_enforcement_ends = 3;
+  Jid from = 4;
+  optional string stanza_id = 5;
+  optional string offline = 6;  // set on a backlog replay, verbatim
 }
 
 // A channel's tallies, pushed while this account is subscribed to it
@@ -1008,6 +1043,9 @@ message EventEnvelope {
     ContactNotice contact_notice = 35;          // #151
     DeviceNotice device_notice = 36;            // #151
     MexNotification mex = 37;                   // #151
+    LabelSublistUpdate label_sublist = 38;      // #215
+    CallLogHistory call_log_history = 39;       // #215
+    ReachoutTimelockUpdate reachout_timelock = 40;  // #215
     RawEvent raw = 99;
   }
 }

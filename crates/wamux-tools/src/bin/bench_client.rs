@@ -146,6 +146,9 @@ fn event_kind(envelope: &pb::EventEnvelope) -> &'static str {
         Some(Event::ContactNotice(_)) => "contact_notice",
         Some(Event::DeviceNotice(_)) => "device_notice",
         Some(Event::Mex(_)) => "mex",
+        Some(Event::LabelSublist(_)) => "label_sublist",
+        Some(Event::CallLogHistory(_)) => "call_log_history",
+        Some(Event::ReachoutTimelock(_)) => "reachout_timelock",
         Some(Event::Raw(raw)) => raw_kind(raw),
         None => "empty",
     }

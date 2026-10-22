@@ -196,6 +196,14 @@ message LinkPreviewsSetting {
   optional bool previews_disabled = 1;
 }
 
+// The "keep chats archived" setting (#215). The flag is the inverse of the
+// phone's switch: `unarchive_chats` is true when "keep chats archived" is OFF,
+// so a new message moves its chat out of the archive. The library emits the
+// update only when the wire carried the flag, so it is never a default.
+message UnarchiveChatsSetting {
+  bool unarchive_chats = 1;
+}
+
 // One status audience mode. The library keeps this enum open, so a number it
 // does not know crosses as UNKNOWN with the number in `mode_code` (0 otherwise).
 message StatusAudience {

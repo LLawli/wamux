@@ -1,7 +1,9 @@
-//! Account-wide settings changed on a linked device (#149): link previews and
-//! the status audience, as typed contract messages.
+//! Account-wide settings changed on a linked device (#149): link previews, the
+//! status audience and "keep chats archived" (#215), as typed contract messages.
 
-use wacore::types::events::{DisableLinkPreviewsUpdate, StatusPrivacyUpdate};
+use wacore::types::events::{
+    DisableLinkPreviewsUpdate, StatusPrivacyUpdate, UnarchiveChatsSettingUpdate,
+};
 use wamux_types::relay_jid;
 use whatsapp_rust::buffa::EnumValue;
 use whatsapp_rust::waproto::whatsapp::sync_action_value::StatusPrivacyAction;
@@ -106,6 +108,25 @@ fn status_audience_mode_of(mode: StatusDistributionMode) -> pb::StatusAudienceMo
     }
 }
 
+/// The "keep chats archived" setting (#215), the library's flag as sent.
+pub fn unarchive_chats_update_of(update: &UnarchiveChatsSettingUpdate) -> pb::AccountSettingUpdate {
+    pb::AccountSettingUpdate {
+        timestamp: update.timestamp.timestamp_millis(),
+        // The library struct keeps no time of the mutation's own here.
+        action_timestamp: None,
+        from_full_sync: update.from_full_sync,
+        // The library's flag, not the action's: it is only built when the wire
+        // carried the value, so it is never a default.
+        setting: Some(Setting::UnarchiveChats(pb::UnarchiveChatsSetting {
+            unarchive_chats: update.unarchive_chats,
+        })),
+    }
+}
+
 #[cfg(test)]
 #[path = "account_setting_update_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "account_setting_update_unarchive_tests.rs"]
+mod unarchive_tests;
