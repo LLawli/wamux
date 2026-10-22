@@ -65,7 +65,6 @@ impl MessagingSvc {
             &Jid::from(result.to.clone()),
             own_jid(client).as_ref(),
             &result.message,
-            self.registry.replay_max_event_bytes(),
         )
         .await;
     }
