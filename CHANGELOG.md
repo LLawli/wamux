@@ -14,6 +14,12 @@ has to follow them.
 
 ### Added
 
+- **A private reply, and a reply to a status, can be sent** (issue #217). When
+  a send's `quote.quoted.chat` names a chat other than the one the message goes
+  to, the core puts it in the context's `remoteJid`, as WhatsApp's clients do
+  for a private reply to a group message or a reply to a status. A reply in the
+  same chat carries no `remoteJid`, as before. This holds for SendText,
+  SendMedia, SendContact and SendInteractiveReply.
 - **The four events whatsapp-rust eab45737 added are typed** (issue #215). They
   used to reach the edge as a `RawEvent` carrying the library's JSON, which is
   not a contract and can change on any bump. Every field the library keeps
@@ -35,6 +41,10 @@ has to follow them.
 
 ### Changed
 
+- **A malformed `quote.quoted.chat` on a send is `InvalidArgument`** (issue
+  #217). The core used to ignore that field. Now it reads it, so a value that
+  is not a jid is refused like a malformed participant. Unset or empty is still
+  no chat.
 - **A `RawEvent` with kind `UnarchiveChatsSettingUpdate`, `LabelSublistUpdate`,
   `CallLogHistory` or `ReachoutTimelockUpdate` no longer arrives** (issue #215):
   each now has its typed message (see Added). An edge that read their JSON
@@ -59,6 +69,17 @@ has to follow them.
 
 ### Fixed
 
+- **An inbound quote names the quoted message's chat, and a reply with media
+  keeps its quote** (issue #217). `QuoteContext.quoted.chat` was always the
+  reply's own chat, so a private reply to a group message lost the group, and
+  a reply to a status lost `status@broadcast`: the subscriber looked for the
+  quoted message in the wrong chat. Measured in wamux-omarchy, 7 of 7 private
+  replies to groups arrived naming the direct chat. The chat now comes from the
+  context's `remoteJid` when it names one. The quote and the mentions were also
+  read only from an extended text, so a reply sent as an image, a video, a
+  document, a sticker or a voice note arrived with neither. They are now read
+  from whichever message type carries the context, disappearing and view-once
+  wrappers included. The send echo and channel history follow the same rule.
 - **Events of one account arrive in `monotonic_seq` order, and a replay during
   a burst no longer loses one** (issue #213). Each event was published from a
   task of its own, so two events could be stamped in one order and delivered in
