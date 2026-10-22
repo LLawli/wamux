@@ -43,6 +43,7 @@ fn contact_quote_rides_on_context_info() {
         quote: Some(QuotedRef {
             id: MessageId::new("QUOTED-1").unwrap(),
             participant: Some(Jid::parse("5511777777777@s.whatsapp.net").unwrap()),
+            remote_chat: None,
         }),
         ..card("Ana", "BEGIN:VCARD\nEND:VCARD")
     };

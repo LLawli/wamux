@@ -165,17 +165,23 @@ fn parse_optional_reads_empty_as_absence() {
 // No quote, and a quote with no quoted key, carry nothing: no quote at all.
 #[test]
 fn no_quote_or_no_quoted_key_is_no_quote() {
-    assert_eq!(QuotedRef::from_proto(None).unwrap(), None);
-    assert_eq!(QuotedRef::from_proto(quote(None, "")).unwrap(), None);
-    assert_eq!(QuotedRef::from_proto(quote(None, AUTHOR)).unwrap(), None);
+    assert_eq!(QuotedRef::from_proto(None, None).unwrap(), None);
+    assert_eq!(QuotedRef::from_proto(quote(None, ""), None).unwrap(), None);
+    assert_eq!(
+        QuotedRef::from_proto(quote(None, AUTHOR), None).unwrap(),
+        None
+    );
 }
 
 #[test]
 fn a_quote_participant_overrides_the_quoted_key_participant() {
-    let quoted = QuotedRef::from_proto(quote(
-        Some(key(GROUP, "QUOTED-1", AUTHOR)),
-        "5511888888888@s.whatsapp.net",
-    ))
+    let quoted = QuotedRef::from_proto(
+        quote(
+            Some(key(GROUP, "QUOTED-1", AUTHOR)),
+            "5511888888888@s.whatsapp.net",
+        ),
+        None,
+    )
     .unwrap()
     .expect("a quoted key is a quote");
     assert_eq!(quoted.id, MessageId::new("QUOTED-1").unwrap());
@@ -187,7 +193,7 @@ fn a_quote_participant_overrides_the_quoted_key_participant() {
 
 #[test]
 fn a_quote_falls_back_to_the_key_participant() {
-    let quoted = QuotedRef::from_proto(quote(Some(key(GROUP, "QUOTED-1", AUTHOR)), ""))
+    let quoted = QuotedRef::from_proto(quote(Some(key(GROUP, "QUOTED-1", AUTHOR)), ""), None)
         .unwrap()
         .expect("a quoted key is a quote");
     assert_eq!(quoted.participant, Some(jid(AUTHOR)));
@@ -199,7 +205,7 @@ fn an_unset_quote_participant_falls_back_to_the_key_participant() {
         quoted: Some(key(GROUP, "QUOTED-1", AUTHOR)),
         participant: None,
     };
-    let quoted = QuotedRef::from_proto(Some(context))
+    let quoted = QuotedRef::from_proto(Some(context), None)
         .unwrap()
         .expect("a quoted key is a quote");
     assert_eq!(quoted.participant, Some(jid(AUTHOR)));
@@ -209,7 +215,7 @@ fn an_unset_quote_participant_falls_back_to_the_key_participant() {
 // key; that is the absent participant, never Some("").
 #[test]
 fn a_dm_quote_has_no_participant() {
-    let quoted = QuotedRef::from_proto(quote(Some(key(PHONE, "QUOTED-DM", "")), ""))
+    let quoted = QuotedRef::from_proto(quote(Some(key(PHONE, "QUOTED-DM", "")), ""), None)
         .unwrap()
         .expect("a quoted key is a quote");
     assert_eq!(quoted.participant, None);
@@ -218,7 +224,10 @@ fn a_dm_quote_has_no_participant() {
 #[test]
 fn a_quote_with_an_empty_id_is_refused() {
     assert_eq!(
-        invalid_argument(QuotedRef::from_proto(quote(Some(key(PHONE, "", "")), ""))),
+        invalid_argument(QuotedRef::from_proto(
+            quote(Some(key(PHONE, "", "")), ""),
+            None
+        )),
         "empty quote.quoted.id; expected the id of the quoted message"
     );
 }
@@ -226,23 +235,11 @@ fn a_quote_with_an_empty_id_is_refused() {
 #[test]
 fn a_quote_with_a_malformed_participant_is_refused() {
     for (context, key_participant) in [("not a jid", ""), ("", "not a jid")] {
-        let message = invalid_argument(QuotedRef::from_proto(quote(
-            Some(key(PHONE, "QUOTED", key_participant)),
-            context,
-        )));
+        let message = invalid_argument(QuotedRef::from_proto(
+            quote(Some(key(PHONE, "QUOTED", key_participant)), context),
+            None,
+        ));
         assert!(message.starts_with("invalid jid 'not a jid'"), "{message}");
-    }
-}
-
-// The wire quote has no chat field, so the quoted key's chat is never read.
-// Reading it would refuse quotes the core relays.
-#[test]
-fn a_quote_never_reads_the_quoted_chat() {
-    for chat in ["", "not a jid"] {
-        let quoted = QuotedRef::from_proto(quote(Some(key(chat, "QUOTED", "")), ""))
-            .unwrap()
-            .expect("a quoted key is a quote");
-        assert_eq!(quoted.id.as_str(), "QUOTED");
     }
 }
 
@@ -252,7 +249,8 @@ fn context_parses_mentions_in_order() {
         .map(|jid| pb::Mention { jid: wire(jid) })
         .to_vec();
     let context =
-        OutgoingContext::from_proto(mentions, quote(Some(key(GROUP, "Q", "")), ""), 90).unwrap();
+        OutgoingContext::from_proto(mentions, quote(Some(key(GROUP, "Q", "")), ""), 90, None)
+            .unwrap();
     assert_eq!(
         context.mentions,
         vec![jid(AUTHOR), jid("222000222000222@lid")]
@@ -264,7 +262,7 @@ fn context_parses_mentions_in_order() {
 #[test]
 fn an_empty_context_is_the_default() {
     assert_eq!(
-        OutgoingContext::from_proto(Vec::new(), None, 0).unwrap(),
+        OutgoingContext::from_proto(Vec::new(), None, 0, None).unwrap(),
         OutgoingContext::default()
     );
 }
@@ -274,15 +272,20 @@ fn an_empty_context_is_the_default() {
 fn a_malformed_mention_is_refused() {
     let mention = |jid: &str| vec![pb::Mention { jid: wire(jid) }];
     assert_eq!(
-        invalid_argument(OutgoingContext::from_proto(mention(""), None, 0)),
+        invalid_argument(OutgoingContext::from_proto(mention(""), None, 0, None)),
         "missing jid"
     );
     let unset = vec![pb::Mention { jid: None }];
     assert_eq!(
-        invalid_argument(OutgoingContext::from_proto(unset, None, 0)),
+        invalid_argument(OutgoingContext::from_proto(unset, None, 0, None)),
         "missing jid"
     );
-    let message = invalid_argument(OutgoingContext::from_proto(mention("not a jid"), None, 0));
+    let message = invalid_argument(OutgoingContext::from_proto(
+        mention("not a jid"),
+        None,
+        0,
+        None,
+    ));
     assert!(message.starts_with("invalid jid 'not a jid'"), "{message}");
 }
 
@@ -290,6 +293,7 @@ fn a_malformed_mention_is_refused() {
 #[test]
 fn a_context_checks_mentions_before_the_quote() {
     let mentions = vec![pb::Mention { jid: None }];
-    let result = OutgoingContext::from_proto(mentions, quote(Some(key(PHONE, "", "")), ""), 0);
+    let result =
+        OutgoingContext::from_proto(mentions, quote(Some(key(PHONE, "", "")), ""), 0, None);
     assert_eq!(invalid_argument(result), "missing jid");
 }

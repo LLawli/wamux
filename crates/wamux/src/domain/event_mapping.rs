@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use wacore::proto_helpers::MessageExt as _;
 use wacore::types::events::{Event, LoggedOut, Receipt, TemporaryBan};
 use wacore::types::message::MessageInfo;
 use wacore::types::presence::PresenceStatus;
@@ -455,6 +456,34 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
     out
 }
 
+/// Mentions of a context, dropping an empty one, never `Mention { jid: None }` (#120).
+fn mentions_of(ci: &wa::ContextInfo) -> Vec<pb::Mention> {
+    ci.mentioned_jid
+        .iter()
+        .filter_map(|j| relay_jid(j.clone()))
+        .map(|jid| pb::Mention { jid: Some(jid) })
+        .collect()
+}
+
+/// The quote a context carries. The quoted message's chat is `remote_jid` when
+/// the client set it (a private reply to a group message, a reply to a status);
+/// clients omit it for a reply in its own chat, so absent or empty falls back
+/// to `reply_chat` (#217).
+fn quote_of(ci: &wa::ContextInfo, reply_chat: &str) -> Option<pb::QuoteContext> {
+    let stanza_id = ci.stanza_id.as_ref()?;
+    let participant = relay_jid(ci.participant.clone().unwrap_or_default());
+    let quoted_chat = ci.remote_jid.as_deref().filter(|jid| !jid.is_empty());
+    Some(pb::QuoteContext {
+        quoted: Some(pb::MessageKey {
+            chat: relay_jid(quoted_chat.unwrap_or(reply_chat)),
+            id: stanza_id.clone(),
+            from_me: false,
+            participant: participant.clone(),
+        }),
+        participant,
+    })
+}
+
 /// Project a `wa::Message`'s content onto an already-addressed `InboundMessage`:
 /// text, mentions, quote, reaction, edit/revoke flags, media.
 ///
@@ -467,34 +496,18 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
 /// `wa::Message` a live event carries, and the same message must not project
 /// two ways depending on which call returned it.
 pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, chat: &str) {
-    let chat = chat.to_string();
     if let Some(text) = &msg.conversation {
         out.text = text.clone();
-    } else if let Some(ext) = msg.extended_text_message.as_option() {
-        if let Some(text) = &ext.text {
-            out.text = text.clone();
-        }
-        if let Some(ci) = ext.context_info.as_option() {
-            out.mentions = ci
-                .mentioned_jid
-                .iter()
-                // An empty mention is dropped, never `Mention { jid: None }` (#120).
-                .filter_map(|j| relay_jid(j.clone()))
-                .map(|jid| pb::Mention { jid: Some(jid) })
-                .collect();
-            if let Some(stanza_id) = &ci.stanza_id {
-                let participant = relay_jid(ci.participant.clone().unwrap_or_default());
-                out.quote = Some(pb::QuoteContext {
-                    quoted: Some(pb::MessageKey {
-                        chat: relay_jid(chat.clone()),
-                        id: stanza_id.clone(),
-                        from_me: false,
-                        participant: participant.clone(),
-                    }),
-                    participant,
-                });
-            }
-        }
+    } else if let Some(ext) = msg.extended_text_message.as_option()
+        && let Some(text) = &ext.text
+    {
+        out.text = text.clone();
+    }
+    // Any message type can carry a quote and mentions (a media caption reply
+    // included), so the context is read wherever the library finds it (#217).
+    if let Some(ci) = msg.context_info() {
+        out.mentions = mentions_of(ci);
+        out.quote = quote_of(ci, chat);
     }
 
     if let Some(reaction) = msg.reaction_message.as_option() {
@@ -723,6 +736,9 @@ mod logout_tests;
 #[cfg(test)]
 #[path = "event_mapping_media_tests.rs"]
 mod media_tests;
+#[cfg(test)]
+#[path = "event_mapping_quote_tests.rs"]
+mod quote_tests;
 #[cfg(test)]
 #[path = "event_mapping_stanza_tests.rs"]
 mod stanza_tests;

@@ -14,6 +14,7 @@ fn quote(participant: Option<&str>) -> Option<QuotedRef> {
     Some(QuotedRef {
         id: MessageId::new("QUOTED-1").unwrap(),
         participant: participant.map(jid),
+        remote_chat: None,
     })
 }
 

@@ -16,6 +16,7 @@ fn quote() -> QuotedRef {
     QuotedRef {
         id: MessageId::new(OFFER_ID).unwrap(),
         participant: Some(Jid::parse(MERCHANT).unwrap()),
+        remote_chat: None,
     }
 }
 

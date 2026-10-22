@@ -24,6 +24,10 @@ pub struct MessageTarget {
 pub struct QuotedRef {
     pub id: MessageId,
     pub participant: Option<Jid>,
+    /// The quoted message's chat, only when it is not the chat the reply goes
+    /// to: a private reply to a group message, or a reply to a status (#217).
+    /// A reply in the same chat carries none, as WhatsApp's clients send it.
+    pub remote_chat: Option<Jid>,
 }
 
 /// What every outgoing text, media and contact card carries besides its body:
@@ -58,9 +62,13 @@ impl QuotedRef {
     /// key, is no quote. A key with an empty id is
     /// `InvalidArgument("empty quote.quoted.id; expected the id of the quoted
     /// message")`. The participant is the context's own when it is set and not
-    /// empty (#120), else the quoted key's. The quoted key's `chat` is never
-    /// read: the wire quote has no field for it.
-    pub fn from_proto(quote: Option<pb::QuoteContext>) -> Result<Option<Self>, WamuxError> {
+    /// empty (#120), else the quoted key's. The quoted key's `chat` becomes
+    /// `remote_chat` only when it is a jid other than `destination`, the chat
+    /// the reply is sent to (#217).
+    pub fn from_proto(
+        quote: Option<pb::QuoteContext>,
+        destination: Option<&pb::Jid>,
+    ) -> Result<Option<Self>, WamuxError> {
         let Some(quoted_key) = quote.as_ref().and_then(|quote| quote.quoted.as_ref()) else {
             return Ok(None);
         };
@@ -78,8 +86,24 @@ impl QuotedRef {
         Ok(Some(Self {
             id: MessageId::new(quoted_key.id.clone())?,
             participant,
+            remote_chat: remote_chat_of(quoted_key, destination)?,
         }))
     }
+}
+
+/// The quoted key's chat when it names a chat other than `destination`.
+/// Unset or empty is none; a malformed jid is the caller's mistake.
+fn remote_chat_of(
+    quoted_key: &pb::MessageKey,
+    destination: Option<&pb::Jid>,
+) -> Result<Option<Jid>, WamuxError> {
+    let Some(chat) = Jid::from_optional_wire(quoted_key.chat.clone())? else {
+        return Ok(None);
+    };
+    // The service validates `to` itself, so a missing or malformed destination
+    // is "no destination" here and the quoted chat stays.
+    let destination = Jid::from_optional_wire(destination.cloned()).ok().flatten();
+    Ok((destination.as_ref() != Some(&chat)).then_some(chat))
 }
 
 impl OutgoingContext {
@@ -88,6 +112,7 @@ impl OutgoingContext {
         mentions: Vec<pb::Mention>,
         quote: Option<pb::QuoteContext>,
         ephemeral_seconds: u32,
+        destination: Option<&pb::Jid>,
     ) -> Result<Self, WamuxError> {
         let mentions = mentions
             .iter()
@@ -95,7 +120,7 @@ impl OutgoingContext {
             .collect::<Result<Vec<Jid>, WamuxError>>()?;
         Ok(Self {
             mentions,
-            quote: QuotedRef::from_proto(quote)?,
+            quote: QuotedRef::from_proto(quote, destination)?,
             ephemeral_seconds,
         })
     }

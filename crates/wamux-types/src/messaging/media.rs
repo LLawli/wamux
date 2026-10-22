@@ -47,6 +47,7 @@ impl TryFrom<pb::SendMediaHeader> for OutgoingMedia {
                 header.mentions,
                 header.quote,
                 header.ephemeral_seconds,
+                header.to.as_ref(),
             )?,
             mime_type: header.mime_type,
             caption: header.caption,
