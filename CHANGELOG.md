@@ -12,6 +12,26 @@ has to follow them.
 
 ## [Unreleased]
 
+### Changed
+
+- **A poll sent to a channel follows WA Web, through the library** (issue #220,
+  see `docs/BREAKING-CHANGES-2026-10-22.md`). whatsapp-rust now publishes a
+  channel poll itself (`Newsletter::send_poll`, upstream #1778), so the core's
+  copy of the poll builder is gone. On the wire, for a `@newsletter` target only:
+  - `selectable_count` is 1 for a single answer or 0 for several, and above 1 is
+    `InvalidArgument`;
+  - `SendPollResult.message_secret` is empty, since a channel poll has no secret;
+  - a blank question or option is `InvalidArgument`.
+  The stanza now carries `contenttype="text"` on its poll `<meta>`, as WA Web's
+  does. Polls to chats and groups are unchanged.
+- **whatsapp-rust moves from `eab45737` to `3870ce5c`** (issue #220), 11
+  commits. Two behavior changes reach the edge:
+  - an app-state lock mutation without a `locked` value is no longer reported as
+    an unlock (`LockChatUpdate`), because WA Web rejects it too (upstream #1781);
+  - media transfers get a 10-second connection budget, split across the
+    resolved addresses, instead of the operating system's connect deadline. A
+    silent first address now falls back to the next one in time (upstream #1776).
+
 ### Fixed
 
 - **Events of one account arrive in `monotonic_seq` order, and a replay during

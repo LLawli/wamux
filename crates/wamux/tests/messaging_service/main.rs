@@ -18,6 +18,7 @@
 mod common;
 
 mod captured;
+mod channel_polls;
 mod chat_actions;
 mod error_messages;
 mod every_rpc;

@@ -27,7 +27,6 @@ pub mod media_transfer;
 pub mod messaging;
 pub mod mex_notification;
 pub mod missed_call;
-pub(crate) mod newsletter_poll;
 pub mod newsletters;
 pub(crate) mod outgoing_context;
 pub mod pairing_update;

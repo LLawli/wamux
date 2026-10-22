@@ -229,11 +229,17 @@ message SendPollRequest {
   Jid to = 2;
   string name = 3;
   repeated string options = 4;     // 2..=12 distinct names (lib validates)
-  uint32 selectable_count = 5;     // 1..=options.len() (lib validates)
+  // A chat: 1..=options.len(). A channel (`@newsletter`): 1 for a single
+  // answer or 0 for several, as WA Web publishes them; anything above 1 is
+  // InvalidArgument (#220). The library validates both, and the core relays
+  // the number as given. A channel also refuses a blank name or option.
+  uint32 selectable_count = 5;
 }
 
 // message_secret is the per-poll key the edge needs to decrypt incoming votes;
-// the core hands it back as a primitive and stores nothing (relay-pure).
+// the core hands it back as a primitive and stores nothing (relay-pure). A
+// channel poll is plaintext and its votes are not encrypted, so it carries no
+// secret and the field is empty (#220).
 message SendPollResult {
   MessageKey key = 1;
   bytes message_secret = 2;
