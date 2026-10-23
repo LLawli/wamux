@@ -26,6 +26,7 @@ mod harness;
 mod history;
 mod jid_fields;
 mod media;
+mod private_reply;
 mod receipts;
 mod refusals;
 mod replay;

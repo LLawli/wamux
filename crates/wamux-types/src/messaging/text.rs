@@ -47,6 +47,7 @@ impl TryFrom<pb::SendTextRequest> for OutgoingText {
                 request.mentions,
                 request.quote,
                 request.ephemeral_seconds,
+                request.to.as_ref(),
             )?,
             link_preview: request.link_preview.map(LinkPreview::from),
             text: request.text,

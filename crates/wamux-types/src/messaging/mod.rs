@@ -28,6 +28,8 @@ mod media_tests;
 #[cfg(test)]
 mod polls_tests;
 #[cfg(test)]
+mod quote_chat_tests;
+#[cfg(test)]
 mod rich_tests;
 #[cfg(test)]
 mod status_tests;

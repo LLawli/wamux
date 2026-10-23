@@ -31,15 +31,23 @@ pub(crate) fn outgoing_context(context: &OutgoingContext) -> MessageField<wa::Co
     MessageField::some(info)
 }
 
-/// Quote relay: the quoted stanza id and, in a group, its author. A DM quote
+/// Quote relay: the quoted stanza id, its author in a group, and the quoted
+/// message's chat when it differs from the reply's (a private reply to a group
+/// message, a reply to a status), which WhatsApp carries as `remote_jid`. A
+/// same-chat reply leaves it unset, as the official clients do. A DM quote
 /// has no participant, which relays as the ABSENT waproto field, never
 /// `Some("")`: the rule `wire_defaults` pins everywhere else. Which participant
 /// wins (the context's or the key's) was decided when the quote was parsed.
 fn copy_quote(info: &mut wa::ContextInfo, quote: &QuotedRef) {
     info.stanza_id = Some(quote.id.to_string());
     info.participant = quote.participant.as_ref().map(ToString::to_string);
+    info.remote_jid = quote.remote_chat.as_ref().map(ToString::to_string);
 }
 
 #[cfg(test)]
 #[path = "outgoing_context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "outgoing_context_remote_tests.rs"]
+mod remote_tests;

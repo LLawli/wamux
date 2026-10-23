@@ -53,7 +53,7 @@ impl TryFrom<pb::SendContactRequest> for ContactCard {
 
     fn try_from(request: pb::SendContactRequest) -> Result<Self, WamuxError> {
         Ok(Self {
-            quote: QuotedRef::from_proto(request.quote)?,
+            quote: QuotedRef::from_proto(request.quote, request.to.as_ref())?,
             display_name: request.display_name,
             vcard: request.vcard,
         })
@@ -68,7 +68,7 @@ impl TryFrom<pb::SendInteractiveReplyRequest> for InteractiveReply {
     type Error = WamuxError;
 
     fn try_from(request: pb::SendInteractiveReplyRequest) -> Result<Self, WamuxError> {
-        let quote = offer_quote(request.quote)?;
+        let quote = offer_quote(request.quote, request.to.as_ref())?;
         let choice = ReplyChoice::try_from(request.reply)?;
         Ok(Self {
             quote,
@@ -81,7 +81,10 @@ impl TryFrom<pb::SendInteractiveReplyRequest> for InteractiveReply {
 /// No quote, no quoted key and an empty id are all the same mistake: nothing
 /// names the offer. `QuotedRef` would call the last one something else, so the
 /// id is checked here first, under the reply's own message.
-fn offer_quote(quote: Option<pb::QuoteContext>) -> Result<QuotedRef, WamuxError> {
+fn offer_quote(
+    quote: Option<pb::QuoteContext>,
+    destination: Option<&pb::Jid>,
+) -> Result<QuotedRef, WamuxError> {
     let names_the_offer = quote
         .as_ref()
         .and_then(|quote| quote.quoted.as_ref())
@@ -94,7 +97,7 @@ fn offer_quote(quote: Option<pb::QuoteContext>) -> Result<QuotedRef, WamuxError>
     if !names_the_offer {
         return Err(missing());
     }
-    QuotedRef::from_proto(quote)?.ok_or_else(missing)
+    QuotedRef::from_proto(quote, destination)?.ok_or_else(missing)
 }
 
 impl TryFrom<Option<pb::send_interactive_reply_request::Reply>> for ReplyChoice {
