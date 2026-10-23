@@ -75,6 +75,13 @@ has to follow them.
   changes. Measured on a 100,000-event burst: no inversion, and 4 to 5 times
   faster than a task per event.
 
+### Security
+
+- **ctutils 0.4.5** (RUSTSEC-2026-0385, published 2026-10-23). Its mask
+  generation and `u128` comparisons were not constant-time. It reaches the
+  daemon through RustCrypto's `digest`, which the library's hashing uses.
+  Lockfile only; no code or wire change.
+
 ## [0.2.1] - 2026-10-21
 
 ### Added
