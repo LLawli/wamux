@@ -67,7 +67,7 @@ dev-dependencies are excluded because they never reach the binary.
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
 | ctr | 0.10.1 | MIT OR Apache-2.0 |
-| ctutils | 0.4.2 | Apache-2.0 OR MIT |
+| ctutils | 0.4.5 | Apache-2.0 OR MIT |
 | curve25519-dalek | 5.0.0 | BSD-3-Clause |
 | curve25519-dalek-derive | 0.1.1 | MIT/Apache-2.0 |
 | darling | 0.24.1 | MIT |
@@ -1314,7 +1314,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### LICENSE-APACHE: 8 crate(s)
 
-<details><summary>cmov 0.5.4, ctutils 0.4.2, flume 0.12.0, static_assertions 1.1.0, tinyvec 1.11.0, ureq 3.4.2, ...</summary>
+<details><summary>cmov 0.5.4, ctutils 0.4.5, flume 0.12.0, static_assertions 1.1.0, tinyvec 1.11.0, ureq 3.4.2, ...</summary>
 
 ```
 Apache License
@@ -9603,7 +9603,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### LICENSE-MIT: 1 crate(s)
 
-<details><summary>ctutils 0.4.2</summary>
+<details><summary>ctutils 0.4.5</summary>
 
 ```
 Copyright (c) 2025-2026 The RustCrypto Project Developers
