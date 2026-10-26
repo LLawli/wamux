@@ -41,6 +41,24 @@ has to follow them.
 
 ### Changed
 
+- **The release is one static musl binary** (issue #218). The tarball is now
+  `wamux-<version>-x86_64-unknown-linux-musl.tar.gz` (it was the gnu build), and
+  the GHCR image carries the very same file: the release job builds and checks
+  it is static, the image job compiles nothing and verifies the pushed image
+  holds that binary. Verify with the new tarball name.
+- **The image is built on `scratch`**, with no shell and no libc, so
+  `docker exec ... sh` no longer works. The default `Dockerfile` (used by
+  `docker compose`) builds for musl; `Dockerfile.glibc` keeps the Debian
+  runtime (`docker build -f Dockerfile.glibc .`). The image also creates
+  `/var/cache/wamux`, the default media spool.
+- **The daemon sets its own umask to `077`**, first thing, for every command, so
+  the image needs no shell wrapper. The socket's parent directory, when the
+  daemon creates it, stays `0750` explicitly. systemd's `UMask=0077` remains as
+  a second layer.
+- **mimalloc is the allocator of the musl build.** musl's own allocator costs
+  +33% CPU per message on Postgres and +70% on SQLite in steady-state message
+  load (100 accounts x 100 texts); with mimalloc the gap to glibc is within 2%
+  and 10%. The gnu build is unchanged.
 - **A malformed `quote.quoted.chat` on a send is `InvalidArgument`** (issue
   #217). The core used to ignore that field. Now it reads it, so a value that
   is not a jid is refused like a malformed participant. Unset or empty is still
