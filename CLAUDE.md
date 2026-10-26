@@ -166,6 +166,21 @@ Ten more minutes of grep would have caught each one.
   those checks pass. Right after `gh pr create`, `gh pr checks` can print "no checks reported":
   the runs are not registered yet, so wait until they appear, then `--watch`.
 
+### Capped builds on the maintainer's laptop
+Every heavy compile (`cargo build`/`test`/`clippy`, `scripts/ci.sh`, a loop `gate.sh`) runs
+through `.claude/loop/bin/lim` (local, gitignored with the rest of `.claude/`):
+`.claude/loop/bin/lim scripts/ci.sh --full`. It puts the command in its own systemd user scope
+(4 GiB `MemoryHigh`, 5 GiB `MemoryMax`, 2 GiB swap, 6 CPUs, `CARGO_BUILD_JOBS=4`, `nice`), so a
+memory spike hits the build alone. Without it, on 2026-10-26 `systemd-oomd` killed the whole
+terminal scope (664 processes, herdr and the other sessions with it) during a workspace build.
+- Override with `LIM_MEM` (`MemoryHigh`), `LIM_MEM_MAX_MB`, `LIM_CPU`, `LIM_JOBS`. Never run two
+  builds at the same time.
+- A subagent gets the same instruction in its prompt.
+- Container builds run in dockerd, outside the scope: `docker run --memory=4g --cpus=6`, and
+  for `docker build` a capped buildx builder
+  (`docker buildx create --name lim --driver docker-container --driver-opt memory=5g,memory-swap=7g,cpuset-cpus=0-5`,
+  then `docker buildx build --builder lim --load ...`).
+
 ## Code style
 - Functions: 4-20 lines. Split if longer.
 - Files: under 500 lines. One service or one cohesive unit per file.
