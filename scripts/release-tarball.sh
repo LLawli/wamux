@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the release tarball for the current host target.
+# Build the release tarball: one static musl binary.
 #
 # The archive is meant to be self-sufficient: the binary alone is not a
 # distribution. It carries the license texts (the MIT/Apache terms of ~356
@@ -12,7 +12,9 @@ cd "$(dirname "$0")/.."
 
 VERSION="${1:?usage: release-tarball.sh <version> [outdir]}"
 OUTDIR="${2:-dist}"
-TARGET="$(rustc -vV | awk '/^host:/ {print $2}')"
+# Not the host triple: the shipped artifact is the static musl binary (#218),
+# the same file the scratch image carries, whatever machine builds it.
+TARGET="x86_64-unknown-linux-musl"
 NAME="wamux-${VERSION}-${TARGET}"
 
 # The manifest is the source of truth for the version; a tag that disagrees
@@ -26,15 +28,18 @@ fi
 echo "building wamux $VERSION for $TARGET"
 # --locked: the release must build the dependency tree CI tested, so a stale
 # Cargo.lock fails here instead of shipping unreviewed versions (#78).
-cargo build --release --locked -p wamux --bin wamux
+cargo build --release --locked --target "$TARGET" -p wamux --bin wamux
 
 rm -rf "${OUTDIR:?}/${NAME}"
 mkdir -p "${OUTDIR}/${NAME}/contrib" "${OUTDIR}/${NAME}/docs"
 
-install -m 0755 target/release/wamux "${OUTDIR}/${NAME}/wamux"
-# Symbols are ~12MB of the binary and nothing consumes them in a release
-# artifact; debug info is already absent.
-strip "${OUTDIR}/${NAME}/wamux"
+# Stripped once, at a fixed path: the workflow checks this file is static,
+# uploads it, and the image job compares the image's binary to it. Symbols are
+# ~12MB and nothing consumes them in a release artifact.
+mkdir -p "${OUTDIR}/bin"
+install -m 0755 "target/${TARGET}/release/wamux" "${OUTDIR}/bin/wamux"
+strip "${OUTDIR}/bin/wamux"
+install -m 0755 "${OUTDIR}/bin/wamux" "${OUTDIR}/${NAME}/wamux"
 
 install -m 0644 README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE \
   THIRD-PARTY-LICENSES.md wamux.toml.example "${OUTDIR}/${NAME}/"

@@ -27,8 +27,8 @@ Two things decide that, always:
   directory beside the final path (`.wamux-bind-<pid>`), given its group and
   mode there, and renamed onto `socket_path`. The path only ever shows the
   final mode and group, whatever the process umask.
-- **The parent directory.** Missing levels are created `0750` (before umask); a
-  parent that already exists is not touched, so a systemd `RuntimeDirectory=`
+- **The parent directory.** Missing levels are created `0750` and chmodded to it,
+  whatever the daemon's umask; a parent that already exists is not touched, so a systemd `RuntimeDirectory=`
   keeps the mode you gave it.
 - **`socket_group`** is a group name (resolved through NSS: `/etc/group`,
   systemd-userdb, LDAP) or a number, taken as a gid. The daemon `chown`s the
@@ -195,8 +195,10 @@ a private key.
 
 - **Modes.** The database file is `0600`, its directory `0700`, and both are
   owned by the user the daemon runs as.
-- **What the daemon does.** It creates a new SQLite or `turso://` file `0600`
-  under any umask; the `-wal` and `-shm` files inherit that mode. At startup it
+- **What the daemon does.** It sets its own umask to `077` first thing, for every
+  command, so nothing it creates is group or world accessible (systemd's
+  `UMask=0077` is a second layer, not the only one). It creates a new SQLite or
+  `turso://` file `0600` under any umask; the `-wal` and `-shm` files inherit that mode. At startup it
   logs a warning for any existing file (or its `-wal`/`-shm`) readable by group
   or others. It does not change the mode and does not refuse to start; fix it
   with `chmod 600 <path>`.
@@ -364,14 +366,16 @@ stopped.
 ## Verifying a release
 
 Each release ships a tarball on the GitHub release page and an image at
-`ghcr.io/llawli/wamux:<tag>`. Both carry a build provenance attestation (#78):
+`ghcr.io/llawli/wamux:<tag>`. Both carry the same static musl binary (the
+release job checks it has no dynamic dependency, and the image job checks the
+pushed image holds the very same file). Both carry a build provenance attestation (#78):
 a signed statement, made by the release workflow itself, of which commit and
 which workflow run produced the artifact. The `.sha256` next to the tarball only
 proves the download matches the release page; the attestation proves where it
 came from. Check it with the GitHub CLI before you deploy:
 
 ```
-gh attestation verify wamux-<version>-x86_64-unknown-linux-gnu.tar.gz -R LLawli/wamux
+gh attestation verify wamux-<version>-x86_64-unknown-linux-musl.tar.gz -R LLawli/wamux
 gh attestation verify oci://ghcr.io/llawli/wamux:<tag> -R LLawli/wamux
 ```
 
@@ -416,6 +420,12 @@ group, `Environment=WAMUX_SOCKET_PATH=%t/wamux/wamux.sock`). A user unit cannot
 serve another user: its `%t` is private to its owner.
 
 ## Docker, consumer on the host
+
+The image is the static musl binary on `scratch`: no shell, no libc, no package
+manager, so `docker exec wamux sh` does not work (the daemon's socket and logs
+are the interface). For a Debian runtime with a shell, build the glibc variant:
+`docker build -f Dockerfile.glibc .` (point the `build:` of the compose file at
+it with `dockerfile: Dockerfile.glibc`).
 
 This is what `docker-compose.yml` sets up: Postgres behind the daemon, the
 socket bind-mounted out to `./run` on the host, and the media spool on the
@@ -517,8 +527,8 @@ before rebuilding (not `down -v`, which also deletes `wamux-pgdata`, the store).
 **`permission denied` connecting to the socket.** The connect itself is
 refused, so it is the owner and mode of the socket or of a directory above it.
 Check both: `ls -l ./run/wamux.sock` (or wherever `socket_path` points) and
-`ls -ld` on its parent. A parent the daemon created is `0750` less the umask
-(so `0700` under the shipped unit and the image), with the daemon's own group,
+`ls -ld` on its parent. A parent the daemon created is `0750` (the daemon
+chmods it, so its own umask does not narrow it), with the daemon's own group,
 not `socket_group`, so a consumer that shares only `socket_group` cannot reach
 the socket: create the directory yourself (or with `RuntimeDirectory=`) with
 that group. With Docker, if the socket's UID is not yours, give `./run` back to
