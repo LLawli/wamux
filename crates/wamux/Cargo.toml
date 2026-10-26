@@ -99,8 +99,9 @@ http.workspace = true
 # aead 0.6 (no 0.10 line: that one would add a second chacha20).
 chacha20poly1305 = "0.11"
 sha2 = "0.11"
-# #77: `socket_group` by name (NSS) and the chown that sets it.
-nix = { workspace = true, features = ["user"] }
+# #77: `socket_group` by name (NSS) and the chown that sets it. `fs` is the
+# daemon's own umask (#218).
+nix = { workspace = true, features = ["user", "fs"] }
 # #79: unnamed spool files (`tempfile_in`, O_TMPFILE) for media transfers.
 tempfile = "3"
 
@@ -119,6 +120,11 @@ tokio-websockets = { version = "0.13", optional = true, default-features = false
 # Noise XX primitives + the e2e cert-chain test fixture (server mirror).
 wacore-noise = { workspace = true, optional = true }
 wacore-binary = { workspace = true, optional = true }
+
+# The musl build only (#218): the gnu build keeps glibc's malloc, which is fast
+# already. See the `#[global_allocator]` in main.rs for the numbers.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

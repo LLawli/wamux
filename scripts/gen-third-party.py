@@ -21,7 +21,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-TARGET = "x86_64-unknown-linux-gnu"
+# The shipped artifact (#218): the tarball and the scratch image carry the musl
+# binary, whose graph differs from the gnu one (mimalloc enters, glibc-only
+# crates leave), so the notices must follow the musl graph.
+TARGET = "x86_64-unknown-linux-musl"
 LICENSE_FILENAMES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "LICENSE-MIT",
                      "LICENSE-APACHE", "LICENCE", "COPYING", "UNLICENSE",
                      "LICENSE-MIT.md", "LICENSE-APACHE.md")

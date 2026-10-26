@@ -13,14 +13,32 @@ Rules, checked line by line (no YAML parser, stdlib only):
   R1  a remote `uses:` is pinned by a 40-hex commit SHA, with `# v...` after it
       ("not pinned by a commit SHA" / "no version comment"); `./` is exempt.
   R2  no `runs-on:` ending in `-latest` ("runs-on a moving label").
-  R3  every Dockerfile `FROM` carries `@sha256:<64 hex>` ("FROM without a digest").
-  R4  `cargo build`/`cargo install` is `--locked` in the Dockerfile,
+  R3  every `FROM` of every root `Dockerfile*` carries `@sha256:<64 hex>`
+      ("FROM without a digest"); `scratch` is exempt.
+  R4  `cargo build`/`cargo install` is `--locked` in every root `Dockerfile*`,
       scripts/release-tarball.sh and the workflows, `\\` continuations joined
       ("cargo without --locked").
   R5  release.yml: job `image` has `needs: release` ("image does not need release").
   R6  release.yml: jobs `release` and `image` use actions/attest-build-provenance
       and grant `id-token: write` and `attestations: write`.
   R7  .github/dependabot.yml covers github-actions, docker and cargo.
+
+#218, one static musl binary shared by the tarball and the image:
+
+  R8  release.yml, job `image`: no `cargo` ("image job runs cargo"); takes the
+      release binary through `build-contexts` with `binary=` ("image job does
+      not take the release binary"); runs scripts/check-image-binary.sh ("image
+      job does not compare the image binary").
+  R9  release.yml, job `release`: runs scripts/check-static-binary.py ("release
+      job does not check the binary is static") and uses actions/upload-artifact
+      ("release job does not upload the binary").
+  R10 the default Dockerfile has a `binary` stage ("no binary stage") and
+      its last `FROM` is scratch ("final stage is not FROM scratch"), and the
+      final stage copies from no stage that runs `cargo build`: the release
+      replaces only `binary`, so such a COPY would compile in the image job
+      ("final stage depends on the compile stage").
+  R11 scripts/release-tarball.sh names x86_64-unknown-linux-musl and its cargo
+      build passes `--target` ("does not build x86_64-unknown-linux-musl").
 
 Floor: at least MIN_WORKFLOWS workflows and one `FROM`, so a layout change
 cannot make the check pass by scanning nothing ("scanned nothing").
@@ -34,6 +52,8 @@ REPO = Path(__file__).resolve().parent.parent
 MIN_WORKFLOWS = 2
 ECOSYSTEMS = ("github-actions", "docker", "cargo")
 PUBLISH_JOBS = ("release", "image")
+MUSL_TARGET = "x86_64-unknown-linux-musl"
+DEFAULT_DOCKERFILE = "Dockerfile"
 PERMISSIONS = ("id-token: write", "attestations: write")
 ATTEST_ACTION = "actions/attest-build-provenance"
 
@@ -43,6 +63,11 @@ VERSION_COMMENT = re.compile(r"^\s*#\s*v\d")
 RUNS_ON = re.compile(r"^\s*runs-on:\s*(\S+)")
 FROM_LINE = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)", re.IGNORECASE)
 DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
+STAGE_NAME = re.compile(r"^FROM\s+\S+\s+AS\s+(\S+)$", re.IGNORECASE)
+COPY_FROM = re.compile(r"^COPY\s+(?:--\S+\s+)*--from=(\S+)", re.IGNORECASE)
+CARGO_WORD = re.compile(r"\bcargo\b")
+BINARY_CONTEXT = re.compile(r"^\s*binary=\S")
+BINARY_STAGE = re.compile(r"^FROM\s+.*\s+AS\s+binary\s*$", re.IGNORECASE)
 CARGO_CALL = re.compile(r"\bcargo\s+(build|install)\b")
 JOB_HEADER = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 NEEDS = re.compile(r"^    needs:\s*(.*)$")
@@ -154,6 +179,10 @@ def check_release_jobs(where: str, lines: list[str]) -> list[Finding]:
     found: list[Finding] = []
     if "image" in blocks and not needs_release(blocks["image"][1]):
         found.append((where, blocks["image"][0], "image does not need release"))
+    if "image" in blocks:
+        found += check_image_job(where, *blocks["image"])
+    if "release" in blocks:
+        found += check_release_binary(where, *blocks["release"])
     for name in PUBLISH_JOBS:
         if name not in blocks:
             continue
@@ -165,6 +194,82 @@ def check_release_jobs(where: str, lines: list[str]) -> list[Finding]:
             if not re.search(rf"^\s+{re.escape(permission)}\s*$", text, re.MULTILINE):
                 found.append((where, number, f"job {name} lacks {permission}"))
     return found
+
+
+def run_text(block: list[str]) -> str:
+    """The job's lines without full-line comments, so prose cannot trip a rule."""
+    return "\n".join(line for line in block if not line.lstrip().startswith("#"))
+
+
+def check_image_job(where: str, number: int, block: list[str]) -> list[Finding]:
+    """R8 over the `image` job."""
+    text = run_text(block)
+    found: list[Finding] = []
+    if CARGO_WORD.search(text):
+        found.append((where, number, "image job runs cargo"))
+    if not any(BINARY_CONTEXT.match(line) for line in text.splitlines()) or "build-contexts" not in text:
+        found.append((where, number, "image job does not take the release binary"))
+    if "scripts/check-image-binary.sh" not in text:
+        found.append((where, number, "image job does not compare the image binary"))
+    return found
+
+
+def check_release_binary(where: str, number: int, block: list[str]) -> list[Finding]:
+    """R9 over the `release` job."""
+    text = run_text(block)
+    found: list[Finding] = []
+    if "scripts/check-static-binary.py" not in text:
+        found.append((where, number, "release job does not check the binary is static"))
+    if "actions/upload-artifact" not in text:
+        found.append((where, number, "release job does not upload the binary"))
+    return found
+
+
+def check_default_dockerfile(where: str, lines: list[str]) -> list[Finding]:
+    """R10 over the default Dockerfile."""
+    froms = [(n, m) for n, line in enumerate(lines, start=1) if (m := FROM_LINE.match(line))]
+    found: list[Finding] = []
+    if froms and froms[-1][1].group(1).lower() != "scratch":
+        found.append((where, froms[-1][0], "final stage is not FROM scratch"))
+    if froms and not any(BINARY_STAGE.match(line) for line in lines):
+        found.append((where, 1, "no `binary` stage"))
+    return found + check_final_stage_copies(where, lines)
+
+
+def compile_stages(lines: list[str]) -> set[str]:
+    """Names of the stages whose commands run `cargo build`."""
+    names: set[str] = set()
+    current = ""
+    for _, command in joined_commands(lines):
+        stage = STAGE_NAME.match(command.strip())
+        if stage:
+            current = stage.group(1)
+        elif current and re.search(r"\bcargo\s+build\b", command):
+            names.add(current)
+    return names
+
+
+def check_final_stage_copies(where: str, lines: list[str]) -> list[Finding]:
+    """The final stage copies from no compile stage."""
+    last = max((n for n, line in enumerate(lines, start=1) if FROM_LINE.match(line)), default=0)
+    compiling = compile_stages(lines)
+    found: list[Finding] = []
+    for number, line in enumerate(lines[last:], start=last + 1):
+        copy = COPY_FROM.match(line)
+        if copy and copy.group(1) in compiling:
+            found.append((where, number, "final stage depends on the compile stage"))
+    return found
+
+
+def check_musl_tarball(where: str, lines: list[str]) -> list[Finding]:
+    """R11 over scripts/release-tarball.sh. The triple may sit in a variable the
+    build line expands, so the file must name it and the build must pass `--target`."""
+    commands = [text for _, text in joined_commands(lines)]
+    names_musl = any(MUSL_TARGET in text for text in commands)
+    targeted = any(CARGO_CALL.search(text) and "--target" in text for text in commands)
+    if names_musl and targeted:
+        return []
+    return [(where, 1, f"does not build {MUSL_TARGET}")]
 
 
 def check_dependabot(root: Path) -> list[Finding]:
@@ -181,9 +286,9 @@ def scan(root: Path) -> list[Finding]:
     """Every violation under `root`, plus the floor."""
     findings: list[Finding] = []
     workflows = workflow_files(root)
-    dockerfile = root / "Dockerfile"
-    docker_lines = read_lines(dockerfile)
-    has_from = any(FROM_LINE.match(line) for line in docker_lines)
+    dockerfiles = sorted(root.glob("Dockerfile*"))
+    default_lines = read_lines(root / DEFAULT_DOCKERFILE)
+    has_from = any(FROM_LINE.match(line) for line in default_lines)
     if len(workflows) < MIN_WORKFLOWS or not has_from:
         findings.append((".", 0, f"scanned nothing useful: {len(workflows)} workflows, FROM found: {has_from}"))
     for path in workflows:
@@ -192,10 +297,16 @@ def scan(root: Path) -> list[Finding]:
         findings += check_locked(rel(root, path), lines)
         if path.name == "release.yml":
             findings += check_release_jobs(rel(root, path), lines)
-    findings += check_from_digests("Dockerfile", docker_lines)
-    findings += check_locked("Dockerfile", docker_lines)
+    for path in (p for p in dockerfiles if p.is_file()):
+        lines = read_lines(path)
+        findings += check_from_digests(path.name, lines)
+        findings += check_locked(path.name, lines)
+    if default_lines:
+        findings += check_default_dockerfile(DEFAULT_DOCKERFILE, default_lines)
     tarball = "scripts/release-tarball.sh"
-    findings += check_locked(tarball, read_lines(root / tarball))
+    tarball_lines = read_lines(root / tarball)
+    findings += check_locked(tarball, tarball_lines)
+    findings += check_musl_tarball(tarball, tarball_lines)
     return findings + check_dependabot(root)
 
 
@@ -209,7 +320,7 @@ def main(argv: list[str]) -> int:
     if findings:
         print(f"release pins FAILED: {len(findings)} violations")
         return 1
-    print("release pins ok: actions by SHA, FROM by digest, cargo --locked, image gated, provenance attested")
+    print("release pins ok: actions by SHA, FROM by digest, cargo --locked, image gated, one static musl binary, provenance attested")
     return 0
 
 

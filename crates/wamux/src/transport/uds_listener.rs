@@ -58,7 +58,8 @@ enum Probed {
 
 /// Mode of the private bind directory: it is only a staging area (#77).
 const PRIVATE_DIR_MODE: u32 = 0o700;
-/// Mode of any parent level the daemon creates; an existing one is not touched.
+/// Mode of any parent level the daemon creates (set by chmod, so the daemon's
+/// umask does not narrow it); an existing one is not touched.
 const CREATED_PARENT_MODE: u32 = 0o750;
 
 /// Bind `path` with `mode` and, when set, `group` (a name, or a number taken as
@@ -153,13 +154,43 @@ fn parent_of(path: &str) -> PathBuf {
     }
 }
 
-/// Create the missing levels as 0750; a parent that exists is not touched.
+/// Create the missing levels and leave each one 0750, whatever the umask; a
+/// parent that exists is not touched.
+///
+/// `DirBuilder::mode` is reduced by the umask, and the daemon runs under 077:
+/// that would make a created level 0700, and the `socket_group` consumer could
+/// not traverse it to reach the socket. So the levels are chmodded explicitly.
 fn create_parent(parent: &Path, path: &str) -> Result<(), BindError> {
+    for level in missing_levels(parent) {
+        match create_level(&level) {
+            Ok(()) => {}
+            // Made by someone else since the check: like any existing parent,
+            // it keeps the mode its creator gave it.
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(source) => return Err(io_error("create parent of", path, source)),
+        }
+    }
+    Ok(())
+}
+
+/// One new level at `CREATED_PARENT_MODE`: created with it, then chmodded
+/// because the creation mode is reduced by the umask.
+fn create_level(level: &Path) -> io::Result<()> {
     std::fs::DirBuilder::new()
-        .recursive(true)
         .mode(CREATED_PARENT_MODE)
-        .create(parent)
-        .map_err(|source| io_error("create parent of", path, source))
+        .create(level)?;
+    std::fs::set_permissions(level, std::fs::Permissions::from_mode(CREATED_PARENT_MODE))
+}
+
+/// The levels of `parent` that do not exist yet, outermost first.
+fn missing_levels(parent: &Path) -> Vec<PathBuf> {
+    let mut levels: Vec<PathBuf> = parent
+        .ancestors()
+        .take_while(|level| !level.as_os_str().is_empty() && !level.exists())
+        .map(Path::to_path_buf)
+        .collect();
+    levels.reverse();
+    levels
 }
 
 /// Bind in `staging`, finish group and mode there, then rename onto `path`.

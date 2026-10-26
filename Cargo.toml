@@ -39,9 +39,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 bytes = "1"
 # #77: resolves `socket_group` by name through NSS (`Group::from_name`), which
-# std does not offer. No default features: only `user` (and `fs` for the tests'
-# umask) is compiled.
+# std does not offer. No default features: only `user` and `fs` (the daemon's own
+# umask, and the tests') are compiled.
 nix = { version = "0.31", default-features = false }
+# The global allocator of the musl build (#218): musl's own malloc measured
+# slower than glibc's in steady-state message load; the numbers are in main.rs.
+mimalloc = "0.1"
 # Not the `sqlite` umbrella: it would also compile `load-extension` (native
 # extension loading at runtime) and `deserialize`, which nothing here uses.
 # `sqlite-unlock-notify` keeps waiting on a shared-cache lock for a

@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
+use nix::sys::stat::{Mode, umask};
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
@@ -15,6 +16,25 @@ use wamux::config::Config;
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage::{StoreKey, store_key::key_id_hex};
 use wamux::{server, spool, storage, transport};
+
+// musl's malloc is the slow part of the static build: measured in steady-state
+// message load (100 accounts x 100 texts), it costs +33% CPU per message on
+// Postgres and +70% on SQLite against glibc; mimalloc brings that within 2% and
+// 10%. The gnu build keeps glibc's allocator (#218).
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// Umask applied to everything the daemon creates (#75): the store holds every
+/// account's keys, so a file or directory made without an explicit mode must be
+/// owner-only. Set by the process itself so no entrypoint shell is needed (a
+/// scratch image has none) and a run outside systemd gets it too.
+const DAEMON_UMASK: u32 = 0o077;
+
+/// Applied first in `main`, before any file or directory is created.
+fn restrict_umask() {
+    umask(Mode::from_bits_truncate(DAEMON_UMASK));
+}
 
 /// The store key named by `store_key_file`, if any. Logs the key id (a hash
 /// prefix, not the key) so an operator can tell which key is in use.
@@ -33,6 +53,7 @@ fn load_store_key(config: &Config) -> anyhow::Result<Option<StoreKey>> {
 /// success 0.
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
+    restrict_umask();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match cli::parse(&args) {
         Err(usage_error) => {

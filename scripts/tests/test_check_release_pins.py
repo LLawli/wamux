@@ -8,6 +8,13 @@ tarball script and the workflows is `--locked`; the image job needs the
 release job; both publishing jobs attest provenance with `id-token: write`
 and `attestations: write`; Dependabot covers github-actions, docker and cargo.
 
+#218 adds: every `Dockerfile*` is held to the digest and `--locked` rules; the
+tarball script builds for x86_64-unknown-linux-musl; the release job checks
+the binary is static and uploads it; the image job compiles nothing, takes
+that binary through the `binary` build context and checks the pushed image
+carries the same bytes; the default Dockerfile has a `binary` stage and ends
+`FROM scratch`.
+
 Run: python3 -m unittest discover -s scripts/tests -v
 Needs nothing but the checkout; no cargo, no network.
 """
@@ -48,6 +55,11 @@ jobs:
     steps:
       - uses: actions/checkout@{SHA} # v7.0.1
       - run: scripts/release-tarball.sh 1.0.0
+      - run: scripts/check-static-binary.py dist/bin/wamux
+      - uses: actions/upload-artifact@{SHA} # v5.0.0
+        with:
+          name: wamux-binary
+          path: dist/bin/wamux
       - uses: actions/attest-build-provenance@{SHA} # v4.2.2
         with:
           subject-path: dist/*.tar.gz
@@ -60,8 +72,16 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/download-artifact@{SHA} # v6.0.0
+        with:
+          name: wamux-binary
+          path: dist/bin
       - uses: docker/build-push-action@{SHA} # v7.4.0
         id: push
+        with:
+          build-contexts: |
+            binary=dist/bin
+      - run: scripts/check-image-binary.sh "ghcr.io/example/wamux@${{{{ steps.push.outputs.digest }}}}" dist/bin/wamux
       - uses: actions/attest-build-provenance@{SHA} # v4.2.2
         with:
           subject-name: ghcr.io/example/wamux
@@ -70,18 +90,32 @@ jobs:
 """
 
 DOCKERFILE = f"""# syntax=docker/dockerfile:1
-FROM rust:bookworm@{DIGEST} AS build
+FROM rust:trixie@{DIGEST} AS build
+RUN --mount=type=cache,target=/usr/local/cargo/registry \\
+    cargo build --release --locked -p wamux --bin wamux \\
+      --target x86_64-unknown-linux-musl && \\
+    cp target/x86_64-unknown-linux-musl/release/wamux /wamux
+
+FROM scratch AS binary
+COPY --from=build /wamux /wamux
+
+FROM scratch
+COPY --from=binary /wamux /usr/local/bin/wamux
+"""
+
+GLIBC_DOCKERFILE = f"""# syntax=docker/dockerfile:1
+FROM rust:trixie@{DIGEST} AS build
 RUN --mount=type=cache,target=/usr/local/cargo/registry \\
     cargo build --release --locked -p wamux --bin wamux && \\
     cp target/release/wamux /usr/local/bin/wamux
 
-FROM debian:bookworm-slim@{DIGEST} AS runtime
+FROM debian:trixie-slim@{DIGEST} AS runtime
 COPY --from=build /usr/local/bin/wamux /usr/local/bin/wamux
 """
 
 TARBALL = """#!/usr/bin/env bash
 set -euo pipefail
-cargo build --release --locked -p wamux --bin wamux
+cargo build --release --locked --target x86_64-unknown-linux-musl -p wamux --bin wamux
 """
 
 DEPENDABOT = """version: 2
@@ -105,6 +139,7 @@ FILES = {
     ".github/workflows/release.yml": RELEASE,
     ".github/dependabot.yml": DEPENDABOT,
     "Dockerfile": DOCKERFILE,
+    "Dockerfile.glibc": GLIBC_DOCKERFILE,
     "scripts/release-tarball.sh": TARBALL,
 }
 
@@ -205,8 +240,8 @@ class CheckReleasePins(unittest.TestCase):
     # --- R3: base images by digest ---
 
     def test_a_from_without_digest_is_reported(self):
-        body = DOCKERFILE.replace(f"debian:bookworm-slim@{DIGEST}", "debian:bookworm-slim")
-        line = line_of(body, "FROM debian:bookworm-slim")
+        body = DOCKERFILE.replace(f"rust:trixie@{DIGEST}", "rust:trixie")
+        line = line_of(body, "FROM rust:trixie")
         self.assert_reported(
             self.check_tree({"Dockerfile": body}),
             f"Dockerfile:{line}:",
@@ -292,6 +327,123 @@ class CheckReleasePins(unittest.TestCase):
         self.assert_reported(
             self.check_tree(omit=(".github/dependabot.yml",)),
             "no dependabot config",
+        )
+
+    # --- #218: one static musl binary, in the tarball and the image ---
+
+    def test_glibc_dockerfile_from_without_digest_is_flagged(self):
+        body = GLIBC_DOCKERFILE.replace(f"debian:trixie-slim@{DIGEST}", "debian:trixie-slim")
+        line = line_of(body, "FROM debian:trixie-slim")
+        self.assert_reported(
+            self.check_tree({"Dockerfile.glibc": body}),
+            f"Dockerfile.glibc:{line}:",
+            "FROM without a digest",
+        )
+
+    def test_glibc_dockerfile_cargo_without_locked_is_flagged(self):
+        body = GLIBC_DOCKERFILE.replace("--release --locked", "--release")
+        self.assert_reported(
+            self.check_tree({"Dockerfile.glibc": body}),
+            "Dockerfile.glibc:",
+            "cargo without --locked",
+        )
+
+    def test_image_job_running_cargo_is_flagged(self):
+        image_at = RELEASE.index("  image:")
+        image = RELEASE[image_at:].replace(
+            "      - uses: docker/build-push-action",
+            "      - run: cargo build --release --locked -p wamux\n"
+            "      - uses: docker/build-push-action",
+            1,
+        )
+        body = RELEASE[:image_at] + image
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            ".github/workflows/release.yml:",
+            "image job runs cargo",
+        )
+
+    def test_image_job_without_binary_build_context_is_flagged(self):
+        context = "          build-contexts: |\n            binary=dist/bin\n"
+        self.assertIn(context, RELEASE)
+        body = RELEASE.replace(context, "")
+        line = line_of(body, "  image:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "image job does not take the release binary",
+        )
+
+    def test_image_job_without_image_binary_check_is_flagged(self):
+        step = next(l for l in RELEASE.splitlines() if "check-image-binary.sh" in l)
+        body = RELEASE.replace(step + "\n", "")
+        line = line_of(body, "  image:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "image job does not compare the image binary",
+        )
+
+    def test_release_job_without_static_check_is_flagged(self):
+        body = RELEASE.replace("      - run: scripts/check-static-binary.py dist/bin/wamux\n", "")
+        line = line_of(body, "  release:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "release job does not check the binary is static",
+        )
+
+    def test_release_job_without_artifact_upload_is_flagged(self):
+        upload = (
+            f"      - uses: actions/upload-artifact@{SHA} # v5.0.0\n"
+            "        with:\n"
+            "          name: wamux-binary\n"
+            "          path: dist/bin/wamux\n"
+        )
+        self.assertIn(upload, RELEASE)
+        body = RELEASE.replace(upload, "")
+        line = line_of(body, "  release:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "release job does not upload the binary",
+        )
+
+    def test_default_dockerfile_not_ending_in_scratch_is_flagged(self):
+        last = DOCKERFILE.rindex("FROM scratch")
+        body = DOCKERFILE[:last] + f"FROM debian:trixie-slim@{DIGEST}" + DOCKERFILE[last + len("FROM scratch"):]
+        self.assert_reported(
+            self.check_tree({"Dockerfile": body}),
+            "Dockerfile:",
+            "final stage is not FROM scratch",
+        )
+
+    def test_default_dockerfile_without_binary_stage_is_flagged(self):
+        body = DOCKERFILE.replace("FROM scratch AS binary", "FROM scratch AS bin")
+        self.assert_reported(
+            self.check_tree({"Dockerfile": body}),
+            "Dockerfile:",
+            "no `binary` stage",
+        )
+
+    def test_final_stage_copying_from_the_compile_stage_is_flagged(self):
+        # The release replaces only the `binary` stage: a final stage that also
+        # copies from the stage running `cargo build` makes BuildKit compile
+        # anyway, and the image job is back to building its own binary.
+        body = DOCKERFILE + "COPY --from=build /stage/run/wamux /run/wamux\n"
+        line = line_of(body, "COPY --from=build /stage")
+        self.assert_reported(
+            self.check_tree({"Dockerfile": body}),
+            f"Dockerfile:{line}:",
+            "final stage depends on the compile stage",
+        )
+
+    def test_tarball_script_not_building_musl_is_flagged(self):
+        body = TARBALL.replace("--target x86_64-unknown-linux-musl ", "")
+        self.assert_reported(
+            self.check_tree({"scripts/release-tarball.sh": body}),
+            "scripts/release-tarball.sh:",
+            "does not build x86_64-unknown-linux-musl",
         )
 
 

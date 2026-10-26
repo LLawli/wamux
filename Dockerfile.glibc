@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+#
+# The glibc variant of the image: the gnu build on Debian slim, for anyone who
+# wants a shell in the container (`docker exec ... sh`) or a glibc runtime. The
+# default Dockerfile ships the static musl binary on scratch; build this one
+# with `docker build -f Dockerfile.glibc .`.
+
+# Base images by digest and the build --locked (#78).
+FROM rust:trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS build
+WORKDIR /src
+
+# The pinned nightly (the one upstream whatsapp-rust builds on, #30) is
+# installed from rust-toolchain.toml alone, so this layer only rebuilds when
+# the pin changes - not on every source edit.
+COPY rust-toolchain.toml ./
+RUN rustup show
+
+# The workspace resolver needs every member's manifest on disk, so the whole
+# crates/ tree is copied even though only wamux (and wamux-proto) get built.
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+# -p wamux --bin wamux on purpose: the repo carries a dozen development binaries
+# that have no business in a production image. protoc is vendored by
+# wamux-proto's build.rs, so nothing to install.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked -p wamux --bin wamux && \
+    cp target/release/wamux /usr/local/bin/wamux
+
+FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS runtime
+
+# Must match the UID that will consume the socket on the host. The socket is
+# 0660, so a mismatch here is the difference between a working setup and a
+# permission denied that looks like the daemon is down. Override at build time:
+#   docker build -f Dockerfile.glibc --build-arg WAMUX_UID=$(id -u) --build-arg WAMUX_GID=$(id -g) .
+ARG WAMUX_UID=10001
+ARG WAMUX_GID=10001
+
+# No ca-certificates: TLS uses the roots compiled into the binary (webpki-roots).
+RUN groupadd --gid "${WAMUX_GID}" wamux \
+ && useradd --uid "${WAMUX_UID}" --gid "${WAMUX_GID}" --no-create-home \
+            --shell /usr/sbin/nologin wamux \
+ && mkdir -p /run/wamux /var/lib/wamux /var/cache/wamux \
+ && chown wamux:wamux /run/wamux /var/lib/wamux /var/cache/wamux
+
+COPY --from=build /usr/local/bin/wamux /usr/local/bin/wamux
+
+# Shipping a binary means shipping the notices of every crate linked into it -
+# the MIT and Apache-2.0 terms of the dependencies require it.
+COPY THIRD-PARTY-LICENSES.md LICENSE-MIT LICENSE-APACHE /usr/share/doc/wamux/
+
+USER wamux
+ENV WAMUX_SOCKET_PATH=/run/wamux/wamux.sock
+# The daemon sets its own umask (077), so no shell wrapper is needed, and being
+# the entrypoint it is PID 1 and receives SIGTERM.
+ENTRYPOINT ["/usr/local/bin/wamux"]

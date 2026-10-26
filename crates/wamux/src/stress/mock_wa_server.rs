@@ -211,6 +211,17 @@ impl MockWaServer {
             .unwrap_or_default()
     }
 
+    /// How many `<message>` stanzas clients have sent so far, without cloning
+    /// them: a load test polls this, and a clone per poll would show up in the
+    /// CPU it measures (#218).
+    pub fn client_message_count(&self) -> usize {
+        // Poisoning needs a panic while the lock is held; nothing here panics.
+        self.client_messages
+            .lock()
+            .map(|messages| messages.len())
+            .unwrap_or_default()
+    }
+
     /// `ws://` URL a client transport should target.
     pub fn ws_url(&self) -> String {
         format!("ws://{}", self.addr)

@@ -26,6 +26,16 @@ jobs:
         with:
           cache: true
 
+      # The release is one static musl binary (#218): the tarball and the scratch
+      # image carry the same file. musl-gcc compiles the bundled C code (SQLite,
+      # mimalloc); the target is added by hand because the toolchain comes from
+      # rust-toolchain.toml.
+      - name: musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
       # A tag points at a commit CI already tested, but a tag can also be moved
       # or cut from an untested branch. This is cheap insurance against
       # publishing an artifact that does not build clean.
@@ -37,6 +47,18 @@ jobs:
       # shipping a binary whose --version lies.
       - name: build tarball
         run: scripts/release-tarball.sh "${GITHUB_REF_NAME#v}"
+
+      # A scratch image has no loader, so a binary that picked up a dynamic
+      # dependency would build fine and fail only at `docker run`.
+      - name: binary is static
+        run: scripts/check-static-binary.py dist/bin/wamux
+
+      # The image job takes this exact file instead of compiling its own.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wamux-binary
+          path: dist/bin/wamux
+          if-no-files-found: error
 
       # Fails when the CHANGELOG has no section for this version, rather than
       # publishing a release with empty notes.
@@ -51,7 +73,7 @@ jobs:
           tarball=$(cd dist && echo *.tar.gz)
           {
             printf '\n## Verify\n\n'
-            printf 'Both artifacts carry a build provenance attestation. The container image is published by a job that starts only after this release succeeds, so it can appear a few minutes later.\n\n'
+            printf 'The tarball is a static musl binary. Both artifacts carry a build provenance attestation. The container image is published by a job that starts only after this release succeeds, so it can appear a few minutes later.\n\n'
             printf '```\n'
             printf 'gh attestation verify %s -R %s\n' "$tarball" "$GITHUB_REPOSITORY"
             printf 'gh attestation verify oci://ghcr.io/%s:%s -R %s\n' "${GITHUB_REPOSITORY,,}" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY"
@@ -94,6 +116,16 @@ jobs:
         id: name
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+      # The binary the release job built and checked. Artifacts lose the exec
+      # bit, and the image needs it.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wamux-binary
+          path: dist/bin
+
+      - name: restore exec bit
+        run: chmod +x dist/bin/wamux
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -106,6 +138,10 @@ jobs:
         id: push
         with:
           context: .
+          # Replaces the Dockerfile's `binary` stage with the release binary, so
+          # the compile stage never runs and nothing is built in this job.
+          build-contexts: |
+            binary=dist/bin
           push: true
           tags: |
             ${{ steps.name.outputs.image }}:${{ github.ref_name }}
@@ -116,8 +152,11 @@ jobs:
           build-args: |
             WAMUX_UID=10001
             WAMUX_GID=10001
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+
+      # The pushed image must hold the bytes the release job tested and
+      # attested, not whatever the build context happened to contain.
+      - name: image carries the release binary
+        run: scripts/check-image-binary.sh "${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}" dist/bin/wamux
 
       # Provenance for the pushed digest, not a tag (#78): a tag can move, the
       # digest is what a consumer pulls and `gh attestation verify` checks.
