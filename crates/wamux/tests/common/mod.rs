@@ -402,7 +402,7 @@ pub async fn logged_in_companion(
 }
 
 #[cfg(feature = "stress")]
-fn zeroed_adv_identity() -> whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity {
+pub fn zeroed_adv_identity() -> whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity {
     let mut proto = whatsapp_rust::waproto::whatsapp::ADVSignedDeviceIdentity::default();
     proto.details = Some(vec![0; 32]);
     proto.account_signature_key = Some(vec![0; 32]);
