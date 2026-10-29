@@ -35,6 +35,15 @@ has to follow them.
   created there (the system volume is read-only). Linux keeps `/run/wamux.sock`.
   Set `socket_path` or `WAMUX_SOCKET_PATH` to override either.
 
+### Fixed
+
+- **`THIRD-PARTY-LICENSES.md` is the same on Linux and macOS** (issue #231).
+  The generator now reads license file names without regard to case, so a
+  case-insensitive filesystem no longer finds `LICENSE-Apache` (simdutf8) that
+  Linux missed. The file now includes simdutf8's Apache text.
+- **pulldown-cmark 0.13.5** for RUSTSEC-2026-0414. Build time only: prost-build
+  renders the proto doc comments with it, and it does not reach the binary.
+
 ## [0.2.2] - 2026-10-26
 
 ### Added
