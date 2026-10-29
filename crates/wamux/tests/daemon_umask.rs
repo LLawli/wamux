@@ -4,6 +4,8 @@
 //! real binary under a umask of the test's choosing (`unsafe_code` is
 //! forbidden, so a test cannot set its own) and reads the result from `/proc`
 //! and the filesystem. No account, no WhatsApp, no network.
+//! Linux only: the running daemon's umask is read from `/proc` (#231).
+#![cfg(target_os = "linux")]
 
 use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt;

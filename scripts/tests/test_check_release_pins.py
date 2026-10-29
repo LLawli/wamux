@@ -15,6 +15,13 @@ that binary through the `binary` build context and checks the pushed image
 carries the same bytes; the default Dockerfile has a `binary` stage and ends
 `FROM scratch`.
 
+#231 adds a universal macOS PKG: the release splits into `linux` and `macos`
+builds that run in parallel and a `release` job that publishes only after both;
+the `macos` job runs the gates, builds the PKG with scripts/release-pkg.sh (both
+Apple targets, `--locked`), checks it with scripts/check-macos-pkg.sh and
+attests it; CI runs the macOS gates and the PKG build on every PR. The checks
+the `release` job did on the musl binary move to the `linux` job.
+
 Run: python3 -m unittest discover -s scripts/tests -v
 Needs nothing but the checkout; no cargo, no network.
 """
@@ -38,6 +45,17 @@ jobs:
       - uses: actions/checkout@{SHA} # v7.0.1
       - uses: ./.github/actions/local
       - run: scripts/ci.sh
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@{SHA} # v7.0.1
+      - run: scripts/ci.sh --no-postgres
+  macos-pkg:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@{SHA} # v7.0.1
+      - run: scripts/release-pkg.sh 1.0.0
+      - run: scripts/check-macos-pkg.sh dist/wamux-1.0.0-macos-universal.pkg
 """
 
 RELEASE = f"""name: Release
@@ -46,10 +64,10 @@ on:
     tags: ["v*.*.*"]
 permissions: {{}}
 jobs:
-  release:
+  linux:
     runs-on: ubuntu-26.04
     permissions:
-      contents: write
+      contents: read
       id-token: write
       attestations: write
     steps:
@@ -63,6 +81,35 @@ jobs:
       - uses: actions/attest-build-provenance@{SHA} # v4.2.2
         with:
           subject-path: dist/*.tar.gz
+  macos:
+    runs-on: macos-15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@{SHA} # v7.0.1
+      - run: scripts/ci.sh --no-postgres
+      - run: scripts/release-pkg.sh 1.0.0
+      - run: scripts/check-macos-pkg.sh dist/wamux-1.0.0-macos-universal.pkg
+      - uses: actions/attest-build-provenance@{SHA} # v4.2.2
+        with:
+          subject-path: dist/*.pkg
+      - uses: actions/upload-artifact@{SHA} # v5.0.0
+        with:
+          name: wamux-pkg
+          path: dist/*.pkg*
+  release:
+    needs: [linux, macos]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@{SHA} # v6.0.0
+        with:
+          path: dist
+          merge-multiple: true
+      - run: gh release create v1.0.0 dist/*.tar.gz dist/*.pkg dist/*.sha256
   image:
     needs: release
     runs-on: ubuntu-26.04
@@ -118,6 +165,13 @@ set -euo pipefail
 cargo build --release --locked --target x86_64-unknown-linux-musl -p wamux --bin wamux
 """
 
+PKG = """#!/usr/bin/env bash
+set -euo pipefail
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  cargo build --release --locked --target "$target" -p wamux --bin wamux
+done
+"""
+
 DEPENDABOT = """version: 2
 updates:
   - package-ecosystem: github-actions
@@ -141,6 +195,7 @@ FILES = {
     "Dockerfile": DOCKERFILE,
     "Dockerfile.glibc": GLIBC_DOCKERFILE,
     "scripts/release-tarball.sh": TARBALL,
+    "scripts/release-pkg.sh": PKG,
 }
 
 
@@ -289,7 +344,7 @@ class CheckReleasePins(unittest.TestCase):
         )
         self.assertIn(tarball_attest, RELEASE)
         body = RELEASE.replace(tarball_attest, "")
-        line = line_of(body, "  release:")
+        line = line_of(body, "  linux:")
         self.assert_reported(
             self.check_tree({".github/workflows/release.yml": body}),
             f".github/workflows/release.yml:{line}:",
@@ -384,16 +439,16 @@ class CheckReleasePins(unittest.TestCase):
             "image job does not compare the image binary",
         )
 
-    def test_release_job_without_static_check_is_flagged(self):
+    def test_linux_job_without_static_check_is_flagged(self):
         body = RELEASE.replace("      - run: scripts/check-static-binary.py dist/bin/wamux\n", "")
-        line = line_of(body, "  release:")
+        line = line_of(body, "  linux:")
         self.assert_reported(
             self.check_tree({".github/workflows/release.yml": body}),
             f".github/workflows/release.yml:{line}:",
-            "release job does not check the binary is static",
+            "linux job does not check the binary is static",
         )
 
-    def test_release_job_without_artifact_upload_is_flagged(self):
+    def test_linux_job_without_artifact_upload_is_flagged(self):
         upload = (
             f"      - uses: actions/upload-artifact@{SHA} # v5.0.0\n"
             "        with:\n"
@@ -402,11 +457,11 @@ class CheckReleasePins(unittest.TestCase):
         )
         self.assertIn(upload, RELEASE)
         body = RELEASE.replace(upload, "")
-        line = line_of(body, "  release:")
+        line = line_of(body, "  linux:")
         self.assert_reported(
             self.check_tree({".github/workflows/release.yml": body}),
             f".github/workflows/release.yml:{line}:",
-            "release job does not upload the binary",
+            "linux job does not upload the binary",
         )
 
     def test_default_dockerfile_not_ending_in_scratch_is_flagged(self):
@@ -444,6 +499,111 @@ class CheckReleasePins(unittest.TestCase):
             self.check_tree({"scripts/release-tarball.sh": body}),
             "scripts/release-tarball.sh:",
             "does not build x86_64-unknown-linux-musl",
+        )
+
+    # --- #231: a universal macOS PKG, built and checked before it is published ---
+
+    def test_release_job_not_needing_linux_is_flagged(self):
+        body = RELEASE.replace("    needs: [linux, macos]\n", "    needs: [macos]\n")
+        line = line_of(body, "  release:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "release does not need linux",
+        )
+
+    def test_release_job_not_needing_macos_is_flagged(self):
+        body = RELEASE.replace("    needs: [linux, macos]\n", "    needs: linux\n")
+        line = line_of(body, "  release:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "release does not need macos",
+        )
+
+    def macos_job_without(self, needle):
+        """RELEASE with the `macos` job's step holding `needle` removed."""
+        macos_at = RELEASE.index("  macos:")
+        release_at = RELEASE.index("  release:")
+        job = RELEASE[macos_at:release_at]
+        step = next(l for l in job.splitlines() if needle in l)
+        return RELEASE[:macos_at] + job.replace(step + "\n", "", 1) + RELEASE[release_at:]
+
+    def test_macos_job_without_gates_is_flagged(self):
+        body = self.macos_job_without("scripts/ci.sh --no-postgres")
+        line = line_of(body, "  macos:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "macos job does not run the gates",
+        )
+
+    def test_macos_job_not_building_the_pkg_is_flagged(self):
+        body = self.macos_job_without("scripts/release-pkg.sh")
+        line = line_of(body, "  macos:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "macos job does not build the pkg",
+        )
+
+    def test_macos_job_not_checking_the_pkg_is_flagged(self):
+        body = self.macos_job_without("scripts/check-macos-pkg.sh")
+        line = line_of(body, "  macos:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "macos job does not check the pkg",
+        )
+
+    def test_macos_job_without_attestation_is_flagged(self):
+        pkg_attest = (
+            f"      - uses: actions/attest-build-provenance@{SHA} # v4.2.2\n"
+            "        with:\n"
+            "          subject-path: dist/*.pkg\n"
+        )
+        self.assertIn(pkg_attest, RELEASE)
+        body = RELEASE.replace(pkg_attest, "")
+        line = line_of(body, "  macos:")
+        self.assert_reported(
+            self.check_tree({".github/workflows/release.yml": body}),
+            f".github/workflows/release.yml:{line}:",
+            "no provenance attestation",
+        )
+
+    def test_pkg_script_without_locked_is_flagged(self):
+        body = PKG.replace(" --locked", "")
+        line = line_of(body, "cargo build")
+        self.assert_reported(
+            self.check_tree({"scripts/release-pkg.sh": body}),
+            f"scripts/release-pkg.sh:{line}:",
+            "cargo without --locked",
+        )
+
+    def test_pkg_script_missing_an_apple_target_is_flagged(self):
+        body = PKG.replace(" x86_64-apple-darwin", "")
+        self.assert_reported(
+            self.check_tree({"scripts/release-pkg.sh": body}),
+            "scripts/release-pkg.sh:",
+            "does not build x86_64-apple-darwin",
+        )
+
+    def test_ci_without_a_macos_job_is_flagged(self):
+        macos_at = CI.index("  macos:")
+        pkg_at = CI.index("  macos-pkg:")
+        body = CI[:macos_at] + CI[pkg_at:]
+        self.assert_reported(
+            self.check_tree({".github/workflows/ci.yml": body}),
+            ".github/workflows/ci.yml:",
+            "no macOS CI job",
+        )
+
+    def test_ci_not_building_the_pkg_is_flagged(self):
+        body = CI[: CI.index("  macos-pkg:")]
+        self.assert_reported(
+            self.check_tree({".github/workflows/ci.yml": body}),
+            ".github/workflows/ci.yml:",
+            "CI does not build the pkg",
         )
 
 

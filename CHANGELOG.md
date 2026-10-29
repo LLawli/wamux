@@ -12,6 +12,38 @@ has to follow them.
 
 ## [Unreleased]
 
+### Added
+
+- **A native macOS build** (issue #231). Each release ships
+  `wamux-<version>-macos-universal.pkg` (Apple silicon and Intel in one
+  binary, joined with `lipo`) and its `.sha256`, with a build provenance
+  attestation. The PKG is not signed or notarized by Apple, so the README
+  documents the Gatekeeper path. It installs `/usr/local/bin/wamux` and starts
+  nothing; the docs, licenses, `wamux.toml.example` and an example LaunchAgent
+  (`contrib/io.github.llawli.wamux.plist`) land in `/usr/local/share/wamux/`.
+- **CI runs on macOS on every pull request.** `scripts/ci.sh --no-postgres` on
+  `macos-15`, and a second job builds the PKG, installs it, runs both slices
+  and starts and stops the installed daemon. The release builds linux and
+  macOS in parallel and publishes only when both passed.
+- `scripts/gen-third-party.py --check-covers` fails when an Apple target links
+  a crate `THIRD-PARTY-LICENSES.md` does not list; `check-third-party.sh` runs
+  it for both Apple targets.
+
+### Changed
+
+- **The socket default on macOS is `/var/run/wamux.sock`.** `/run` cannot be
+  created there (the system volume is read-only). Linux keeps `/run/wamux.sock`.
+  Set `socket_path` or `WAMUX_SOCKET_PATH` to override either.
+
+### Fixed
+
+- **`THIRD-PARTY-LICENSES.md` is the same on Linux and macOS** (issue #231).
+  The generator now reads license file names without regard to case, so a
+  case-insensitive filesystem no longer finds `LICENSE-Apache` (simdutf8) that
+  Linux missed. The file now includes simdutf8's Apache text.
+- **pulldown-cmark 0.13.5** for RUSTSEC-2026-0414. Build time only: prost-build
+  renders the proto doc comments with it, and it does not reach the binary.
+
 ## [0.2.2] - 2026-10-26
 
 ### Added

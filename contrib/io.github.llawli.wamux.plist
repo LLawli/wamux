@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Example LaunchAgent: runs wamux as you, from login, and restarts it when it
+  crashes. The PKG installs this file but never loads it.
+
+  launchd expands neither "~" nor "$HOME" in this file, so every path below
+  spells out /Users/YOU. Replace YOU with your short user name (run `whoami`)
+  before installing, in the copy you load, not in this one.
+
+  Install:
+    mkdir -p -m 700 "$HOME/Library/Application Support/wamux"
+    mkdir -p "$HOME/Library/Caches/wamux" "$HOME/Library/LaunchAgents"
+    cp /usr/local/share/wamux/contrib/io.github.llawli.wamux.plist "$HOME/Library/LaunchAgents/"
+    # edit the copy: /Users/YOU -> your home directory
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/io.github.llawli.wamux.plist"
+
+  Stop and remove:
+    launchctl bootout "gui/$(id -u)/io.github.llawli.wamux"
+
+  The directory holding the store and the socket is 0700 because the socket is
+  the only access control wamux has: anyone who can open it sees every account.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.llawli.wamux</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/wamux</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WAMUX_DATABASE_URL</key>
+    <string>sqlite:///Users/YOU/Library/Application Support/wamux/wamux.db</string>
+    <key>WAMUX_SOCKET_PATH</key>
+    <string>/Users/YOU/Library/Application Support/wamux/wamux.sock</string>
+    <key>WAMUX_MEDIA_SPOOL_DIR</key>
+    <string>/Users/YOU/Library/Caches/wamux</string>
+    <key>WAMUX_LOG_LEVEL</key>
+    <string>info</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart after a crash or a signal, but not after a clean exit (SIGTERM
+       from `launchctl bootout`, or an exit 0), so stopping it stays stopped. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Library/Logs/wamux.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Library/Logs/wamux.log</string>
+</dict>
+</plist>

@@ -9,11 +9,13 @@ on:
 permissions: {}
 
 jobs:
-  release:
-    name: tarball + GitHub release
+  # The two builds run in parallel and publish nothing: `release` waits for
+  # both, so a failure on either platform leaves no half-published release.
+  linux:
+    name: tarball (linux musl)
     runs-on: ubuntu-26.04
     permissions:
-      contents: write
+      contents: read
       # Provenance (#78): the OIDC token signs the attestation and
       # attestations: write stores it, so `gh attestation verify` can tie the
       # tarball to this workflow run.
@@ -60,6 +62,90 @@ jobs:
           path: dist/bin/wamux
           if-no-files-found: error
 
+      # Provenance for the tarball (#78). After the build, before the upload:
+      # the release job publishes only files that were attested.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+
+      # What the release job publishes. Attestations bind to the file's digest,
+      # so the copy it downloads verifies against the one attested here.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wamux-release-tarball
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  macos:
+    name: pkg (macos universal)
+    # A pinned image, not macos-latest: the PKG is built on this exact SDK.
+    runs-on: macos-15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: true
+
+      # ci.sh runs python scripts that import tomllib (3.11+), and the system
+      # python3 on a macOS runner is older than that.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # The PKG is a universal binary: both Apple targets are built here, and
+      # the toolchain from rust-toolchain.toml only installs the host's.
+      - name: apple targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      # Same reason as the linux job. No Postgres: macOS runners have no Docker.
+      - name: gates
+        run: scripts/ci.sh --no-postgres
+
+      # release-pkg.sh refuses to run when the tag disagrees with the version
+      # in [workspace.package], like release-tarball.sh.
+      - name: build pkg
+        run: scripts/release-pkg.sh "${GITHUB_REF_NAME#v}"
+
+      # Installs the PKG on the runner and starts the installed daemon, so a
+      # PKG that does not run is caught before anyone downloads it.
+      - name: check pkg
+        run: scripts/check-macos-pkg.sh "dist/wamux-${GITHUB_REF_NAME#v}-macos-universal.pkg"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.pkg
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wamux-release-pkg
+          path: |
+            dist/*.pkg
+            dist/*.pkg.sha256
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: [linux, macos]
+    runs-on: ubuntu-26.04
+    # Publishing only: the builds above already hold the attestation scopes.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wamux-release-*
+          path: dist
+          merge-multiple: true
+
       # Fails when the CHANGELOG has no section for this version, rather than
       # publishing a release with empty notes.
       - name: release notes from CHANGELOG
@@ -71,20 +157,31 @@ jobs:
       - name: verification instructions
         run: |
           tarball=$(cd dist && echo *.tar.gz)
+          pkg=$(cd dist && echo *.pkg)
           {
             printf '\n## Verify\n\n'
-            printf 'The tarball is a static musl binary. Both artifacts carry a build provenance attestation. The container image is published by a job that starts only after this release succeeds, so it can appear a few minutes later.\n\n'
+            printf 'The tarball is a static musl binary and the PKG is a universal macOS installer. All three artifacts carry a build provenance attestation. The container image is published by a job that starts only after this release succeeds, so it can appear a few minutes later.\n\n'
             printf '```\n'
             printf 'gh attestation verify %s -R %s\n' "$tarball" "$GITHUB_REPOSITORY"
+            printf 'gh attestation verify %s -R %s\n' "$pkg" "$GITHUB_REPOSITORY"
             printf 'gh attestation verify oci://ghcr.io/%s:%s -R %s\n' "${GITHUB_REPOSITORY,,}" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY"
             printf '```\n'
           } >> dist/notes.md
 
-      # Provenance for the tarball (#78). After the build, before the publish:
-      # a release is never visible without its attestation.
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: dist/*.tar.gz
+      # The PKG is not signed by Apple (no Developer ID, no notarization), so a
+      # browser download triggers Gatekeeper. Said here so nobody has to guess.
+      - name: macOS install instructions
+        run: |
+          pkg=$(cd dist && echo *.pkg)
+          {
+            printf '\n## Install on macOS\n\n'
+            printf 'The PKG is a universal binary (Apple silicon and Intel). It is not signed or notarized by Apple, so a PKG downloaded in a browser is blocked by Gatekeeper: open System Settings, Privacy & Security, and choose Open Anyway. A download from the terminal carries no quarantine flag and installs directly:\n\n'
+            printf '```\n'
+            printf 'curl -LO https://github.com/%s/releases/download/%s/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$pkg"
+            printf 'sudo installer -pkg %s -target /\n' "$pkg"
+            printf '```\n\n'
+            printf 'It installs /usr/local/bin/wamux and starts nothing; see /usr/local/share/wamux for the docs and an example LaunchAgent.\n'
+          } >> dist/notes.md
 
       - name: publish
         env:
@@ -93,7 +190,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "wamux ${GITHUB_REF_NAME#v}" \
             --notes-file dist/notes.md \
-            dist/*.tar.gz dist/*.sha256
+            dist/*.tar.gz dist/*.pkg dist/*.sha256
 
   image:
     name: ghcr image
@@ -116,7 +213,7 @@ jobs:
         id: name
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      # The binary the release job built and checked. Artifacts lose the exec
+      # The binary the linux job built and checked. Artifacts lose the exec
       # bit, and the image needs it.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -153,7 +250,7 @@ jobs:
             WAMUX_UID=10001
             WAMUX_GID=10001
 
-      # The pushed image must hold the bytes the release job tested and
+      # The pushed image must hold the bytes the linux job tested and
       # attested, not whatever the build context happened to contain.
       - name: image carries the release binary
         run: scripts/check-image-binary.sh "${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}" dist/bin/wamux

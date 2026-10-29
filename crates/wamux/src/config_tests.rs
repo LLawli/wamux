@@ -4,7 +4,7 @@
 use figment::Figment;
 use figment::providers::{Format, Serialized, Toml};
 
-use super::Config;
+use super::{Config, default_socket_path};
 
 #[test]
 fn store_key_file_is_unset_by_default() {
@@ -75,5 +75,27 @@ fn replay_max_event_bytes_defaults_to_256_kib() {
     assert_eq!(
         crate::state::RegistryTuning::default().replay_max_event_bytes,
         Config::default().replay_max_event_bytes
+    );
+}
+
+/// #231: `/run` cannot be created on macOS (the system volume is read-only), so
+/// there the default is `/var/run`, the same root-only runtime directory that
+/// is cleared at boot.
+#[test]
+fn socket_path_default_on_macos_is_var_run() {
+    assert_eq!(default_socket_path("macos"), "/var/run/wamux.sock");
+}
+
+#[test]
+fn socket_path_default_elsewhere_is_run() {
+    assert_eq!(default_socket_path("linux"), "/run/wamux.sock");
+    assert_eq!(default_socket_path("freebsd"), "/run/wamux.sock");
+}
+
+#[test]
+fn config_default_socket_path_follows_the_running_os() {
+    assert_eq!(
+        Config::default().socket_path,
+        default_socket_path(std::env::consts::OS)
     );
 }

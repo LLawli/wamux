@@ -4,6 +4,10 @@ and held to it by scripts/check-third-party.sh.
 Run: python3 -m unittest discover -s scripts/tests -v
 Needs cargo and the dependency sources (a `cargo fetch` worth of registry and
 git checkouts); no database.
+
+#231: the file is generated from the musl graph, and the macOS PKG ships the
+same notices, so each Apple target's graph must be a subset of it
+(`--check-covers`, which scripts/check-third-party.sh runs).
 """
 import importlib.util
 import re
@@ -170,6 +174,21 @@ class WalkUp(unittest.TestCase):
         package = self.crate_in(checkout, "git+https://example.invalid/x?rev=1#1")
         self.assertEqual(self.gen.license_texts(package), [])
 
+    def test_license_file_names_match_without_regard_to_case(self):
+        # #231: simdutf8 ships `LICENSE-Apache`. A lookup by exact name found it
+        # on macOS (APFS ignores case) and not on Linux, so the generated file
+        # differed between the two. Matching is by listing the directory, the
+        # same on every filesystem, and the name recorded is the one on disk.
+        crate = self.base / "crate"
+        crate.mkdir()
+        (crate / "LICENSE-Apache").write_text("Apache License")
+        (crate / "copying").write_text("GNU notice")
+        (crate / "LICENSE-THIRD-PARTY").write_text("not a license file name")
+        self.assertEqual(
+            self.gen.read_license_files(crate),
+            [("LICENSE-Apache", "Apache License"), ("copying", "GNU notice")],
+        )
+
     def test_registry_packages_do_not_walk_up(self):
         checkout = self.base / "pkg"
         checkout.mkdir()
@@ -186,10 +205,46 @@ class WalkUp(unittest.TestCase):
             self.gen.shipped_packages(meta)
 
 
+APPLE_TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin")
+
+
 class Committed(unittest.TestCase):
     def test_committed_file_passes_the_check(self):
         result = run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_check_covers_both_apple_targets(self):
+        result = run_check()
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        for target in APPLE_TARGETS:
+            self.assertIn(target, output)
+
+
+class Covers(unittest.TestCase):
+    """#231: every crate an Apple target links is listed in the license file."""
+
+    def setUp(self):
+        self.gen = load_generator()
+
+    def test_uncovered_names_a_crate_only_the_other_graph_links(self):
+        shipped = {("a", "1.0.0"), ("b", "2.0.0")}
+        other = {("a", "1.0.0"), ("c", "0.1.0"), ("b", "2.1.0")}
+        self.assertEqual(self.gen.uncovered(shipped, other), [("b", "2.1.0"), ("c", "0.1.0")])
+
+    def test_uncovered_is_empty_for_a_subset(self):
+        shipped = {("a", "1.0.0"), ("b", "2.0.0"), ("mimalloc", "0.1.52")}
+        self.assertEqual(self.gen.uncovered(shipped, {("a", "1.0.0")}), [])
+
+    def test_the_macos_graphs_are_covered(self):
+        result = subprocess.run(
+            ["python3", str(GENERATOR), "--check-covers", *APPLE_TARGETS],
+            cwd=REPO, capture_output=True, text=True)
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        self.assertNotIn("Traceback", output)
+        for target in APPLE_TARGETS:
+            self.assertIn(target, output)
 
 
 if __name__ == "__main__":

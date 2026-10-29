@@ -29,11 +29,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// account's keys, so a file or directory made without an explicit mode must be
 /// owner-only. Set by the process itself so no entrypoint shell is needed (a
 /// scratch image has none) and a run outside systemd gets it too.
-const DAEMON_UMASK: u32 = 0o077;
+/// Written as flags, not `0o077`: `mode_t` is `u32` on Linux and `u16` on macOS.
+const DAEMON_UMASK: Mode = Mode::S_IRWXG.union(Mode::S_IRWXO);
 
 /// Applied first in `main`, before any file or directory is created.
 fn restrict_umask() {
-    umask(Mode::from_bits_truncate(DAEMON_UMASK));
+    umask(DAEMON_UMASK);
 }
 
 /// The store key named by `store_key_file`, if any. Logs the key id (a hash

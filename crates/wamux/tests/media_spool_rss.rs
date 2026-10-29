@@ -9,8 +9,9 @@
 //! upload instead of keeping it and serves the download from a file, and the
 //! client generates and hashes its bytes as they stream, so nothing in the
 //! test itself holds the file. Fixtures go under `CARGO_TARGET_TMPDIR` (a real
-//! disk), never `/tmp`, which may be RAM.
-#![cfg(feature = "stress")]
+//! disk), never `/tmp`, which may be RAM. Linux only: the peak and its reset
+//! (`clear_refs`) come from `/proc`, which macOS lacks (#231).
+#![cfg(all(feature = "stress", target_os = "linux"))]
 
 #[allow(dead_code)]
 #[path = "common/mod.rs"]

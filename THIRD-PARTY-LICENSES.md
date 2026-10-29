@@ -200,7 +200,7 @@ dev-dependencies are excluded because they never reach the binary.
 | protoc-bin-vendored-macos-aarch_64 | 3.2.0 | MIT |
 | protoc-bin-vendored-macos-x86_64 | 3.2.0 | MIT |
 | protoc-bin-vendored-win32 | 3.2.0 | MIT |
-| pulldown-cmark | 0.13.4 | MIT |
+| pulldown-cmark | 0.13.5 | MIT |
 | pulldown-cmark-to-cmark | 22.0.3 | Apache-2.0 |
 | quanta | 0.12.6 | MIT |
 | quote | 1.0.45 | MIT OR Apache-2.0 |
@@ -1734,53 +1734,9 @@ Apache License
 
 </details>
 
-### LICENSE: 6 crate(s)
+### LICENSE-APACHE.md: 7 crate(s)
 
-<details><summary>tracing 0.1.44, tracing-attributes 0.1.31, tracing-core 0.1.36, tracing-log 0.2.0, tracing-serde 0.2.0, tracing-subscriber 0.3.23</summary>
-
-```
-Copyright (c) 2019 Tokio Contributors
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-</details>
-
-### LICENSE-APACHE: 6 crate(s)
-
-<details><summary>sqlx-core 0.9.0, sqlx-macros 0.9.0, sqlx-macros-core 0.9.0, sqlx-mysql 0.9.0, sqlx-postgres 0.9.0, sqlx-sqlite 0.9.0</summary>
-
-```
-../LICENSE-APACHE
-```
-
-</details>
-
-### LICENSE-APACHE.md: 6 crate(s)
-
-<details><summary>miniz_oxide 0.8.9, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, portable-atomic 1.13.1, sync_wrapper 1.0.2</summary>
+<details><summary>miniz_oxide 0.8.9, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, portable-atomic 1.13.1, simdutf8 0.1.5, ...</summary>
 
 ```
 Apache License
@@ -1959,6 +1915,50 @@ Apache License
       of your accepting any such warranty or additional liability.
 
    END OF TERMS AND CONDITIONS
+```
+
+</details>
+
+### LICENSE: 6 crate(s)
+
+<details><summary>tracing 0.1.44, tracing-attributes 0.1.31, tracing-core 0.1.36, tracing-log 0.2.0, tracing-serde 0.2.0, tracing-subscriber 0.3.23</summary>
+
+```
+Copyright (c) 2019 Tokio Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+</details>
+
+### LICENSE-APACHE: 6 crate(s)
+
+<details><summary>sqlx-core 0.9.0, sqlx-macros 0.9.0, sqlx-macros-core 0.9.0, sqlx-mysql 0.9.0, sqlx-postgres 0.9.0, sqlx-sqlite 0.9.0</summary>
+
+```
+../LICENSE-APACHE
 ```
 
 </details>
@@ -5066,7 +5066,7 @@ Apache License
 
 ### LICENSE: 1 crate(s)
 
-<details><summary>pulldown-cmark 0.13.4</summary>
+<details><summary>pulldown-cmark 0.13.5</summary>
 
 ```
 The MIT License

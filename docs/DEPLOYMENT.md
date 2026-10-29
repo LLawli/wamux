@@ -365,24 +365,27 @@ stopped.
 
 ## Verifying a release
 
-Each release ships a tarball on the GitHub release page and an image at
-`ghcr.io/llawli/wamux:<tag>`. Both carry the same static musl binary (the
-release job checks it has no dynamic dependency, and the image job checks the
-pushed image holds the very same file). Both carry a build provenance attestation (#78):
+Each release ships a tarball and a macOS PKG on the GitHub release page, and an
+image at `ghcr.io/llawli/wamux:<tag>`. The tarball and the image carry the same
+static musl binary (the linux job checks it has no dynamic dependency, and the
+image job checks the pushed image holds the very same file); the PKG carries a
+universal macOS binary. All three carry a build provenance attestation (#78):
 a signed statement, made by the release workflow itself, of which commit and
-which workflow run produced the artifact. The `.sha256` next to the tarball only
-proves the download matches the release page; the attestation proves where it
-came from. Check it with the GitHub CLI before you deploy:
+which workflow run produced the artifact. The `.sha256` next to the tarball and
+the PKG only proves the download matches the release page; the attestation
+proves where it came from. Check it with the GitHub CLI before you deploy:
 
 ```
 gh attestation verify wamux-<version>-x86_64-unknown-linux-musl.tar.gz -R LLawli/wamux
+gh attestation verify wamux-<version>-macos-universal.pkg -R LLawli/wamux
 gh attestation verify oci://ghcr.io/llawli/wamux:<tag> -R LLawli/wamux
 ```
 
-The image is built only after the release job passed its gates (the test
-suite, the tag/version check and the release notes), so a tag that failed them
-has no image. The build is `--locked` to the tested `Cargo.lock`, and the base
-images are pinned by digest.
+Nothing is published unless both builds (linux and macOS) passed their gates,
+and the image is built only after that, so a tag that failed them has no image.
+The builds are `--locked` to the tested `Cargo.lock`, and the base images are
+pinned by digest. The PKG is attested but not signed by Apple (see
+[macOS](#macos-launchagent)).
 
 ## Native (systemd)
 
@@ -418,6 +421,45 @@ user reaches it. For a consumer of another user, move the socket out of it
 (`RuntimeDirectory=wamux`, `RuntimeDirectoryMode=0750`, `Group=` the shared
 group, `Environment=WAMUX_SOCKET_PATH=%t/wamux/wamux.sock`). A user unit cannot
 serve another user: its `%t` is private to its owner.
+
+## macOS (LaunchAgent)
+
+The PKG (see the README) installs the binary at `/usr/local/bin/wamux` and
+starts nothing. The same binary runs on Apple silicon and Intel. The PKG is
+unsigned: Gatekeeper blocks one downloaded in a browser until you choose Open
+Anyway in System Settings, Privacy & Security, and `sudo installer -pkg <file>
+-target /` from a terminal avoids the prompt.
+
+The socket defaults to `/var/run/wamux.sock` on macOS, because `/run` cannot be
+created there (the system volume is read-only). `/var/run` is writable only by
+root, so a daemon running as you sets `WAMUX_SOCKET_PATH` to a path you own.
+The example LaunchAgent does that, and keeps everything under your home:
+
+| what | where |
+| --- | --- |
+| SQLite store and socket | `~/Library/Application Support/wamux/` (`0700`) |
+| media spool | `~/Library/Caches/wamux/` |
+| log | `~/Library/Logs/wamux.log` |
+
+```sh
+mkdir -p -m 700 "$HOME/Library/Application Support/wamux"
+mkdir -p "$HOME/Library/Caches/wamux" "$HOME/Library/LaunchAgents"
+cp /usr/local/share/wamux/contrib/io.github.llawli.wamux.plist "$HOME/Library/LaunchAgents/"
+# edit the copy: launchd expands neither ~ nor $HOME, so replace /Users/YOU
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/io.github.llawli.wamux.plist"
+```
+
+`launchctl bootout "gui/$(id -u)/io.github.llawli.wamux"` stops it. The agent
+restarts the daemon after a crash and not after a clean exit (`KeepAlive` with
+`SuccessfulExit` false), and starts it at login. The consumer connects to
+`~/Library/Application Support/wamux/wamux.sock`.
+
+macOS sockets are limited to 104 bytes of path, so a deep home directory can
+make the bind fail; keep the socket path short.
+
+CI installs the PKG on a macOS runner and starts the installed daemon on every
+pull request. The LaunchAgent itself, and the Gatekeeper steps, have not been
+exercised by hand on a real Mac.
 
 ## Docker, consumer on the host
 

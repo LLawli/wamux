@@ -35,13 +35,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = REPO_ROOT / "THIRD-PARTY-LICENSES.md"
 
 
-def cargo_metadata():
-    """`cargo metadata --locked` for TARGET, run at the repository root (#83).
+def cargo_metadata(target=TARGET):
+    """`cargo metadata --locked` for `target` (the musl TARGET by default), run
+    at the repository root (#83).
 
     --locked: a stale Cargo.lock must fail here instead of being rewritten
     quietly, or the file would describe a graph nobody committed."""
     result = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--filter-platform", TARGET,
+        ["cargo", "metadata", "--format-version", "1", "--filter-platform", target,
          "--locked"],
         capture_output=True, text=True, check=True, cwd=REPO_ROOT)
     return json.loads(result.stdout)
@@ -89,18 +90,63 @@ def shipped_packages(meta):
     return sorted((by_id[i] for i in ids), key=lambda p: (p["name"], p["version"]))
 
 
+def uncovered(shipped, other):
+    """#231: the `(name, version)` pairs in `other` that `shipped` lacks, sorted.
+    A target whose graph has a crate the license file does not list ships that
+    crate without its notice."""
+    return sorted(other - shipped)
+
+
+def shipped_pairs(target):
+    """The `(name, version)` pairs `target` links, by the same walk as the file."""
+    return {(p["name"], p["version"]) for p in shipped_packages(cargo_metadata(target))}
+
+
+def check_covers(targets):
+    """#231: exit code of `--check-covers`. Each target's graph must be a subset
+    of the musl graph this file lists, because the macOS PKG ships the same
+    notices. Writes no file."""
+    listed = shipped_pairs(TARGET)
+    graphs = {target: shipped_pairs(target) for target in targets}
+    missing = {target: uncovered(listed, graph) for target, graph in graphs.items()}
+    for target, pairs in missing.items():
+        if not pairs:
+            print(f"covered: {target} ({len(graphs[target])} crates)")
+    gaps = [(name, version, target) for target, pairs in missing.items() for name, version in pairs]
+    for name, version, target in gaps:
+        print(f"uncovered: {name} {version} ({target})", file=sys.stderr)
+    if gaps:
+        print("THIRD-PARTY-LICENSES.md lacks these crates. Fix: list them by "
+              "generating the file from a graph that includes them "
+              "(scripts/gen-third-party.py)", file=sys.stderr)
+    return 1 if gaps else 0
+
+
 def read_license_files(directory):
-    """License files named in LICENSE_FILENAMES found directly in directory."""
+    """License files in directory whose name is in LICENSE_FILENAMES, compared
+    without regard to case, in LICENSE_FILENAMES order, named as on disk.
+
+    The directory is listed rather than probed by name (#231): a probe finds
+    `LICENSE-Apache` as `LICENSE-APACHE` on a case-insensitive filesystem (macOS)
+    and not on Linux, so the generated file would differ between the two."""
+    try:
+        entries = sorted(p for p in directory.iterdir() if p.is_file())
+    except OSError:
+        return []
     found = []
-    for name in LICENSE_FILENAMES:
-        path = directory / name
-        if not path.is_file():
-            continue
-        try:
-            found.append((name, path.read_text(encoding="utf-8", errors="replace").strip()))
-        except OSError:
-            pass
-    return found
+    for wanted in LICENSE_FILENAMES:
+        for path in entries:
+            if path.name.lower() == wanted.lower():
+                found.append((path.name, read_text_or_none(path)))
+    return [(name, text) for name, text in found if text is not None]
+
+
+def read_text_or_none(path):
+    """The stripped text of path, or None when it cannot be read."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
 
 
 def checkout_license_texts(start):
@@ -192,7 +238,11 @@ def main(argv=None):
     the graph comes back empty. Returns the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--check-covers", nargs="+", metavar="TARGET",
+                        help="write nothing; fail when a target links a crate the file lacks (#231)")
     args = parser.parse_args(argv)
+    if args.check_covers:
+        return check_covers(args.check_covers)
 
     packages = shipped_packages(cargo_metadata())
     if not packages:
