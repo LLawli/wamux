@@ -12,6 +12,8 @@ has to follow them.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-29
+
 ### Added
 
 - **A native macOS build** (issue #231). Each release ships
@@ -1866,7 +1868,8 @@ reconnection policy, and any HTTP API. The core exposes the primitives (a
 `SendResult.message_id`, `Receipt` events, connection-state events) and lets
 the edge compose the policy. See the "Core purity" section in `CLAUDE.md`.
 
-[Unreleased]: https://github.com/LLawli/wamux/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/LLawli/wamux/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/LLawli/wamux/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/LLawli/wamux/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/LLawli/wamux/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/LLawli/wamux/compare/v0.1.0...v0.2.0
