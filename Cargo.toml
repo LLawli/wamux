@@ -89,3 +89,11 @@ whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-r
 # Stress harness only; the members opt in with `optional = true`.
 wacore-noise = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e", default-features = false }
 wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "3870ce5c3d5d856e7cb3cc7f3a0cbbf6fcf24f8e", default-features = false }
+
+# File:line in backtraces and panics stays; what goes is variable inspection in a
+# debugger (run with CARGO_PROFILE_DEV_DEBUG=2 when you need it). Measured on a
+# laptop `ci.sh --full`: PR scenario 1541 s -> 1218 s, target/debug 76.2 -> 28.7 GiB.
+# CI already runs with CARGO_PROFILE_DEV_DEBUG=0 (setup-rust-toolchain), so this
+# only changes local builds (#233).
+[profile.dev]
+debug = "line-tables-only"

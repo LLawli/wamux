@@ -47,6 +47,22 @@ must_run_pkg_tests() {
 }
 must_run_tests() { must_run_pkg_tests wamux "$@"; }
 
+# The test binaries of one feature set, compiled in a single cargo call so they
+# build in parallel; the filtered calls that follow find them fresh and only
+# run them. One call per binary compiled them one at a time (#233).
+build_test_binaries() {
+  stage "build test binaries ($*)"
+  cargo test -p wamux --no-run "$@"
+}
+TURSO_STORAGE_SUITES=(--test storage_backend --test bincode_upgrade --test bincode_upgrade_notice
+  --test store_parity --test existing_store --test store_file_mode --test store_encryption
+  --test store_conversion --test store_rotation --test group_commit_turso
+  --test group_commit_turso_accounts)
+STRESS_SUITES=(--test stress_handshake --test stress_newsletter_parse --test stress_newsletter_history
+  --test stress_newsletter_poll_vote --test group_service --test contact_service --test call_service
+  --test logout_events --test media_service --test newsletter_service --test messaging_service
+  --test media_spool_rss)
+
 # The Turso engine (#106) is behind the daemon's off-by-default `turso`
 # feature, so its tests exist only in a `--features turso` build. Its storage
 # cases name the engine (`turso_`, `turso_and_sqlite_`) and need no database;
@@ -231,6 +247,12 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   # with both engines present), and the stress suite is database-backed too.
   # Those are the full run's job; this one exists for fast PR feedback and for
   # a machine with no container runtime.
+  build_test_binaries --lib --test grpc_server --test event_subscription --test reflection \
+    --test peer_allowlist --test socket_bind --test socket_bind_umask --test storage_backend \
+    --test bincode_upgrade --test bincode_upgrade_notice --test store_parity --test store_encryption \
+    --test store_conversion --test store_rotation --test store_cli --test existing_store \
+    --test group_commit_sqlite
+
   stage "no-postgres: unit tests"
   must_run_tests --lib
 
@@ -258,6 +280,8 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   # #173: group commit on the sqlx SQLite engine, under real concurrency.
   must_run_tests --test group_commit_sqlite sqlite_
 
+  build_test_binaries --features turso --lib "${TURSO_STORAGE_SUITES[@]}" --test grpc_server \
+    --test event_subscription --test reflection
   stage "no-postgres: turso engine (storage cases and service suites)"
   turso_storage_cases
   WAMUX_TEST_ENGINE=turso must_run_tests --features turso --test grpc_server \
@@ -276,6 +300,7 @@ fi
 ACCOUNT_SNAPSHOT="$(mktemp)"
 export WAMUX_ACCOUNT_SNAPSHOT="$ACCOUNT_SNAPSHOT"
 trap 'rm -f "$ACCOUNT_SNAPSHOT"' EXIT
+build_test_binaries
 stage "account snapshot (before the first database test)"
 must_run_tests --test account_leftovers -- --ignored --exact snapshot_accounts_before_the_run
 
@@ -299,6 +324,7 @@ WAMUX_TEST_ENGINE=sqlite cargo test -p wamux -- --skip postgres_ --skip sqlite_ 
 # Same suite, Turso engine (#106), in a `--features turso` build. The tests
 # that name an engine are skipped as above, `turso_` included: those are the
 # storage cases, run by name right before.
+build_test_binaries --features turso
 stage "tests (turso engine)"
 turso_storage_cases
 WAMUX_TEST_ENGINE=turso cargo test -p wamux --features turso -- --skip postgres_ \
@@ -309,6 +335,7 @@ must_run_pkg_tests wamux-tools --test '*'
 
 # Every stress stage runs on both engines (#67): the registry under test is
 # built from WAMUX_TEST_ENGINE, the mock stays the same.
+build_test_binaries --features stress "${STRESS_SUITES[@]}"
 stage "stress tests (fast: M1/M2a/M2b)"
 cargo test -p wamux --features stress --test stress_handshake
 WAMUX_TEST_ENGINE=sqlite cargo test -p wamux --features stress --test stress_handshake
