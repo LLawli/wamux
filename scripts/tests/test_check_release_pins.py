@@ -22,6 +22,11 @@ Apple targets, `--locked`), checks it with scripts/check-macos-pkg.sh and
 attests it; CI runs the macOS gates and the PKG build on every PR. The checks
 the `release` job did on the musl binary move to the `linux` job.
 
+#233 adds dev-only rustflags in .cargo/config.toml (`-Zthreads`): every
+`cargo build` in the two release scripts runs with an empty RUSTFLAGS, which
+cargo reads instead of the config (`unset` does not do it), and no
+`Dockerfile*` copies `.cargo` or the whole build context into the image build.
+
 Run: python3 -m unittest discover -s scripts/tests -v
 Needs nothing but the checkout; no cargo, no network.
 """
@@ -162,13 +167,13 @@ COPY --from=build /usr/local/bin/wamux /usr/local/bin/wamux
 
 TARBALL = """#!/usr/bin/env bash
 set -euo pipefail
-cargo build --release --locked --target x86_64-unknown-linux-musl -p wamux --bin wamux
+RUSTFLAGS="" cargo build --release --locked --target x86_64-unknown-linux-musl -p wamux --bin wamux
 """
 
 PKG = """#!/usr/bin/env bash
 set -euo pipefail
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
-  cargo build --release --locked --target "$target" -p wamux --bin wamux
+  RUSTFLAGS="" cargo build --release --locked --target "$target" -p wamux --bin wamux
 done
 """
 
@@ -606,6 +611,77 @@ class CheckReleasePins(unittest.TestCase):
             "CI does not build the pkg",
         )
 
+
+    # --- #233: the release builds without the dev-only rustflags ---
+
+    def test_tarball_cargo_build_without_empty_rustflags_is_flagged(self):
+        body = TARBALL.replace('RUSTFLAGS="" ', "")
+        line = line_of(body, "cargo build")
+        self.assert_reported(
+            self.check_tree({"scripts/release-tarball.sh": body}),
+            f"scripts/release-tarball.sh:{line}:",
+            "does not clear RUSTFLAGS",
+        )
+
+    def test_pkg_cargo_build_without_empty_rustflags_is_flagged(self):
+        body = PKG.replace('RUSTFLAGS="" ', "")
+        line = line_of(body, "cargo build")
+        self.assert_reported(
+            self.check_tree({"scripts/release-pkg.sh": body}),
+            f"scripts/release-pkg.sh:{line}:",
+            "does not clear RUSTFLAGS",
+        )
+
+    def test_rustflags_with_a_value_is_flagged(self):
+        # A non-empty RUSTFLAGS also replaces the config, but with flags of its
+        # own: the release must build with none.
+        body = TARBALL.replace('RUSTFLAGS=""', 'RUSTFLAGS="-Zthreads=4"')
+        line = line_of(body, "cargo build")
+        self.assert_reported(
+            self.check_tree({"scripts/release-tarball.sh": body}),
+            f"scripts/release-tarball.sh:{line}:",
+            "does not clear RUSTFLAGS",
+        )
+
+    def test_unset_rustflags_is_flagged(self):
+        # Without RUSTFLAGS in the environment cargo falls back to
+        # `build.rustflags` from .cargo/config.toml.
+        body = TARBALL.replace('RUSTFLAGS="" cargo build', "unset RUSTFLAGS\ncargo build")
+        line = line_of(body, "cargo build")
+        self.assert_reported(
+            self.check_tree({"scripts/release-tarball.sh": body}),
+            f"scripts/release-tarball.sh:{line}:",
+            "does not clear RUSTFLAGS",
+        )
+
+    def test_exported_empty_rustflags_is_accepted(self):
+        body = PKG.replace('  RUSTFLAGS="" cargo build', "  cargo build").replace(
+            "set -euo pipefail\n", 'set -euo pipefail\nexport RUSTFLAGS=""\n', 1
+        )
+        self.assertIn('export RUSTFLAGS=""', body)
+        self.assertNotIn('RUSTFLAGS="" cargo', body)
+        self.assert_clean(self.check_tree({"scripts/release-pkg.sh": body}))
+
+    def test_dockerfile_copying_dot_cargo_is_flagged(self):
+        stage = f"FROM rust:trixie@{DIGEST} AS build\n"
+        body = DOCKERFILE.replace(stage, stage + "COPY .cargo ./.cargo\n", 1)
+        line = line_of(body, "COPY .cargo")
+        self.assert_reported(
+            self.check_tree({"Dockerfile": body}),
+            f"Dockerfile:{line}:",
+            "copies .cargo",
+        )
+
+    def test_dockerfile_copying_the_whole_context_is_flagged(self):
+        # `COPY . .` brings .cargo/config.toml along with everything else.
+        stage = f"FROM rust:trixie@{DIGEST} AS build\n"
+        body = GLIBC_DOCKERFILE.replace(stage, stage + "COPY . .\n", 1)
+        line = line_of(body, "COPY . .")
+        self.assert_reported(
+            self.check_tree({"Dockerfile.glibc": body}),
+            f"Dockerfile.glibc:{line}:",
+            "copies the whole build context",
+        )
 
 if __name__ == "__main__":
     unittest.main()

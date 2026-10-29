@@ -58,6 +58,16 @@ Rules, checked line by line (no YAML parser, stdlib only):
       scripts/check-macos-pkg.sh ("CI does not build the pkg"), so the PKG path
       is exercised on every PR and not only at a tag.
 
+#233, dev-only rustflags in .cargo/config.toml (`-Zthreads`):
+
+  R16 every `cargo build` in scripts/release-tarball.sh and scripts/release-pkg.sh
+      runs with an empty RUSTFLAGS, as a prefix assignment or after an earlier
+      `export RUSTFLAGS=""` ("does not clear RUSTFLAGS"). An empty value makes
+      cargo ignore `build.rustflags`; `unset` does not, and a non-empty value
+      adds flags of its own. No root `Dockerfile*` copies `.cargo` ("copies
+      .cargo") or the whole build context ("copies the whole build context"),
+      or the image build would read the config the release script clears.
+
 Floor: at least MIN_WORKFLOWS workflows and one `FROM`, so a layout change
 cannot make the check pass by scanning nothing ("scanned nothing").
 """
@@ -91,6 +101,12 @@ CARGO_WORD = re.compile(r"\bcargo\b")
 BINARY_CONTEXT = re.compile(r"^\s*binary=\S")
 BINARY_STAGE = re.compile(r"^FROM\s+.*\s+AS\s+binary\s*$", re.IGNORECASE)
 CARGO_CALL = re.compile(r"\bcargo\s+(build|install)\b")
+EMPTY_RUSTFLAGS = r"""RUSTFLAGS=(?:""|''|)(?=\s|$)"""
+RUSTFLAGS_PREFIX = re.compile(rf"(?:^|\s){EMPTY_RUSTFLAGS}")
+RUSTFLAGS_EXPORT = re.compile(rf"(?:^|\s)export\s+{EMPTY_RUSTFLAGS}")
+CONTEXT_COPY = re.compile(r"^(?:COPY|ADD)\s+(.*)$", re.IGNORECASE)
+CARGO_CONFIG_DIR = ".cargo"
+WHOLE_CONTEXT = (".", "./")
 JOB_HEADER = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 NEEDS = re.compile(r"^    needs:\s*(.*)$")
 ECOSYSTEM = re.compile(r"package-ecosystem:\s*[\"']?([A-Za-z0-9_-]+)")
@@ -164,6 +180,44 @@ def check_locked(where: str, lines: list[str]) -> list[Finding]:
         for number, command in joined_commands(lines)
         if CARGO_CALL.search(command) and "--locked" not in command
     ]
+
+
+def check_rustflags_cleared(where: str, lines: list[str]) -> list[Finding]:
+    """R16 over one release script: each `cargo build` sees an empty RUSTFLAGS."""
+    found: list[Finding] = []
+    exported = False
+    for number, command in joined_commands(lines):
+        call = CARGO_CALL.search(command)
+        if call is None:
+            exported = exported or bool(RUSTFLAGS_EXPORT.search(command))
+        elif call.group(1) == "build" and not (exported or RUSTFLAGS_PREFIX.search(command[: call.start()])):
+            found.append((where, number, "does not clear RUSTFLAGS (cargo would read .cargo/config.toml)"))
+    return found
+
+
+def copy_sources(command: str) -> list[str]:
+    """Sources of a COPY/ADD from the build context; none for `--from=` copies,
+    which read another stage. The last token is the destination."""
+    match = CONTEXT_COPY.match(command.strip())
+    if match is None:
+        return []
+    tokens = match.group(1).split()
+    if any(token.startswith("--from=") for token in tokens):
+        return []
+    return [token for token in tokens if not token.startswith("--")][:-1]
+
+
+def check_dockerfile_context(where: str, lines: list[str]) -> list[Finding]:
+    """R16 over one Dockerfile: the build never sees .cargo/config.toml."""
+    found: list[Finding] = []
+    for number, command in joined_commands(lines):
+        for source in copy_sources(command):
+            bare = source.removeprefix("./")
+            if bare == CARGO_CONFIG_DIR or bare.startswith(CARGO_CONFIG_DIR + "/"):
+                found.append((where, number, "copies .cargo into the image build"))
+            elif source in WHOLE_CONTEXT:
+                found.append((where, number, "copies the whole build context (and .cargo with it)"))
+    return found
 
 
 def job_blocks(lines: list[str]) -> dict[str, tuple[int, list[str]]]:
@@ -366,14 +420,16 @@ def check_dependabot(root: Path) -> list[Finding]:
 
 
 def scan_release_scripts(root: Path) -> list[Finding]:
-    """R4, R11 and R14 over the two scripts that build the shipped artifacts."""
+    """R4, R11, R14 and R16 over the two scripts that build the shipped artifacts."""
     tarball = "scripts/release-tarball.sh"
     tarball_lines = read_lines(root / tarball)
     pkg_lines = read_lines(root / PKG_BUILD_SCRIPT)
     return [
         *check_locked(tarball, tarball_lines),
+        *check_rustflags_cleared(tarball, tarball_lines),
         *check_musl_tarball(tarball, tarball_lines),
         *check_locked(PKG_BUILD_SCRIPT, pkg_lines),
+        *check_rustflags_cleared(PKG_BUILD_SCRIPT, pkg_lines),
         *check_pkg_script(PKG_BUILD_SCRIPT, pkg_lines),
     ]
 
@@ -399,6 +455,7 @@ def scan(root: Path) -> list[Finding]:
         lines = read_lines(path)
         findings += check_from_digests(path.name, lines)
         findings += check_locked(path.name, lines)
+        findings += check_dockerfile_context(path.name, lines)
     if default_lines:
         findings += check_default_dockerfile(DEFAULT_DOCKERFILE, default_lines)
     return findings + scan_release_scripts(root) + check_dependabot(root)
@@ -414,7 +471,7 @@ def main(argv: list[str]) -> int:
     if findings:
         print(f"release pins FAILED: {len(findings)} violations")
         return 1
-    print("release pins ok: actions by SHA, FROM by digest, cargo --locked, image gated, one static musl binary, a macOS PKG built and checked, provenance attested")
+    print("release pins ok: actions by SHA, FROM by digest, cargo --locked, image gated, one static musl binary, a macOS PKG built and checked, release built without dev rustflags, provenance attested")
     return 0
 
 
