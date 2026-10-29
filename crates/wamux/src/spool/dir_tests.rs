@@ -10,14 +10,16 @@ fn mode(path: &Path) -> u32 {
     std::fs::metadata(path).expect("metadata").mode() & 0o7777
 }
 
-/// The process umask, read without changing it (Linux 4.7+).
+/// The process umask, read without changing it: a child inherits it, and
+/// `sh -c umask` prints it. Not `/proc/self/status`, which macOS lacks (#231);
+/// setting and restoring it would race the other tests in this process.
 fn current_umask() -> u32 {
-    let status = std::fs::read_to_string("/proc/self/status").expect("/proc/self/status");
-    let line = status
-        .lines()
-        .find_map(|line| line.strip_prefix("Umask:"))
-        .expect("an Umask: line");
-    u32::from_str_radix(line.trim(), 8).expect("octal umask")
+    let out = std::process::Command::new("sh")
+        .args(["-c", "umask"])
+        .output()
+        .expect("run sh -c umask");
+    let text = String::from_utf8(out.stdout).expect("utf-8 umask");
+    u32::from_str_radix(text.trim(), 8).expect("octal umask")
 }
 
 #[test]

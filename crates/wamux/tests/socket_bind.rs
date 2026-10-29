@@ -4,12 +4,13 @@
 //!
 //! The group tests need the user in a supplementary group (CI's runner is in
 //! `docker` and `adm`) and not running as root (root may chown to any group).
+//! They run on Linux only: nix has no `getgroups` on Apple targets (#231), and
+//! the chown they exercise is the same code on every Unix.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nix::unistd::{Gid, Group, getegid, geteuid, getgroups};
 use tempfile::TempDir;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::UnixListenerStream;
@@ -37,43 +38,6 @@ fn entries(dir: &Path) -> Vec<String> {
 
 fn permissions(path: impl AsRef<Path>) -> u32 {
     std::fs::metadata(path).expect("metadata").mode() & 0o7777
-}
-
-/// The process umask, read without changing it (Linux 4.7+).
-fn current_umask() -> u32 {
-    let status = std::fs::read_to_string("/proc/self/status").expect("/proc/self/status");
-    let line = status
-        .lines()
-        .find_map(|line| line.strip_prefix("Umask:"))
-        .expect("an Umask: line");
-    u32::from_str_radix(line.trim(), 8).expect("octal umask")
-}
-
-/// A group the user is in that is not its primary one.
-fn supplementary_group() -> Group {
-    let primary = getegid();
-    let gid = getgroups()
-        .expect("getgroups")
-        .into_iter()
-        .find(|gid| *gid != primary)
-        .expect("this test needs the user in a supplementary group");
-    Group::from_gid(gid)
-        .expect("group lookup")
-        .expect("the supplementary group has a name")
-}
-
-/// gid 0's group, which a regular user is not in.
-fn a_group_we_are_not_in() -> Group {
-    assert!(!geteuid().is_root(), "run as a regular user");
-    let root = Gid::from_raw(0);
-    let ours = getgroups().expect("getgroups");
-    assert!(
-        getegid() != root && !ours.contains(&root),
-        "the user is in gid 0"
-    );
-    Group::from_gid(root)
-        .expect("group lookup")
-        .expect("gid 0 has a name")
 }
 
 /// The listener behind `stream` accepts a connection made to `path`.
@@ -148,55 +112,15 @@ async fn the_parent_directory_is_created_0750() {
 
     let _stream = uds_listener::bind(path.to_str().unwrap(), MODE, None).expect("bind");
 
-    let expected = 0o750 & !current_umask();
-    assert_eq!(permissions(&run), expected, "a created level");
-    assert_eq!(permissions(&parent), expected, "the socket's own parent");
+    // Exactly 0750 whatever the umask: each created level is chmodded after
+    // the mkdir (#218), since the daemon's own umask of 077 would make it 0700.
+    assert_eq!(permissions(&run), 0o750, "a created level");
+    assert_eq!(permissions(&parent), 0o750, "the socket's own parent");
     assert_eq!(
         permissions(dir.path()),
         existing,
         "an existing parent is not touched"
     );
-}
-
-#[tokio::test]
-async fn socket_group_sets_a_supplementary_group_by_name() {
-    let (_dir, path) = spot();
-    let group = supplementary_group();
-
-    let _stream = uds_listener::bind(&path, MODE, Some(&group.name)).expect("bind");
-
-    let meta = std::fs::metadata(&path).expect("metadata");
-    assert_eq!(meta.gid(), group.gid.as_raw(), "group {}", group.name);
-    assert_eq!(meta.mode() & 0o7777, MODE);
-}
-
-#[tokio::test]
-async fn socket_group_by_number_sets_the_group() {
-    let (_dir, path) = spot();
-    let group = supplementary_group();
-    let number = group.gid.as_raw().to_string();
-
-    let _stream = uds_listener::bind(&path, MODE, Some(&number)).expect("bind");
-
-    let meta = std::fs::metadata(&path).expect("metadata");
-    assert_eq!(meta.gid(), group.gid.as_raw(), "gid {number}");
-    assert_eq!(meta.mode() & 0o7777, MODE);
-}
-
-#[tokio::test]
-async fn a_group_the_daemon_is_not_in_fails_startup() {
-    let (_dir, path) = spot();
-    let group = a_group_we_are_not_in();
-
-    let err = uds_listener::bind(&path, MODE, Some(&group.name))
-        .expect_err("chown to a group we are not in must fail");
-
-    assert!(
-        matches!(&err, BindError::NotAMember { group: g, path: p } if *g == group.name && *p == path),
-        "{err:?}"
-    );
-    assert!(err.to_string().contains(&group.name), "{err}");
-    assert!(!Path::new(&path).exists(), "no socket is left at the path");
 }
 
 #[tokio::test]
@@ -212,23 +136,6 @@ async fn an_unknown_group_fails_startup() {
     );
     assert!(err.to_string().contains(missing), "{err}");
     assert!(!Path::new(&path).exists(), "no socket is left at the path");
-}
-
-#[tokio::test]
-async fn no_private_bind_directory_is_left_behind() {
-    let (dir, path) = spot();
-    let _stream = uds_listener::bind(&path, MODE, None).expect("bind");
-    assert_eq!(entries(dir.path()), ["wamux.sock"], "after a bind");
-
-    let (failed_dir, failed_path) = spot();
-    let group = a_group_we_are_not_in();
-    uds_listener::bind(&failed_path, MODE, Some(&group.name))
-        .expect_err("chown to a group we are not in must fail");
-    assert!(
-        entries(failed_dir.path()).is_empty(),
-        "after a failed chown: {:?}",
-        entries(failed_dir.path())
-    );
 }
 
 /// `main` runs this before opening the store, so a second daemon never touches
@@ -259,4 +166,96 @@ async fn the_early_probe_refuses_a_live_socket_or_a_file_and_removes_nothing() {
 
     let (_dir, absent) = spot();
     uds_listener::refuse_if_served(&absent).expect("an absent path is free");
+}
+
+#[cfg(target_os = "linux")]
+mod groups {
+    use nix::unistd::{Gid, Group, getegid, geteuid, getgroups};
+
+    use super::*;
+
+    /// A group the user is in that is not its primary one.
+    fn supplementary_group() -> Group {
+        let primary = getegid();
+        let gid = getgroups()
+            .expect("getgroups")
+            .into_iter()
+            .find(|gid| *gid != primary)
+            .expect("this test needs the user in a supplementary group");
+        Group::from_gid(gid)
+            .expect("group lookup")
+            .expect("the supplementary group has a name")
+    }
+
+    /// gid 0's group, which a regular user is not in.
+    fn a_group_we_are_not_in() -> Group {
+        assert!(!geteuid().is_root(), "run as a regular user");
+        let root = Gid::from_raw(0);
+        let ours = getgroups().expect("getgroups");
+        assert!(
+            getegid() != root && !ours.contains(&root),
+            "the user is in gid 0"
+        );
+        Group::from_gid(root)
+            .expect("group lookup")
+            .expect("gid 0 has a name")
+    }
+
+    #[tokio::test]
+    async fn socket_group_sets_a_supplementary_group_by_name() {
+        let (_dir, path) = spot();
+        let group = supplementary_group();
+
+        let _stream = uds_listener::bind(&path, MODE, Some(&group.name)).expect("bind");
+
+        let meta = std::fs::metadata(&path).expect("metadata");
+        assert_eq!(meta.gid(), group.gid.as_raw(), "group {}", group.name);
+        assert_eq!(meta.mode() & 0o7777, MODE);
+    }
+
+    #[tokio::test]
+    async fn socket_group_by_number_sets_the_group() {
+        let (_dir, path) = spot();
+        let group = supplementary_group();
+        let number = group.gid.as_raw().to_string();
+
+        let _stream = uds_listener::bind(&path, MODE, Some(&number)).expect("bind");
+
+        let meta = std::fs::metadata(&path).expect("metadata");
+        assert_eq!(meta.gid(), group.gid.as_raw(), "gid {number}");
+        assert_eq!(meta.mode() & 0o7777, MODE);
+    }
+
+    #[tokio::test]
+    async fn a_group_the_daemon_is_not_in_fails_startup() {
+        let (_dir, path) = spot();
+        let group = a_group_we_are_not_in();
+
+        let err = uds_listener::bind(&path, MODE, Some(&group.name))
+            .expect_err("chown to a group we are not in must fail");
+
+        assert!(
+            matches!(&err, BindError::NotAMember { group: g, path: p } if *g == group.name && *p == path),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains(&group.name), "{err}");
+        assert!(!Path::new(&path).exists(), "no socket is left at the path");
+    }
+
+    #[tokio::test]
+    async fn no_private_bind_directory_is_left_behind() {
+        let (dir, path) = spot();
+        let _stream = uds_listener::bind(&path, MODE, None).expect("bind");
+        assert_eq!(entries(dir.path()), ["wamux.sock"], "after a bind");
+
+        let (failed_dir, failed_path) = spot();
+        let group = a_group_we_are_not_in();
+        uds_listener::bind(&failed_path, MODE, Some(&group.name))
+            .expect_err("chown to a group we are not in must fail");
+        assert!(
+            entries(failed_dir.path()).is_empty(),
+            "after a failed chown: {:?}",
+            entries(failed_dir.path())
+        );
+    }
 }
