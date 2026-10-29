@@ -111,6 +111,9 @@ class CheckStaticBinary(unittest.TestCase):
             "needs libc.so.6",
         )
 
+    # The host's own Python is the real dynamic ELF this needs, and on macOS it
+    # is Mach-O (#231). The synthetic ELFs above cover the parser everywhere.
+    @unittest.skipUnless(sys.platform.startswith("linux"), "needs a dynamic ELF from the host")
     def test_real_dynamic_binary_fails(self):
         # The interpreter running this test is a dynamically linked program.
         self.assert_rejected(
