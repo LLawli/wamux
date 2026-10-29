@@ -1,7 +1,9 @@
 # wamux configuration. Copy to wamux.toml (or set WAMUX_CONFIG to a path).
 # Every key can be overridden by an env var: WAMUX_<UPPERCASE_KEY>.
 
-# Unix socket the gRPC server binds.
+# Unix socket the gRPC server binds. The default is /run/wamux.sock, and
+# /var/run/wamux.sock on macOS (the system volume is read-only there, so /run
+# cannot exist). A per-user LaunchAgent sets WAMUX_SOCKET_PATH instead.
 socket_path = "/run/wamux.sock"
 # Socket file mode: 432 == 0o660. TOML also accepts 0o660; env vars need decimal.
 socket_mode = 432

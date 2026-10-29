@@ -79,10 +79,22 @@ pub struct Config {
     pub enable_reflection: bool,
 }
 
+/// The default socket path on `target_os` (a `std::env::consts::OS` value, #231).
+///
+/// macOS cannot create `/run`: the system volume is read-only, so a bind there
+/// fails at startup. `/var/run` is the same root-only runtime directory there
+/// and is cleared at boot, which is the lifetime a socket file wants.
+pub fn default_socket_path(target_os: &str) -> &'static str {
+    match target_os {
+        "macos" => "/var/run/wamux.sock",
+        _ => "/run/wamux.sock",
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
-            socket_path: "/run/wamux.sock".to_string(),
+            socket_path: default_socket_path(std::env::consts::OS).to_string(),
             socket_mode: 0o660,
             socket_group: None,
             allowed_uids: Vec::new(),
