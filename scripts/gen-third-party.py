@@ -123,17 +123,30 @@ def check_covers(targets):
 
 
 def read_license_files(directory):
-    """License files named in LICENSE_FILENAMES found directly in directory."""
+    """License files in directory whose name is in LICENSE_FILENAMES, compared
+    without regard to case, in LICENSE_FILENAMES order, named as on disk.
+
+    The directory is listed rather than probed by name (#231): a probe finds
+    `LICENSE-Apache` as `LICENSE-APACHE` on a case-insensitive filesystem (macOS)
+    and not on Linux, so the generated file would differ between the two."""
+    try:
+        entries = sorted(p for p in directory.iterdir() if p.is_file())
+    except OSError:
+        return []
     found = []
-    for name in LICENSE_FILENAMES:
-        path = directory / name
-        if not path.is_file():
-            continue
-        try:
-            found.append((name, path.read_text(encoding="utf-8", errors="replace").strip()))
-        except OSError:
-            pass
-    return found
+    for wanted in LICENSE_FILENAMES:
+        for path in entries:
+            if path.name.lower() == wanted.lower():
+                found.append((path.name, read_text_or_none(path)))
+    return [(name, text) for name, text in found if text is not None]
+
+
+def read_text_or_none(path):
+    """The stripped text of path, or None when it cannot be read."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
 
 
 def checkout_license_texts(start):

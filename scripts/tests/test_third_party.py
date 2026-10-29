@@ -174,6 +174,21 @@ class WalkUp(unittest.TestCase):
         package = self.crate_in(checkout, "git+https://example.invalid/x?rev=1#1")
         self.assertEqual(self.gen.license_texts(package), [])
 
+    def test_license_file_names_match_without_regard_to_case(self):
+        # #231: simdutf8 ships `LICENSE-Apache`. A lookup by exact name found it
+        # on macOS (APFS ignores case) and not on Linux, so the generated file
+        # differed between the two. Matching is by listing the directory, the
+        # same on every filesystem, and the name recorded is the one on disk.
+        crate = self.base / "crate"
+        crate.mkdir()
+        (crate / "LICENSE-Apache").write_text("Apache License")
+        (crate / "copying").write_text("GNU notice")
+        (crate / "LICENSE-THIRD-PARTY").write_text("not a license file name")
+        self.assertEqual(
+            self.gen.read_license_files(crate),
+            [("LICENSE-Apache", "Apache License"), ("copying", "GNU notice")],
+        )
+
     def test_registry_packages_do_not_walk_up(self):
         checkout = self.base / "pkg"
         checkout.mkdir()
