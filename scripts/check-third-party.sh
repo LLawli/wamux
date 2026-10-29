@@ -36,4 +36,9 @@ if ! diff -q "$FILE" "$fresh" >/dev/null; then
     diff -u "$FILE" "$fresh" | head -40 >&2 || true
     fail "$FILE is out of date with the dependency graph. Fix: $FIX"
 fi
+# The PKG ships these same notices (#231): an Apple target that links a crate
+# the musl graph lacks would ship it without its license text.
+python3 scripts/gen-third-party.py --check-covers aarch64-apple-darwin x86_64-apple-darwin \
+    || fail "an Apple target links crates $FILE does not list"
+
 echo "third-party licenses ok: $count crates, whatsapp-rust $locked"

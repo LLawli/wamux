@@ -35,13 +35,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = REPO_ROOT / "THIRD-PARTY-LICENSES.md"
 
 
-def cargo_metadata():
-    """`cargo metadata --locked` for TARGET, run at the repository root (#83).
+def cargo_metadata(target=TARGET):
+    """`cargo metadata --locked` for `target` (the musl TARGET by default), run
+    at the repository root (#83).
 
     --locked: a stale Cargo.lock must fail here instead of being rewritten
     quietly, or the file would describe a graph nobody committed."""
     result = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--filter-platform", TARGET,
+        ["cargo", "metadata", "--format-version", "1", "--filter-platform", target,
          "--locked"],
         capture_output=True, text=True, check=True, cwd=REPO_ROOT)
     return json.loads(result.stdout)
@@ -87,6 +88,38 @@ def shipped_packages(meta):
     members = set(meta.get("workspace_members", []))
     ids = reachable_ids(meta, find_root_id(meta)) - members
     return sorted((by_id[i] for i in ids), key=lambda p: (p["name"], p["version"]))
+
+
+def uncovered(shipped, other):
+    """#231: the `(name, version)` pairs in `other` that `shipped` lacks, sorted.
+    A target whose graph has a crate the license file does not list ships that
+    crate without its notice."""
+    return sorted(other - shipped)
+
+
+def shipped_pairs(target):
+    """The `(name, version)` pairs `target` links, by the same walk as the file."""
+    return {(p["name"], p["version"]) for p in shipped_packages(cargo_metadata(target))}
+
+
+def check_covers(targets):
+    """#231: exit code of `--check-covers`. Each target's graph must be a subset
+    of the musl graph this file lists, because the macOS PKG ships the same
+    notices. Writes no file."""
+    listed = shipped_pairs(TARGET)
+    graphs = {target: shipped_pairs(target) for target in targets}
+    missing = {target: uncovered(listed, graph) for target, graph in graphs.items()}
+    for target, pairs in missing.items():
+        if not pairs:
+            print(f"covered: {target} ({len(graphs[target])} crates)")
+    gaps = [(name, version, target) for target, pairs in missing.items() for name, version in pairs]
+    for name, version, target in gaps:
+        print(f"uncovered: {name} {version} ({target})", file=sys.stderr)
+    if gaps:
+        print("THIRD-PARTY-LICENSES.md lacks these crates. Fix: list them by "
+              "generating the file from a graph that includes them "
+              "(scripts/gen-third-party.py)", file=sys.stderr)
+    return 1 if gaps else 0
 
 
 def read_license_files(directory):
@@ -192,7 +225,11 @@ def main(argv=None):
     the graph comes back empty. Returns the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--check-covers", nargs="+", metavar="TARGET",
+                        help="write nothing; fail when a target links a crate the file lacks (#231)")
     args = parser.parse_args(argv)
+    if args.check_covers:
+        return check_covers(args.check_covers)
 
     packages = shipped_packages(cargo_metadata())
     if not packages:

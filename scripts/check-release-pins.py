@@ -16,11 +16,12 @@ Rules, checked line by line (no YAML parser, stdlib only):
   R3  every `FROM` of every root `Dockerfile*` carries `@sha256:<64 hex>`
       ("FROM without a digest"); `scratch` is exempt.
   R4  `cargo build`/`cargo install` is `--locked` in every root `Dockerfile*`,
-      scripts/release-tarball.sh and the workflows, `\\` continuations joined
+      scripts/release-tarball.sh, scripts/release-pkg.sh and the workflows, `\\` continuations joined
       ("cargo without --locked").
   R5  release.yml: job `image` has `needs: release` ("image does not need release").
-  R6  release.yml: jobs `release` and `image` use actions/attest-build-provenance
-      and grant `id-token: write` and `attestations: write`.
+  R6  release.yml: jobs `linux`, `macos` and `image` (the ones that produce an
+      artifact) use actions/attest-build-provenance and grant `id-token: write`
+      and `attestations: write`. `release` only publishes what they built.
   R7  .github/dependabot.yml covers github-actions, docker and cargo.
 
 #218, one static musl binary shared by the tarball and the image:
@@ -29,9 +30,9 @@ Rules, checked line by line (no YAML parser, stdlib only):
       release binary through `build-contexts` with `binary=` ("image job does
       not take the release binary"); runs scripts/check-image-binary.sh ("image
       job does not compare the image binary").
-  R9  release.yml, job `release`: runs scripts/check-static-binary.py ("release
+  R9  release.yml, job `linux`: runs scripts/check-static-binary.py ("linux
       job does not check the binary is static") and uses actions/upload-artifact
-      ("release job does not upload the binary").
+      ("linux job does not upload the binary").
   R10 the default Dockerfile has a `binary` stage ("no binary stage") and
       its last `FROM` is scratch ("final stage is not FROM scratch"), and the
       final stage copies from no stage that runs `cargo build`: the release
@@ -39,6 +40,23 @@ Rules, checked line by line (no YAML parser, stdlib only):
       ("final stage depends on the compile stage").
   R11 scripts/release-tarball.sh names x86_64-unknown-linux-musl and its cargo
       build passes `--target` ("does not build x86_64-unknown-linux-musl").
+
+#231, a universal macOS PKG next to the musl tarball:
+
+  R12 release.yml, job `release`: `needs:` holds `linux` and `macos` ("release
+      does not need linux" / "release does not need macos"), so nothing is
+      published unless both builds passed.
+  R13 release.yml, job `macos`: runs `scripts/ci.sh --no-postgres` ("macos job
+      does not run the gates"), scripts/release-pkg.sh ("macos job does not
+      build the pkg") and scripts/check-macos-pkg.sh ("macos job does not check
+      the pkg").
+  R14 scripts/release-pkg.sh names both Apple targets and its cargo build
+      passes `--target` ("does not build aarch64-apple-darwin" / "does not
+      build x86_64-apple-darwin").
+  R15 ci.yml: a job on a `macos-*` runner runs `scripts/ci.sh --no-postgres`
+      ("no macOS CI job"), and a job runs both scripts/release-pkg.sh and
+      scripts/check-macos-pkg.sh ("CI does not build the pkg"), so the PKG path
+      is exercised on every PR and not only at a tag.
 
 Floor: at least MIN_WORKFLOWS workflows and one `FROM`, so a layout change
 cannot make the check pass by scanning nothing ("scanned nothing").
@@ -51,8 +69,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 MIN_WORKFLOWS = 2
 ECOSYSTEMS = ("github-actions", "docker", "cargo")
-PUBLISH_JOBS = ("release", "image")
+ATTEST_JOBS = ("linux", "macos", "image")
 MUSL_TARGET = "x86_64-unknown-linux-musl"
+APPLE_TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin")
+GATES_COMMAND = "scripts/ci.sh --no-postgres"
+PKG_BUILD_SCRIPT = "scripts/release-pkg.sh"
+PKG_CHECK_SCRIPT = "scripts/check-macos-pkg.sh"
 DEFAULT_DOCKERFILE = "Dockerfile"
 PERMISSIONS = ("id-token: write", "attestations: write")
 ATTEST_ACTION = "actions/attest-build-provenance"
@@ -160,8 +182,8 @@ def job_blocks(lines: list[str]) -> dict[str, tuple[int, list[str]]]:
     return blocks
 
 
-def needs_release(block: list[str]) -> bool:
-    """True when the job's `needs:` is `release` or a list that holds it."""
+def needs_job(block: list[str], job: str) -> bool:
+    """True when the job's `needs:` is `job` or a list (flow or block) that holds it."""
     for index, line in enumerate(block):
         match = NEEDS.match(line)
         if not match:
@@ -169,30 +191,34 @@ def needs_release(block: list[str]) -> bool:
         value = match.group(1).split("#")[0]
         items = [entry.strip() for entry in block[index + 1 :] if entry.strip().startswith("- ")]
         listed = [item[2:].strip() for item in items] if not value.strip() else []
-        return "release" in re.split(r"[\s,\[\]]+", value) or "release" in listed
+        return job in re.split(r"[\s,\[\]]+", value) or job in listed
     return False
 
 
 def check_release_jobs(where: str, lines: list[str]) -> list[Finding]:
-    """R5 and R6 over release.yml."""
+    """R5, R6, R8, R9, R12 and R13 over release.yml."""
     blocks = job_blocks(lines)
     found: list[Finding] = []
-    if "image" in blocks and not needs_release(blocks["image"][1]):
+    if "image" in blocks and not needs_job(blocks["image"][1], "release"):
         found.append((where, blocks["image"][0], "image does not need release"))
-    if "image" in blocks:
-        found += check_image_job(where, *blocks["image"])
-    if "release" in blocks:
-        found += check_release_binary(where, *blocks["release"])
-    for name in PUBLISH_JOBS:
-        if name not in blocks:
-            continue
-        number, block = blocks[name]
-        text = "\n".join(block)
-        if ATTEST_ACTION not in text:
-            found.append((where, number, f"job {name}: no provenance attestation"))
-        for permission in PERMISSIONS:
-            if not re.search(rf"^\s+{re.escape(permission)}\s*$", text, re.MULTILINE):
-                found.append((where, number, f"job {name} lacks {permission}"))
+    for name, check in JOB_CHECKS.items():
+        if name in blocks:
+            found += check(where, *blocks[name])
+    for name in ATTEST_JOBS:
+        if name in blocks:
+            found += check_attestation(where, name, *blocks[name])
+    return found
+
+
+def check_attestation(where: str, name: str, number: int, block: list[str]) -> list[Finding]:
+    """R6 over one artifact-producing job."""
+    text = "\n".join(block)
+    found: list[Finding] = []
+    if ATTEST_ACTION not in text:
+        found.append((where, number, f"job {name}: no provenance attestation"))
+    for permission in PERMISSIONS:
+        if not re.search(rf"^\s+{re.escape(permission)}\s*$", text, re.MULTILINE):
+            found.append((where, number, f"job {name} lacks {permission}"))
     return found
 
 
@@ -214,15 +240,43 @@ def check_image_job(where: str, number: int, block: list[str]) -> list[Finding]:
     return found
 
 
-def check_release_binary(where: str, number: int, block: list[str]) -> list[Finding]:
-    """R9 over the `release` job."""
+def check_linux_binary(where: str, number: int, block: list[str]) -> list[Finding]:
+    """R9 over the `linux` job."""
     text = run_text(block)
     found: list[Finding] = []
     if "scripts/check-static-binary.py" not in text:
-        found.append((where, number, "release job does not check the binary is static"))
+        found.append((where, number, "linux job does not check the binary is static"))
     if "actions/upload-artifact" not in text:
-        found.append((where, number, "release job does not upload the binary"))
+        found.append((where, number, "linux job does not upload the binary"))
     return found
+
+
+def check_release_needs(where: str, number: int, block: list[str]) -> list[Finding]:
+    """R12 over the `release` job."""
+    return [
+        (where, number, f"release does not need {builder}")
+        for builder in ("linux", "macos")
+        if not needs_job(block, builder)
+    ]
+
+
+def check_macos_release_job(where: str, number: int, block: list[str]) -> list[Finding]:
+    """R13 over the `macos` job."""
+    text = run_text(block)
+    required = (
+        (GATES_COMMAND, "macos job does not run the gates"),
+        (PKG_BUILD_SCRIPT, "macos job does not build the pkg"),
+        (PKG_CHECK_SCRIPT, "macos job does not check the pkg"),
+    )
+    return [(where, number, reason) for needle, reason in required if needle not in text]
+
+
+JOB_CHECKS = {
+    "image": check_image_job,
+    "linux": check_linux_binary,
+    "macos": check_macos_release_job,
+    "release": check_release_needs,
+}
 
 
 def check_default_dockerfile(where: str, lines: list[str]) -> list[Finding]:
@@ -272,6 +326,35 @@ def check_musl_tarball(where: str, lines: list[str]) -> list[Finding]:
     return [(where, 1, f"does not build {MUSL_TARGET}")]
 
 
+def check_pkg_script(where: str, lines: list[str]) -> list[Finding]:
+    """R14 over scripts/release-pkg.sh. The triples may sit in a loop variable the
+    build line expands, so the file must name each one and the build pass `--target`."""
+    commands = [text for _, text in joined_commands(lines)]
+    targeted = any(CARGO_CALL.search(text) and "--target" in text for text in commands)
+    return [
+        (where, 1, f"does not build {target}")
+        for target in APPLE_TARGETS
+        if not (targeted and any(target in text for text in commands))
+    ]
+
+
+def runs_on_macos(block: list[str]) -> bool:
+    """True when the job's `runs-on:` is a `macos-*` runner."""
+    matches = (RUNS_ON.match(line) for line in block)
+    return any(m and m.group(1).startswith("macos-") for m in matches)
+
+
+def check_ci_macos(where: str, lines: list[str]) -> list[Finding]:
+    """R15 over ci.yml."""
+    texts = [(run_text(block), block) for _, block in job_blocks(lines).values()]
+    found: list[Finding] = []
+    if not any(GATES_COMMAND in text and runs_on_macos(block) for text, block in texts):
+        found.append((where, 1, "no macOS CI job runs the gates"))
+    if not any(PKG_BUILD_SCRIPT in text and PKG_CHECK_SCRIPT in text for text, _ in texts):
+        found.append((where, 1, "CI does not build the pkg"))
+    return found
+
+
 def check_dependabot(root: Path) -> list[Finding]:
     """R7."""
     path = root / ".github" / "dependabot.yml"
@@ -280,6 +363,19 @@ def check_dependabot(root: Path) -> list[Finding]:
         return [(where, 1, "no dependabot config")]
     covered = {m.group(1) for line in read_lines(path) if (m := ECOSYSTEM.search(line))}
     return [(where, 1, f"dependabot does not cover {eco}") for eco in ECOSYSTEMS if eco not in covered]
+
+
+def scan_release_scripts(root: Path) -> list[Finding]:
+    """R4, R11 and R14 over the two scripts that build the shipped artifacts."""
+    tarball = "scripts/release-tarball.sh"
+    tarball_lines = read_lines(root / tarball)
+    pkg_lines = read_lines(root / PKG_BUILD_SCRIPT)
+    return [
+        *check_locked(tarball, tarball_lines),
+        *check_musl_tarball(tarball, tarball_lines),
+        *check_locked(PKG_BUILD_SCRIPT, pkg_lines),
+        *check_pkg_script(PKG_BUILD_SCRIPT, pkg_lines),
+    ]
 
 
 def scan(root: Path) -> list[Finding]:
@@ -297,17 +393,15 @@ def scan(root: Path) -> list[Finding]:
         findings += check_locked(rel(root, path), lines)
         if path.name == "release.yml":
             findings += check_release_jobs(rel(root, path), lines)
+        if path.name == "ci.yml":
+            findings += check_ci_macos(rel(root, path), lines)
     for path in (p for p in dockerfiles if p.is_file()):
         lines = read_lines(path)
         findings += check_from_digests(path.name, lines)
         findings += check_locked(path.name, lines)
     if default_lines:
         findings += check_default_dockerfile(DEFAULT_DOCKERFILE, default_lines)
-    tarball = "scripts/release-tarball.sh"
-    tarball_lines = read_lines(root / tarball)
-    findings += check_locked(tarball, tarball_lines)
-    findings += check_musl_tarball(tarball, tarball_lines)
-    return findings + check_dependabot(root)
+    return findings + scan_release_scripts(root) + check_dependabot(root)
 
 
 def main(argv: list[str]) -> int:
@@ -320,7 +414,7 @@ def main(argv: list[str]) -> int:
     if findings:
         print(f"release pins FAILED: {len(findings)} violations")
         return 1
-    print("release pins ok: actions by SHA, FROM by digest, cargo --locked, image gated, one static musl binary, provenance attested")
+    print("release pins ok: actions by SHA, FROM by digest, cargo --locked, image gated, one static musl binary, a macOS PKG built and checked, provenance attested")
     return 0
 
 

@@ -70,6 +70,59 @@ jobs:
           DATABASE_URL: postgres://wamux:wamux@localhost:5433/wamux
         run: scripts/ci.sh
 
+  # The same database-free gates on macOS (#231), so a change that only breaks
+  # there (a Linux-only API, a /proc read) fails the PR, not the release. No
+  # Postgres: macOS runners have no Docker, and the SQLite and Turso engines
+  # are what a Mac install uses.
+  macos:
+    name: scripts/ci.sh (macos, sqlite)
+    # Pinned, not macos-latest: the label would move under the cache and the SDK.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: true
+
+      # ci.sh runs python scripts that import tomllib (3.11+), and the system
+      # python3 on a macOS runner is older than that.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - run: scripts/ci.sh --no-postgres
+
+  # The release PKG built and installed on every PR (#231), so the packaging
+  # path is exercised before a tag instead of failing on it. It runs beside the
+  # `macos` job, not after it, to keep the PR's wall clock at the slower one.
+  macos-pkg:
+    name: macos pkg
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: true
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # The universal binary needs both Apple targets; the toolchain from
+      # rust-toolchain.toml only installs the host's.
+      - name: apple targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      # The manifest is the only version a PR has (there is no tag), read the
+      # way release-tarball.sh reads it.
+      - name: build and check the pkg
+        run: |
+          version=$(awk '/^\[workspace\.package\]/{p=1} p && /^version = /{gsub(/[",]/,"",$3); print $3; exit}' Cargo.toml)
+          scripts/release-pkg.sh "$version"
+          scripts/check-macos-pkg.sh "dist/wamux-${version}-macos-universal.pkg"
+
   audit:
     name: cargo audit
     runs-on: ubuntu-26.04
