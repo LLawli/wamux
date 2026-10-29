@@ -106,7 +106,32 @@ systemctl --user daemon-reload && systemctl --user enable --now wamux
 The shipped unit uses the SQLite engine, so there is nothing else to install.
 Point `WAMUX_DATABASE_URL` at a `postgres://` DSN when you outgrow it.
 
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers both setups in full
+### macOS (PKG)
+
+Each release carries `wamux-<version>-macos-universal.pkg`, one installer for
+Apple silicon and Intel. It is **not signed or notarized by Apple**, so a PKG
+downloaded in a browser is blocked by Gatekeeper: open System Settings, Privacy
+& Security, and choose **Open Anyway** next to the blocked installer. From a
+terminal there is no quarantine flag to get past:
+
+```sh
+curl -LO https://github.com/LLawli/wamux/releases/download/v<version>/wamux-<version>-macos-universal.pkg
+sudo installer -pkg wamux-<version>-macos-universal.pkg -target /
+```
+
+The PKG installs `/usr/local/bin/wamux` and starts nothing. The docs, the
+licenses, `wamux.toml.example` and an example LaunchAgent land in
+`/usr/local/share/wamux/`; the
+[macOS section of the deployment guide](docs/DEPLOYMENT.md#macos-launchagent)
+shows how to run it at login. The socket defaults to `/var/run/wamux.sock` on
+macOS (`/run` cannot exist there), which only root can create: as a regular
+user, set `WAMUX_SOCKET_PATH`, as the LaunchAgent does.
+
+The CI installs this PKG on a macOS runner on every pull request and starts the
+installed daemon. It has not been run on a real Mac by the maintainer: treat the
+Gatekeeper steps above, and the LaunchAgent, as untested by hand.
+
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers the setups in full
 ([native](docs/DEPLOYMENT.md#native-systemd),
 [Docker](docs/DEPLOYMENT.md#docker-consumer-on-the-host)), reaching the socket
 [from another container](docs/DEPLOYMENT.md#docker-consumer-in-another-container),
