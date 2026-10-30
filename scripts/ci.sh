@@ -210,6 +210,12 @@ scripts/check-doc-language.py
 stage "release pins"
 scripts/check-release-pins.py
 
+# #237: rust-cache hashes every installed toolchain into its key, so a job that
+# caches before dropping the runner's preinstalled stable gets a key the image
+# moves. Pure text check.
+stage "rust cache key"
+scripts/check-rust-cache.py
+
 # #68: an RPC of GroupService no socket test calls is an RPC nobody pinned. The
 # count (21) makes a new RPC fail here until it gets a test. Pure text check.
 stage "GroupService RPC coverage"

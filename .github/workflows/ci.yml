@@ -20,6 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # rust-cache puts every toolchain `rustup toolchain list` reports into its
+      # key hash. The hosted images (Linux and macOS) ship a preinstalled stable
+      # whose version differs between images of the same label, so the same
+      # commit restores on one image and compiles cold on the next. The cache
+      # step runs inside the action below, after the install, so only a step
+      # before it can take the stable out of the hash: drop every toolchain and
+      # let the action install just the nightly from rust-toolchain.toml (#237).
+      # With no toolchain installed, the loop's one "name" is rustup's
+      # "no installed toolchains" line, which uninstall skips with exit 0.
+      - name: drop the runner's toolchains
+        run: rustup toolchain list --quiet | while read -r name; do rustup toolchain uninstall "$name"; done
+
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           # Reads channel and components from rust-toolchain.toml, and caches
@@ -61,6 +73,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Keeps the runner image's stable out of the cache key, see the `quick` job in ci.yml (#237).
+      - name: drop the runner's toolchains
+        run: rustup toolchain list --quiet | while read -r name; do rustup toolchain uninstall "$name"; done
+
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache: true
@@ -80,6 +96,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Keeps the runner image's stable out of the cache key, see the `quick` job in ci.yml (#237).
+      - name: drop the runner's toolchains
+        run: rustup toolchain list --quiet | while read -r name; do rustup toolchain uninstall "$name"; done
 
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
@@ -101,6 +121,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Keeps the runner image's stable out of the cache key, see the `quick` job in ci.yml (#237).
+      - name: drop the runner's toolchains
+        run: rustup toolchain list --quiet | while read -r name; do rustup toolchain uninstall "$name"; done
 
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
