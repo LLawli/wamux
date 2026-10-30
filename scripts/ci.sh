@@ -30,6 +30,8 @@ if [[ "$FULL" == 1 && "$NO_POSTGRES" == 1 ]]; then
   exit 2
 fi
 
+source "$(dirname "$0")/lib/test-filter.sh"
+
 stage() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 
 # Name-filtered gates pass vacuously if the filter matches zero tests (cargo
@@ -54,14 +56,11 @@ build_test_binaries() {
   stage "build test binaries ($*)"
   cargo test -p wamux --no-run "$@"
 }
-TURSO_STORAGE_SUITES=(--test storage_backend --test bincode_upgrade --test bincode_upgrade_notice
-  --test store_parity --test existing_store --test store_file_mode --test store_encryption
-  --test store_conversion --test store_rotation --test group_commit_turso
-  --test group_commit_turso_accounts)
-STRESS_SUITES=(--test stress_handshake --test stress_newsletter_parse --test stress_newsletter_history
-  --test stress_newsletter_poll_vote --test group_service --test contact_service --test call_service
-  --test logout_events --test media_service --test newsletter_service --test messaging_service
-  --test media_spool_rss)
+# The storage suites share one binary (`storage`), the service suites another
+# (`services`); a suite is picked out of its binary by name with
+# must_run_matching, "suite AND engine" as one regex (#235).
+TURSO_STORAGE_SUITES=(--test storage --test bincode_upgrade_notice)
+STRESS_SUITES=(--test stress_handshake --test services --test media_spool_rss)
 
 # The Turso engine (#106) is behind the daemon's off-by-default `turso`
 # feature, so its tests exist only in a `--features turso` build. Its storage
@@ -69,20 +68,16 @@ STRESS_SUITES=(--test stress_handshake --test stress_newsletter_parse --test str
 # the unit tests are the `$N` rewrite, the DSN and the scheme dispatch.
 turso_storage_cases() {
   must_run_tests --features turso --lib storage::
-  must_run_tests --features turso --test storage_backend turso_
-  must_run_tests --features turso --test bincode_upgrade turso_
+  must_run_matching --features turso --test storage -- \
+    '^(storage_backend|bincode_upgrade|store_parity|existing_store|store_file_mode)::.*turso_'
   must_run_tests --features turso --test bincode_upgrade_notice turso_
-  must_run_tests --features turso --test store_parity turso_
-  must_run_tests --features turso --test existing_store turso_
-  must_run_tests --features turso --test store_file_mode turso_
   # #164: sealed columns on turso, and the whole parity suite with the key on.
-  must_run_tests --features turso --test store_encryption turso_
-  must_run_tests --features turso --test store_conversion turso_
-  must_run_tests --features turso --test store_rotation turso_
-  WAMUX_TEST_ENCRYPT=1 must_run_tests --features turso --test store_parity turso_
+  must_run_matching --features turso --test storage -- \
+    '^(store_encryption|store_conversion|store_rotation)::.*turso_'
+  WAMUX_TEST_ENCRYPT=1 must_run_matching --features turso --test storage -- '^store_parity::.*turso_'
   # #172: group commit on the real engine, under real concurrency.
-  must_run_tests --features turso --test group_commit_turso turso_
-  must_run_tests --features turso --test group_commit_turso_accounts turso_
+  must_run_matching --features turso --test storage -- \
+    '^(group_commit_turso|group_commit_turso_accounts)::.*turso_'
 }
 
 # wamux-tools (#64): the shared client, the env contract, the exit code, and
@@ -218,28 +213,28 @@ scripts/check-release-pins.py
 # #68: an RPC of GroupService no socket test calls is an RPC nobody pinned. The
 # count (21) makes a new RPC fail here until it gets a test. Pure text check.
 stage "GroupService RPC coverage"
-scripts/check-service-coverage.py GroupService crates/wamux/tests/group_service 25
+scripts/check-service-coverage.py GroupService crates/wamux/tests/services/group_service 25
 
 # #69: same net under MediaService, whose one RPC is DownloadMedia.
 stage "MediaService RPC coverage"
-scripts/check-service-coverage.py MediaService crates/wamux/tests/media_service.rs 1
+scripts/check-service-coverage.py MediaService crates/wamux/tests/services/media_service.rs 1
 
 # #70: same net under NewsletterService (10 RPCs).
 stage "NewsletterService RPC coverage"
-scripts/check-service-coverage.py NewsletterService crates/wamux/tests/newsletter_service 10
+scripts/check-service-coverage.py NewsletterService crates/wamux/tests/services/newsletter_service 10
 
 # #71: same net under MessagingService (23 RPCs).
 stage "MessagingService RPC coverage"
-scripts/check-service-coverage.py MessagingService crates/wamux/tests/messaging_service 24
+scripts/check-service-coverage.py MessagingService crates/wamux/tests/services/messaging_service 24
 
 # #197: same net under ContactService (15 RPCs). Its older RPCs are also tested
 # in grpc_server and group_service; this suite calls every one of them.
 stage "ContactService RPC coverage"
-scripts/check-service-coverage.py ContactService crates/wamux/tests/contact_service 15
+scripts/check-service-coverage.py ContactService crates/wamux/tests/services/contact_service 15
 
 # #200: same net under CallService (1 RPC, RejectCall).
 stage "CallService RPC coverage"
-scripts/check-service-coverage.py CallService crates/wamux/tests/call_service.rs 1
+scripts/check-service-coverage.py CallService crates/wamux/tests/services/call_service.rs 1
 
 if [[ "$NO_POSTGRES" == 1 ]]; then
   # The database-free subset. NOT the whole suite with a flag: storage_backend
@@ -247,45 +242,40 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   # with both engines present), and the stress suite is database-backed too.
   # Those are the full run's job; this one exists for fast PR feedback and for
   # a machine with no container runtime.
-  build_test_binaries --lib --test grpc_server --test event_subscription --test reflection \
-    --test peer_allowlist --test socket_bind --test socket_bind_umask --test storage_backend \
-    --test bincode_upgrade --test bincode_upgrade_notice --test store_parity --test store_encryption \
-    --test store_conversion --test store_rotation --test store_cli --test existing_store \
-    --test group_commit_sqlite
+  build_test_binaries --lib --test daemon --test socket_bind_umask --test storage \
+    --test bincode_upgrade_notice
 
   stage "no-postgres: unit tests"
   must_run_tests --lib
 
   stage "no-postgres: service suites (sqlite engine)"
-  WAMUX_TEST_ENGINE=sqlite must_run_tests --test grpc_server --test event_subscription \
-    --test reflection --test peer_allowlist
+  WAMUX_TEST_ENGINE=sqlite must_run_matching --test daemon -- \
+    '^(grpc_server|event_subscription|reflection|peer_allowlist)::'
 
   # #77: the socket bind suites touch no database at all.
   stage "no-postgres: socket bind"
-  must_run_tests --test socket_bind --test socket_bind_umask
+  must_run_matching --test daemon -- '^socket_bind::'
+  must_run_tests --test socket_bind_umask
 
   stage "no-postgres: sqlite-only storage cases"
-  must_run_tests --test storage_backend sqlite_
-  must_run_tests --test bincode_upgrade sqlite_
+  must_run_matching --test storage -- \
+    '^(storage_backend|bincode_upgrade|store_parity)::.*sqlite_'
   must_run_tests --test bincode_upgrade_notice sqlite_
-  must_run_tests --test store_parity sqlite_
   # #164: encryption at rest, and the parity suite again with the key on.
-  must_run_tests --test store_encryption sqlite_
-  must_run_tests --test store_conversion sqlite_
-  must_run_tests --test store_rotation sqlite_
-  must_run_tests --test store_cli
-  WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
+  must_run_matching --test storage -- \
+    '^(store_encryption|store_conversion|store_rotation)::.*sqlite_'
+  must_run_matching --test storage -- '^store_cli::'
+  WAMUX_TEST_ENCRYPT=1 must_run_matching --test storage -- '^store_parity::.*sqlite_'
   # #65: a store the pre-unification code wrote, opened on the unified SQL.
-  must_run_tests --test existing_store sqlite_
+  must_run_matching --test storage -- '^existing_store::.*sqlite_'
   # #173: group commit on the sqlx SQLite engine, under real concurrency.
-  must_run_tests --test group_commit_sqlite sqlite_
+  must_run_matching --test storage -- '^group_commit_sqlite::.*sqlite_'
 
-  build_test_binaries --features turso --lib "${TURSO_STORAGE_SUITES[@]}" --test grpc_server \
-    --test event_subscription --test reflection
+  build_test_binaries --features turso --lib "${TURSO_STORAGE_SUITES[@]}" --test daemon
   stage "no-postgres: turso engine (storage cases and service suites)"
   turso_storage_cases
-  WAMUX_TEST_ENGINE=turso must_run_tests --features turso --test grpc_server \
-    --test event_subscription --test reflection
+  WAMUX_TEST_ENGINE=turso must_run_matching --features turso --test daemon -- \
+    '^(grpc_server|event_subscription|reflection)::'
 
   stage "no-postgres: wamux-tools (sqlite daemon fixture)"
   must_run_pkg_tests wamux-tools "${TOOLS_NO_PG_SUITES[@]}"
@@ -340,67 +330,13 @@ stage "stress tests (fast: M1/M2a/M2b)"
 cargo test -p wamux --features stress --test stress_handshake
 WAMUX_TEST_ENGINE=sqlite cargo test -p wamux --features stress --test stress_handshake
 
-# Channel metadata through the real library, against answers the mock plays
-# back (#56): the relayed tokens, NotFound, the list skip, the MEX refusal, and
-# canaries on the two losses accepted when the core stopped querying itself.
-stage "stress tests (newsletter metadata)"
-must_run_tests --features stress --test stress_newsletter_parse
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newsletter_parse
-
-# Channel history through the real library over captured pages (#56): every
-# edge case #40, #43, #44 and #51 pinned, asserted by value.
-stage "stress tests (newsletter history)"
-must_run_tests --features stress --test stress_newsletter_history
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newsletter_history
-
-# The channel poll vote, own add-ons and live-update subscription (#26): the
-# stanza a vote puts on the wire, and the captured answers the reads relay.
-stage "stress tests (newsletter poll vote)"
-must_run_tests --features stress --test stress_newsletter_poll_vote
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test stress_newsletter_poll_vote
-
-# GroupService through the socket (#68): the five reads replay answers captured
-# live, the writes are built in the shape the library's parser accepts.
-stage "stress tests (group service)"
-must_run_tests --features stress --test group_service
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test group_service
-
-# ContactService through the socket (#197): the blocklist and SetAbout against
-# the IQ shapes whatsapp-rust 6f07e3a builds, and a status from every RPC.
-stage "stress tests (contact service)"
-must_run_tests --features stress --test contact_service
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test contact_service
-
-# CallService through the socket (#200): RejectCall against the <call> stanza
-# the library builds, recorded by the mock server.
-stage "stress tests (call service)"
-must_run_tests --features stress --test call_service
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test call_service
-
-# Logout through the socket (#205): the LoggedOut event reaches a subscriber
-# and the account is left logged out, which the library's own callback queue
-# does not guarantee.
-stage "stress tests (logout events)"
-must_run_tests --features stress --test logout_events
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test logout_events
-
-# MediaService through the socket (#69): DownloadMedia against a loopback CDN,
-# reached by the production ureq client behind a loopback-only https rewrite.
-stage "stress tests (media service)"
-must_run_tests --features stress --test media_service
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test media_service
-
-# NewsletterService through the socket (#70): the five reads replay answers
-# captured live, the vote is checked against the stanza measured in #26.
-stage "stress tests (newsletter service)"
-must_run_tests --features stress --test newsletter_service
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test newsletter_service
-
-# MessagingService through the socket (#71): every send is opened by a parked
-# Signal peer the mock serves, and chat actions are read back from the patch.
-stage "stress tests (messaging service)"
-must_run_tests --features stress --test messaging_service
-WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test messaging_service
+# The service suites, one binary (#235), through the socket against the mock:
+# channel metadata, history and poll vote (#56, #26, #70), GroupService (#68),
+# ContactService (#197), CallService (#200), logout (#205), MediaService (#69)
+# and MessagingService (#71).
+stage "stress tests (service suites)"
+must_run_tests --features stress --test services
+WAMUX_TEST_ENGINE=sqlite must_run_tests --features stress --test services
 
 # The media spool's memory gate (#79): 64 MiB sent and downloaded must grow the
 # process's peak RSS by under 24 MiB. A test binary of its own, because VmHWM
@@ -411,18 +347,18 @@ must_run_tests --features stress --test media_spool_rss
 # The store file is a secret (#75): the real daemon creates it 0600 under a
 # permissive umask and warns about a loose one. No database, no account.
 stage "store file mode"
-must_run_tests --test store_file_mode sqlite_
+must_run_matching --test storage -- '^store_file_mode::.*sqlite_'
 
 # Encryption at rest (#164): every sealed column on each engine (Postgres in a
 # throwaway database), and the whole sqlite parity suite with the key on. The
 # raw byte-parity tests skip when the key is on: sealed blobs differ by nonce.
 stage "store encryption"
-must_run_tests --test store_encryption
+must_run_matching --test storage -- '^store_encryption::'
 # Turning a key on over a store with accounts, resuming, and `wamux store decrypt` (#165).
-must_run_tests --test store_conversion
-must_run_tests --test store_cli
-must_run_tests --test existing_store sqlite_store_written_before_unification_is_converted
-WAMUX_TEST_ENCRYPT=1 must_run_tests --test store_parity sqlite_
+must_run_matching --test storage -- '^(store_conversion|store_cli)::'
+must_run_matching --test storage -- \
+  '^existing_store::sqlite_store_written_before_unification_is_converted'
+WAMUX_TEST_ENCRYPT=1 must_run_matching --test storage -- '^store_parity::.*sqlite_'
 
 if [[ "$FULL" == 1 ]]; then
   stage "FULL: load test (HOL blocking + gap)"
