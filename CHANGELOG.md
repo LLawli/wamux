@@ -47,6 +47,16 @@ has to follow them.
 
 ### Fixed
 
+- **CI jobs keep their Rust cache when the runner image changes** (issue
+  #237). rust-cache hashes every installed toolchain into its key, and the
+  hosted images ship a preinstalled stable whose version differs between images
+  of the same label (1.98.1 and 1.99.1 on `macos-15`), so the same commit
+  restored on one image and built cold on the next: 17 to 25 min on the macOS
+  jobs instead of 7 to 14. Every job that sets up Rust with the cache, in
+  `ci.yml` and `release.yml`, now uninstalls the image's toolchains first (12
+  to 18 s), so only the pinned nightly enters the key, whatever the image.
+  `scripts/check-rust-cache.py`, a new `ci.sh` stage, fails a cached Rust setup
+  that has no such step before it.
 - **The stress suites no longer reach the internet** (issue #234). Every
   account they log in against the mock also fetched
   `https://web.whatsapp.com/sw.js`, because the library looks up its client
