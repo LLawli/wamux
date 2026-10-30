@@ -38,7 +38,9 @@ build_slices() {
   local target
   for target in aarch64-apple-darwin x86_64-apple-darwin; do
     echo "building wamux $VERSION for $target"
-    cargo build --release --locked --target "$target" -p wamux --bin wamux
+    # Empty, not unset: cargo then ignores the dev-only `-Zthreads` in
+    # .cargo/config.toml, so the attested binary is built as before (#233).
+    RUSTFLAGS="" cargo build --release --locked --target "$target" -p wamux --bin wamux
   done
 }
 

@@ -1,0 +1,8 @@
+# Parallel front-end of the nightly pinned in rust-toolchain.toml; 4 is the vCPU
+# count of a GitHub runner. Measured without incremental: the wamux lib
+# 80-86 s -> 36-48 s. Dev and CI only: the release scripts build with
+# RUSTFLAGS="" (an empty value replaces build.rustflags; `unset` does not), so
+# the attested binary is compiled as before, and no Dockerfile copies .cargo/
+# (scripts/check-release-pins.py R16). See #233.
+[build]
+rustflags = ["-Zthreads=4"]

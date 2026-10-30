@@ -12,6 +12,23 @@ has to follow them.
 
 ## [Unreleased]
 
+### Changed
+
+- **`scripts/ci.sh` is faster** (issue #233). Measured on the maintainer's
+  laptop with `--full`: the pull request scenario went from 1541 s to
+  864 s, a cold run from 2338 s to 1531 s, and `target/debug` from 76.2 to
+  28.7 GiB. Three changes: the dev profile uses `debug = "line-tables-only"`
+  (backtraces and panics keep file:line; a debugger loses variable inspection,
+  `CARGO_PROFILE_DEV_DEBUG=2` brings it back); `.cargo/config.toml` sets
+  `-Zthreads=4` for dev and CI builds; and `ci.sh` compiles the test binaries
+  of each feature set in one `cargo test --no-run` before the filtered runs,
+  instead of one binary at a time. No test was removed or filtered differently.
+- **The release still builds without the dev flag.** `release-tarball.sh` and
+  `release-pkg.sh` run `cargo build` with `RUSTFLAGS=""`, so the attested
+  binaries are compiled as before. `scripts/check-release-pins.py` has a new
+  rule (R16) that fails when a release `cargo build` does not clear
+  `RUSTFLAGS`, or when a `Dockerfile*` copies `.cargo` or the whole context.
+
 ## [0.2.3] - 2026-10-29
 
 ### Added
