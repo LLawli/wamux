@@ -17,7 +17,7 @@
 #[path = "common/mod.rs"]
 mod common;
 #[allow(dead_code)]
-#[path = "messaging_service/harness.rs"]
+#[path = "services/messaging_service/harness.rs"]
 mod harness;
 
 use std::io::Write;
