@@ -28,6 +28,22 @@ has to follow them.
   binaries are compiled as before. `scripts/check-release-pins.py` has a new
   rule (R16) that fails when a release `cargo build` does not clear
   `RUSTFLAGS`, or when a `Dockerfile*` copies `.cargo` or the whole context.
+- **The integration tests of `crates/wamux` build as 11 binaries, not 42**
+  (issue #235). The suites live in `tests/storage/`, `tests/daemon/` and
+  `tests/services/` (the `stress` ones), one binary each. A suite that owns
+  process-global state (umask, a global tracing subscriber or metrics recorder,
+  the allocator, a peak-RSS reading, or an ordered `--exact` run) keeps a binary
+  of its own. A new suite goes into its group's `main.rs` as a `mod`.
+  `scripts/ci.sh` picks a suite out of a group with `must_run_matching`
+  (`scripts/lib/test-filter.sh`), which lists the tests, keeps the names a regex
+  matches (suite and engine in one regex) and fails when it matches none. Every
+  test runs the same number of times as before: 2809 passes on `ci.sh --full`
+  and 1144 on `--no-postgres`, checked name by name. Measured on the
+  maintainer's laptop, in the pull request cache state: the clippy and test
+  build stages take 82 s less, and the test executables of one run go from
+  133 (14.5 GiB) to 62 (7.2 GiB). The total wall time dropped by 14 s in one
+  pair of runs and by 166 s in the other: on a machine shared with other
+  builds, that spread is noise, so the stage numbers are the ones to trust.
 
 ### Fixed
 
