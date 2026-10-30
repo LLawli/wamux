@@ -55,6 +55,15 @@ pub async fn build_bot(
         .with_noise_cert_policy(cert_policy)
         .with_event_handler(QueueingHandler { publisher });
 
+    // `Client::connect` waits for a web-version lookup (a GET of
+    // web.whatsapp.com/sw.js) whenever the device never stored one, and the
+    // mock serves no sw.js. A stress build talks to loopback only, so pin the
+    // version and skip the internet round trip (#234).
+    #[cfg(feature = "stress")]
+    {
+        builder = builder.with_version(whatsapp_rust::version::WA_WEB_VERSION);
+    }
+
     if skip_history {
         builder = builder.skip_history_sync();
     }

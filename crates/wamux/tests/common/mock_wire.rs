@@ -3,8 +3,6 @@
 //! each one asserts the `<iq>` an RPC put on the wire and replays answers the
 //! real server sent.
 
-use std::time::Duration;
-
 use wacore_binary::Node;
 use wacore_binary::builder::NodeBuilder;
 use wamux::proto::v1 as pb;
@@ -37,7 +35,7 @@ fn is_iq(iq: &Node, xmlns: &str, iq_type: &str, child: &str) -> bool {
 pub async fn sent_iq(mock: &MockWaServer, xmlns: &str, iq_type: &str, child: &str) -> Node {
     super::poll_until(
         &format!("an <iq xmlns={xmlns} type={iq_type}><{child}>"),
-        Duration::from_secs(5),
+        super::LOOPBACK_STEP_DEADLINE,
         || async {
             mock.client_iqs()
                 .into_iter()
@@ -52,7 +50,7 @@ pub async fn sent_iq(mock: &MockWaServer, xmlns: &str, iq_type: &str, child: &st
 pub async fn sent_message(mock: &MockWaServer, id: &str) -> Node {
     super::poll_until(
         &format!("the mock to receive a <message id={id}>"),
-        Duration::from_secs(5),
+        super::LOOPBACK_STEP_DEADLINE,
         || async {
             mock.client_messages()
                 .into_iter()

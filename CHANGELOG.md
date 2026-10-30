@@ -29,6 +29,20 @@ has to follow them.
   rule (R16) that fails when a release `cargo build` does not clear
   `RUSTFLAGS`, or when a `Dockerfile*` copies `.cargo` or the whole context.
 
+### Fixed
+
+- **The stress suites no longer reach the internet** (issue #234). Every
+  account they log in against the mock also fetched
+  `https://web.whatsapp.com/sw.js`, because the library looks up its client
+  version during `connect` and waits for it. On a loaded machine that fetch
+  pushed logins past the 10 s deadline, offline every login failed, and a
+  stalled read could hang a test binary forever. A `stress` build now pins the
+  library's own version, and its HTTP client refuses any host that is not
+  loopback. Measured on `messaging_service` under a CPU hog in the capped
+  build scope: from 6 failures and a slowest login of 7.8 s to none, with the
+  slowest login at 233 ms. Production builds still fetch the version as
+  before.
+
 ## [0.2.3] - 2026-10-29
 
 ### Added

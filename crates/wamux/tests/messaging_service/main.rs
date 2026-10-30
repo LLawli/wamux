@@ -23,6 +23,7 @@ mod chat_actions;
 mod error_messages;
 mod every_rpc;
 mod harness;
+mod hermetic;
 mod history;
 mod jid_fields;
 mod media;

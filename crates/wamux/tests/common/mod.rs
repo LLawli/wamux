@@ -267,6 +267,20 @@ pub fn test_prefix(suite: &str, test: &str) -> String {
 /// Pause between probes of `poll_until`.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// How long a login against the loopback mock may take before the test reports
+/// it hung: the companion's `connect` up to `<success>`, and again for its LID.
+/// Stress builds pin the client version, so nothing on the way leaves loopback
+/// (#234). Measured: at most 233 ms per login with the messaging suite under a
+/// CPU hog in the capped build scope, 139 ms idle. `poll_until` returns as soon
+/// as the client is in, so the bound only decides how late a real hang shows.
+#[cfg(feature = "stress")]
+const LOGIN_DEADLINE: Duration = Duration::from_secs(10);
+
+/// How long one step on loopback may take: the server accepting the socket, a
+/// forwarder attaching, a stanza reaching the mock. Each is less work than a
+/// login (no handshake, no store write in the way), so half its bound.
+pub const LOOPBACK_STEP_DEADLINE: Duration = Duration::from_secs(5);
+
 /// The one bounded wait on a condition (#67): calls `probe` until it returns
 /// `Some`, and panics naming `what` once `timeout` has passed. Every retry loop
 /// in the suites goes through here, so no test synchronizes on a fixed sleep.
@@ -298,7 +312,7 @@ pub async fn await_forwarder_attached(
 ) {
     poll_until(
         &format!("a forwarder attached to the {which} account"),
-        Duration::from_secs(5),
+        LOOPBACK_STEP_DEADLINE,
         || async { (events_tx.receiver_count() > 0).then_some(()) },
     )
     .await;
@@ -309,7 +323,7 @@ pub async fn await_forwarder_attached(
 pub async fn uds_channel(path: &Path) -> Channel {
     poll_until(
         "the server to accept a connection",
-        Duration::from_secs(5),
+        LOOPBACK_STEP_DEADLINE,
         || connect_uds_once(path.to_path_buf()),
     )
     .await
@@ -392,11 +406,9 @@ pub async fn logged_in_companion(
         .expect("seed app state");
     let logged = log_in(registry, handle).await;
     let client = logged.client.clone();
-    poll_until(
-        "the client to take its LID",
-        Duration::from_secs(10),
-        || async { client.lid().map(drop) },
-    )
+    poll_until("the client to take its LID", LOGIN_DEADLINE, || async {
+        client.lid().map(drop)
+    })
     .await;
     logged
 }
@@ -419,7 +431,7 @@ async fn log_in(registry: Arc<AccountRegistry>, handle: Arc<AccountHandle>) -> L
         .await
         .expect("connect");
     let client = handle.client().await.expect("client after connect");
-    poll_until("the client to log in", Duration::from_secs(10), || async {
+    poll_until("the client to log in", LOGIN_DEADLINE, || async {
         client.is_logged_in().then_some(())
     })
     .await;
