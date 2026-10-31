@@ -50,7 +50,8 @@ COPY --from=build /wamux /wamux
 # `binary`, so anything else the final stage copies from must not compile, or
 # BuildKit would run the cargo build in the image job anyway.
 FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS dirs
-RUN mkdir -p /stage/run/wamux /stage/var/lib/wamux /stage/var/cache/wamux
+RUN mkdir -p /stage/run/wamux /stage/var/lib/wamux /stage/var/cache/wamux /stage/root/tmp \
+ && chmod 1777 /stage/root/tmp
 
 # `scratch` has to stay the LAST stage: a plain `docker build` ships the last.
 FROM scratch
@@ -74,6 +75,15 @@ COPY THIRD-PARTY-LICENSES.md LICENSE-MIT LICENSE-APACHE /usr/share/doc/wamux/
 COPY --from=dirs --chown=${WAMUX_UID}:${WAMUX_GID} /stage/run/wamux /run/wamux
 COPY --from=dirs --chown=${WAMUX_UID}:${WAMUX_GID} /stage/var/lib/wamux /var/lib/wamux
 COPY --from=dirs --chown=${WAMUX_UID}:${WAMUX_GID} /stage/var/cache/wamux /var/cache/wamux
+
+# `scratch` has no /tmp. The daemon's SQLite keeps its temporaries in memory
+# (#229), but a build with the turso engine spills big sorts to a temp file, and
+# so would anything that asks the OS for a temp dir. Root-owned and sticky (1777):
+# the runtime user can write, nobody can remove another user's files. The PARENT
+# is copied because a COPY of a directory resets the destination's mode to the
+# default (0755), and `--chmod` would drop the sticky bit; copying the parent
+# keeps the mode the `dirs` stage gave it.
+COPY --from=dirs /stage/root/ /
 
 # Numeric: scratch has no /etc/passwd to resolve a name against.
 USER ${WAMUX_UID}:${WAMUX_GID}
