@@ -20,6 +20,7 @@ mod group_commit_turso;
 mod group_commit_turso_accounts;
 mod isolated_pool;
 mod migration_alignment;
+mod sqlite_temp_store;
 mod storage_backend;
 mod store_cli;
 mod store_conversion;
