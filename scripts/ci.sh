@@ -276,6 +276,7 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
   must_run_matching --test storage -- '^existing_store::.*sqlite_'
   # #173: group commit on the sqlx SQLite engine, under real concurrency.
   must_run_matching --test storage -- '^group_commit_sqlite::.*sqlite_'
+  must_run_matching --test storage -- '^sqlite_temp_store::'
 
   build_test_binaries --features turso --lib "${TURSO_STORAGE_SUITES[@]}" --test daemon
   stage "no-postgres: turso engine (storage cases and service suites)"
@@ -285,6 +286,17 @@ if [[ "$NO_POSTGRES" == 1 ]]; then
 
   stage "no-postgres: wamux-tools (sqlite daemon fixture)"
   must_run_pkg_tests wamux-tools "${TOOLS_NO_PG_SUITES[@]}"
+
+  # #229: the scratch image has no temp dir, and a host always has one, so only
+  # a container with /tmp masked can prove the pairing batch needs none. Linux
+  # only: the script skips itself on macOS.
+  stage "no-postgres: sqlite without a temp dir"
+  bash scripts/check-sqlite-no-tmp.sh
+
+  # #229: only the built image proves /tmp ships 1777 (a COPY can reset the
+  # mode). Linux only: the script skips itself elsewhere.
+  stage "no-postgres: image tmp mode"
+  bash scripts/check-image-tmp.sh
 
   stage "CI PASSED (no-postgres subset)"
   exit 0
@@ -354,6 +366,17 @@ must_run_tests --features stress --test media_spool_rss
 # permissive umask and warns about a loose one. No database, no account.
 stage "store file mode"
 must_run_matching --test storage -- '^store_file_mode::.*sqlite_'
+
+# #229: the scratch image has no temp dir, and a host always has one, so only a
+# container with /tmp masked can prove SQLite needs none. Linux only: the script
+# skips itself on macOS.
+stage "sqlite without a temp dir"
+bash scripts/check-sqlite-no-tmp.sh
+
+# #229: only the built image proves /tmp ships 1777 (a COPY can reset the mode).
+# Linux only: the script skips itself elsewhere.
+stage "image tmp mode"
+bash scripts/check-image-tmp.sh
 
 # Encryption at rest (#164): every sealed column on each engine (Postgres in a
 # throwaway database), and the whole sqlite parity suite with the key on. The
