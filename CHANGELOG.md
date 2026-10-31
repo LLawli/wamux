@@ -12,6 +12,16 @@ has to follow them.
 
 ## [Unreleased]
 
+### Added
+
+- **`SendText`, `SendMedia` and `SendContact` take `quoted_message`** (issue
+  #230): the quoted message's serialized `wa.Message`, relayed as
+  `ContextInfo.quotedMessage`, so receivers that do not hold the original
+  still show the quote instead of an empty one. It is the same field
+  `SendInteractiveReply` already had. Bytes sent without a quote
+  (`quote.quoted`), or that are not a `wa.Message`, are `InvalidArgument`;
+  `SendMedia` refuses them before uploading. The core looks nothing up.
+
 ### Changed
 
 - **`scripts/ci.sh` is faster** (issue #233). Measured on the maintainer's
