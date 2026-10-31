@@ -22,6 +22,7 @@ mod history;
 mod jid_fields;
 mod media;
 mod private_reply;
+mod quoted_message;
 mod receipts;
 mod refusals;
 mod replay;

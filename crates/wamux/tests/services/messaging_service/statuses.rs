@@ -200,6 +200,7 @@ async fn chat_scoped(f: &mut Fixture, chat: Option<pb::Jid>) -> Vec<(&'static st
                     display_name: "Maria".into(),
                     vcard: String::new(),
                     quote: None,
+                    quoted_message: Vec::new(),
                 })
                 .await
                 .map(drop)),

@@ -17,13 +17,13 @@ fn quote() -> QuotedRef {
         id: MessageId::new(OFFER_ID).unwrap(),
         participant: Some(Jid::parse(MERCHANT).unwrap()),
         remote_chat: None,
+        message: Vec::new(),
     }
 }
 
 fn request(choice: ReplyChoice) -> InteractiveReply {
     InteractiveReply {
         quote: quote(),
-        quoted_message: Vec::new(),
         choice,
     }
 }
@@ -156,7 +156,10 @@ fn the_offer_payload_rides_in_the_quote_when_supplied() {
         proto
     };
     let request = InteractiveReply {
-        quoted_message: offer.encode_to_vec(),
+        quote: QuotedRef {
+            message: offer.encode_to_vec(),
+            ..quote()
+        },
         ..request(button("op_1", "Um"))
     };
     let context = build_interactive_reply(&request)
@@ -190,8 +193,11 @@ fn an_absent_offer_payload_leaves_the_quote_at_its_key() {
 #[test]
 fn a_malformed_offer_payload_is_an_invalid_argument() {
     let request = InteractiveReply {
-        // Field 1, length-delimited, claiming 60 bytes that are not there.
-        quoted_message: vec![0x0a, 0x3c, 0x01, 0x02],
+        quote: QuotedRef {
+            // Field 1, length-delimited, claiming 60 bytes that are not there.
+            message: vec![0x0a, 0x3c, 0x01, 0x02],
+            ..quote()
+        },
         ..request(button("op_1", "Um"))
     };
     let err = build_interactive_reply(&request).expect_err("garbage must be refused");

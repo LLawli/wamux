@@ -220,6 +220,7 @@ async fn rich(m: &mut MessagingServiceClient<Channel>, account: &pb::AccountRef)
                 display_name: "Maria".into(),
                 vcard: "BEGIN:VCARD\nEND:VCARD".into(),
                 quote: None,
+                quoted_message: Vec::new(),
             })
             .await
             .map(drop),

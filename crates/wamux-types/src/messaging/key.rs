@@ -28,6 +28,10 @@ pub struct QuotedRef {
     /// to: a private reply to a group message, or a reply to a status (#217).
     /// A reply in the same chat carries none, as WhatsApp's clients send it.
     pub remote_chat: Option<Jid>,
+    /// The quoted message's own payload, a serialized `wa.Message`, relayed as
+    /// `ContextInfo.quotedMessage` (#230). Empty is absent. Raw bytes here: the
+    /// domain decodes them, because wamux-types does not depend on waproto.
+    pub message: Vec<u8>,
 }
 
 /// What every outgoing text, media and contact card carries besides its body:
@@ -64,13 +68,18 @@ impl QuotedRef {
     /// message")`. The participant is the context's own when it is set and not
     /// empty (#120), else the quoted key's. The quoted key's `chat` becomes
     /// `remote_chat` only when it is a jid other than `destination`, the chat
-    /// the reply is sent to (#217).
+    /// the reply is sent to (#217). `quoted_message` rides in the quote (#230);
+    /// bytes with no quote to hold them are
+    /// `InvalidArgument("quoted_message without a quote; set quote.quoted to
+    /// the message it is")`, because a quoted payload with no stanza id is a
+    /// shape no official client produces.
     pub fn from_proto(
         quote: Option<pb::QuoteContext>,
+        quoted_message: Vec<u8>,
         destination: Option<&pb::Jid>,
     ) -> Result<Option<Self>, WamuxError> {
         let Some(quoted_key) = quote.as_ref().and_then(|quote| quote.quoted.as_ref()) else {
-            return Ok(None);
+            return refuse_orphan_quoted_message(&quoted_message);
         };
         if quoted_key.id.is_empty() {
             return Err(WamuxError::InvalidArgument(
@@ -87,8 +96,19 @@ impl QuotedRef {
             id: MessageId::new(quoted_key.id.clone())?,
             participant,
             remote_chat: remote_chat_of(quoted_key, destination)?,
+            message: quoted_message,
         }))
     }
+}
+
+/// No quote: fine without a payload, a caller mistake with one.
+fn refuse_orphan_quoted_message(quoted_message: &[u8]) -> Result<Option<QuotedRef>, WamuxError> {
+    if quoted_message.is_empty() {
+        return Ok(None);
+    }
+    Err(WamuxError::InvalidArgument(
+        "quoted_message without a quote; set quote.quoted to the message it is".to_string(),
+    ))
 }
 
 /// The quoted key's chat when it names a chat other than `destination`.
@@ -111,6 +131,7 @@ impl OutgoingContext {
     pub fn from_proto(
         mentions: Vec<pb::Mention>,
         quote: Option<pb::QuoteContext>,
+        quoted_message: Vec<u8>,
         ephemeral_seconds: u32,
         destination: Option<&pb::Jid>,
     ) -> Result<Self, WamuxError> {
@@ -120,7 +141,7 @@ impl OutgoingContext {
             .collect::<Result<Vec<Jid>, WamuxError>>()?;
         Ok(Self {
             mentions,
-            quote: QuotedRef::from_proto(quote, destination)?,
+            quote: QuotedRef::from_proto(quote, quoted_message, destination)?,
             ephemeral_seconds,
         })
     }

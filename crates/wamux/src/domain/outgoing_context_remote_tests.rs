@@ -15,6 +15,7 @@ fn context_quoting(remote_chat: Option<&str>) -> OutgoingContext {
             id: MessageId::new("QUOTED-217").unwrap(),
             participant: Some(Jid::parse(AUTHOR).unwrap()),
             remote_chat: remote_chat.map(|chat| Jid::parse(chat).unwrap()),
+            message: Vec::new(),
         }),
         ..Default::default()
     }
@@ -23,6 +24,7 @@ fn context_quoting(remote_chat: Option<&str>) -> OutgoingContext {
 #[test]
 fn remote_chat_becomes_remote_jid() {
     let context = outgoing_context(&context_quoting(Some(GROUP)))
+        .expect("the context builds")
         .into_option()
         .expect("a quote builds a context");
     assert_eq!(context.remote_jid.as_deref(), Some(GROUP));
@@ -33,6 +35,7 @@ fn remote_chat_becomes_remote_jid() {
 #[test]
 fn no_remote_chat_leaves_remote_jid_unset() {
     let context = outgoing_context(&context_quoting(None))
+        .expect("the context builds")
         .into_option()
         .expect("a quote builds a context");
     assert_eq!(

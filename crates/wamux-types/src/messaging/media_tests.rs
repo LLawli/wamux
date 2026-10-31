@@ -52,6 +52,7 @@ fn outgoing_media_parses_its_kind_and_context() {
         seconds: 7,
         waveform: vec![0, 50, 100],
         ephemeral_seconds: 90,
+        quoted_message: Vec::new(),
         ptv: true,
     })
     .unwrap();

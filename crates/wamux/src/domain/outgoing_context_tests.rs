@@ -15,12 +15,17 @@ fn quote(participant: Option<&str>) -> Option<QuotedRef> {
         id: MessageId::new("QUOTED-1").unwrap(),
         participant: participant.map(jid),
         remote_chat: None,
+        message: Vec::new(),
     })
 }
 
 #[test]
 fn all_default_inputs_yield_no_context() {
-    assert!(outgoing_context(&OutgoingContext::default()).is_unset());
+    assert!(
+        outgoing_context(&OutgoingContext::default())
+            .expect("the context builds")
+            .is_unset()
+    );
 }
 
 // Regression: a DM quote has no participant; that must relay as the absent
@@ -31,6 +36,7 @@ fn dm_quote_without_participant_relays_participant_absent() {
         quote: quote(None),
         ..Default::default()
     })
+    .expect("the context builds")
     .expect("quote must build a context");
     assert_eq!(context.stanza_id.as_deref(), Some("QUOTED-1"));
     assert_eq!(context.participant, None);
@@ -42,6 +48,7 @@ fn a_quote_relays_its_participant() {
         quote: quote(Some("5511888888888@s.whatsapp.net")),
         ..Default::default()
     })
+    .expect("the context builds")
     .expect("quote must build a context");
     assert_eq!(
         context.participant.as_deref(),
@@ -56,6 +63,7 @@ fn mentions_quote_and_ephemeral_compose() {
         quote: quote(Some("5511777777777@s.whatsapp.net")),
         ephemeral_seconds: 90,
     })
+    .expect("the context builds")
     .expect("inputs must build a context");
     assert_eq!(
         context.mentioned_jid,
@@ -79,6 +87,7 @@ fn mentions_relay_in_order() {
         ],
         ..Default::default()
     })
+    .expect("the context builds")
     .expect("mentions build a context");
     assert_eq!(
         context.mentioned_jid,

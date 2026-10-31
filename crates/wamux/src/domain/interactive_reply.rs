@@ -23,7 +23,7 @@
 //! proto alone, and it is the one to distrust if a native flow misbehaves.
 
 use wamux_types::{InteractiveReply, Jid, OutgoingContext, ReplyChoice};
-use whatsapp_rust::buffa::{self, Message as _};
+use whatsapp_rust::buffa;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::{Client, SendResult};
 
@@ -73,7 +73,8 @@ pub(crate) fn build_interactive_reply(reply: &InteractiveReply) -> Result<wa::Me
 }
 
 /// The quote every reply carries, plus the offer's own payload when the edge
-/// supplied it.
+/// supplied it (`quote.message`; the shared `outgoing_context` decodes it and
+/// refuses bytes that are not a `wa.Message`).
 ///
 /// The quote is required rather than optional: a reply that names no offer is
 /// not a reply, and relaying one would produce a message the bot cannot tie to
@@ -86,22 +87,9 @@ fn reply_context(
         quote: Some(reply.quote.clone()),
         ..Default::default()
     };
-    let mut context = outgoing_context(&quote_only)
+    let context = outgoing_context(&quote_only)?
         .into_option()
         .ok_or_else(|| WamuxError::InvalidArgument("quote built no context".to_string()))?;
-    if !reply.quoted_message.is_empty() {
-        // Decoded, not blindly attached: bytes that are not a `wa::Message` are
-        // the caller's mistake and must say so, rather than riding onto the
-        // wire as a malformed quote nobody can read back. The decode stays here
-        // because it needs waproto, which wamux-types does not depend on.
-        let quoted = wa::Message::decode(&mut reply.quoted_message.as_slice()).map_err(|err| {
-            WamuxError::InvalidArgument(format!(
-                "quoted_message is not a serialized wa.Message ({} bytes): {err}",
-                reply.quoted_message.len()
-            ))
-        })?;
-        context.quoted_message = buffa::MessageField::some(quoted);
-    }
     Ok(buffa::MessageField::some(context))
 }
 

@@ -56,6 +56,7 @@ fn outgoing_text_carries_text_context_and_preview() {
         quote: None,
         link_preview: Some(preview()),
         ephemeral_seconds: 86_400,
+        quoted_message: Vec::new(),
     })
     .unwrap();
     assert_eq!(text.text, "oi");

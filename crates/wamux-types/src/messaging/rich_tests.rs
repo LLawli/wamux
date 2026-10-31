@@ -58,6 +58,7 @@ fn a_contact_card_carries_its_quote() {
         to: None,
         display_name: "Ana".to_string(),
         vcard: "BEGIN:VCARD\nEND:VCARD".to_string(),
+        quoted_message: Vec::new(),
         quote: Some(quote("QUOTED-1", "5511777777777@s.whatsapp.net")),
     })
     .unwrap();
@@ -149,7 +150,7 @@ fn every_reply_shape_converts() {
             converted.quote.participant,
             Some(Jid::parse(MERCHANT).unwrap())
         );
-        assert_eq!(converted.quoted_message, vec![0x0a, 0x01]);
+        assert_eq!(converted.quote.message, vec![0x0a, 0x01]);
     }
 }
 
