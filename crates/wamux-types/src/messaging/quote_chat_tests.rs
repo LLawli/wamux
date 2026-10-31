@@ -31,7 +31,7 @@ fn quote_from(chat: Option<pb::Jid>) -> Option<pb::QuoteContext> {
 }
 
 fn remote_chat(chat: Option<pb::Jid>, destination: &str) -> Option<Jid> {
-    QuotedRef::from_proto(quote_from(chat), wire(destination).as_ref())
+    QuotedRef::from_proto(quote_from(chat), Vec::new(), wire(destination).as_ref())
         .expect("a valid quote")
         .expect("a quoted key is a quote")
         .remote_chat
@@ -67,7 +67,8 @@ fn unset_or_empty_quoted_chat_is_none() {
 
 #[test]
 fn malformed_quoted_chat_is_invalid_argument() {
-    let result = QuotedRef::from_proto(quote_from(wire("not a jid")), wire(DM).as_ref());
+    let result =
+        QuotedRef::from_proto(quote_from(wire("not a jid")), Vec::new(), wire(DM).as_ref());
     match result {
         Err(WamuxError::InvalidArgument(message)) => {
             assert!(message.starts_with("invalid jid 'not a jid'"), "{message}")

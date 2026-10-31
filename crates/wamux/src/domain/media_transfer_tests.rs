@@ -399,6 +399,7 @@ fn media_quote_and_mentions_relay_into_context() {
                     id: MessageId::new("QUOTED-1").unwrap(),
                     participant: Some(Jid::parse("5511777777777@s.whatsapp.net").unwrap()),
                     remote_chat: None,
+                    message: Vec::new(),
                 }),
                 ephemeral_seconds: 90,
             },

@@ -46,6 +46,7 @@ impl TryFrom<pb::SendTextRequest> for OutgoingText {
             context: OutgoingContext::from_proto(
                 request.mentions,
                 request.quote,
+                request.quoted_message,
                 request.ephemeral_seconds,
                 request.to.as_ref(),
             )?,

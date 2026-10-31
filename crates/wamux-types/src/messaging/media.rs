@@ -46,6 +46,7 @@ impl TryFrom<pb::SendMediaHeader> for OutgoingMedia {
             context: OutgoingContext::from_proto(
                 header.mentions,
                 header.quote,
+                header.quoted_message,
                 header.ephemeral_seconds,
                 header.to.as_ref(),
             )?,

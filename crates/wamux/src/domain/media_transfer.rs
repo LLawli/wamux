@@ -22,6 +22,11 @@ pub async fn send_media(
     media: &OutgoingMedia,
     staged: StagedUpload,
 ) -> Result<SendResult, WamuxError> {
+    // Validated before the upload: a malformed quoted_message must refuse the
+    // send before the CDN sees a byte (#230). The context is rebuilt inside
+    // `build_media_message`; building it twice is cheap, and one builder keeps
+    // a single decode.
+    outgoing_context(&media.context)?;
     let upload = upload_staged(client, staged, media.kind.media_type()).await?;
     let message = build_media_message(media, upload.into())?;
     client
@@ -109,7 +114,7 @@ pub(crate) fn build_media_message(
     // Each wa media sub-message carries its own ContextInfo; the shared
     // builder relays mentions + quote + ephemeral (or omits the field when
     // all three are the proto3 default), same composition as the text path.
-    let context = outgoing_context(&header.context);
+    let context = outgoing_context(&header.context)?;
     let kind = header.kind;
     let mut message = wa::Message::default();
     match kind {

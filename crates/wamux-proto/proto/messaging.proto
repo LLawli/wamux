@@ -31,6 +31,12 @@ message SendTextRequest {
   // supplies the chat's current disappearing-messages setting; the core never
   // tracks or decides durations.
   uint32 ephemeral_seconds = 7;
+  // The quoted message's own payload, a serialized `wa.Message` (#230): relayed
+  // as `ContextInfo.quotedMessage` with the quote, so a receiver that does not
+  // hold the original still shows what was quoted. Empty sends none. The core
+  // looks nothing up. Bytes with no `quote.quoted` are InvalidArgument, and so
+  // are bytes that are not a `wa.Message`.
+  bytes quoted_message = 8;
 }
 
 message SendResult {
@@ -92,6 +98,12 @@ message SendMediaHeader {
   // ptv=true, the built VideoMessage ships as Message.ptv_message instead of
   // video_message. The edge supplies a square clip; the core does not transcode.
   bool ptv = 15;
+  // The quoted message's own payload, a serialized `wa.Message` (#230): relayed
+  // as `ContextInfo.quotedMessage` with the quote, so a receiver that does not
+  // hold the original still shows what was quoted. Empty sends none. The core
+  // looks nothing up. Bytes with no `quote.quoted` are InvalidArgument, and so
+  // are bytes that are not a `wa.Message`.
+  bytes quoted_message = 17;
 }
 
 message SendMediaChunk {
@@ -222,6 +234,12 @@ message SendContactRequest {
   string display_name = 3;
   string vcard = 4;
   QuoteContext quote = 5;
+  // The quoted message's own payload, a serialized `wa.Message` (#230): relayed
+  // as `ContextInfo.quotedMessage` with the quote, so a receiver that does not
+  // hold the original still shows what was quoted. Empty sends none. The core
+  // looks nothing up. Bytes with no `quote.quoted` are InvalidArgument, and so
+  // are bytes that are not a `wa.Message`.
+  bytes quoted_message = 6;
 }
 
 message SendPollRequest {

@@ -70,7 +70,7 @@ fn extended_text(text: &OutgoingText) -> Result<wa::message::ExtendedTextMessage
     let mut extended = wa::message::ExtendedTextMessage::default();
     extended.text = Some(text.text.clone());
     // Unset for a preview-only message: shared builder, see outgoing_context.
-    extended.context_info = outgoing_context(&text.context);
+    extended.context_info = outgoing_context(&text.context)?;
     if let Some(preview) = &text.link_preview {
         copy_link_preview(&mut extended, preview)?;
     }

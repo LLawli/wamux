@@ -40,11 +40,10 @@ pub enum ReplyChoice {
 }
 
 /// The answer to an offer. The quote is required: a reply that names no offer
-/// is not a reply. `quoted_message` stays raw bytes; the domain decodes them.
+/// is not a reply. The offer's payload rides in `quote.message` (#230).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InteractiveReply {
     pub quote: QuotedRef,
-    pub quoted_message: Vec<u8>,
     pub choice: ReplyChoice,
 }
 
@@ -53,7 +52,11 @@ impl TryFrom<pb::SendContactRequest> for ContactCard {
 
     fn try_from(request: pb::SendContactRequest) -> Result<Self, WamuxError> {
         Ok(Self {
-            quote: QuotedRef::from_proto(request.quote, request.to.as_ref())?,
+            quote: QuotedRef::from_proto(
+                request.quote,
+                request.quoted_message,
+                request.to.as_ref(),
+            )?,
             display_name: request.display_name,
             vcard: request.vcard,
         })
@@ -68,13 +71,9 @@ impl TryFrom<pb::SendInteractiveReplyRequest> for InteractiveReply {
     type Error = WamuxError;
 
     fn try_from(request: pb::SendInteractiveReplyRequest) -> Result<Self, WamuxError> {
-        let quote = offer_quote(request.quote, request.to.as_ref())?;
+        let quote = offer_quote(request.quote, request.quoted_message, request.to.as_ref())?;
         let choice = ReplyChoice::try_from(request.reply)?;
-        Ok(Self {
-            quote,
-            quoted_message: request.quoted_message,
-            choice,
-        })
+        Ok(Self { quote, choice })
     }
 }
 
@@ -83,6 +82,7 @@ impl TryFrom<pb::SendInteractiveReplyRequest> for InteractiveReply {
 /// id is checked here first, under the reply's own message.
 fn offer_quote(
     quote: Option<pb::QuoteContext>,
+    quoted_message: Vec<u8>,
     destination: Option<&pb::Jid>,
 ) -> Result<QuotedRef, WamuxError> {
     let names_the_offer = quote
@@ -97,7 +97,7 @@ fn offer_quote(
     if !names_the_offer {
         return Err(missing());
     }
-    QuotedRef::from_proto(quote, destination)?.ok_or_else(missing)
+    QuotedRef::from_proto(quote, quoted_message, destination)?.ok_or_else(missing)
 }
 
 impl TryFrom<Option<pb::send_interactive_reply_request::Reply>> for ReplyChoice {

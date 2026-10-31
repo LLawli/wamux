@@ -19,7 +19,7 @@ pub async fn send_contact(
     to: Jid,
     card: &ContactCard,
 ) -> Result<SendResult, WamuxError> {
-    let message = build_contact_message(card);
+    let message = build_contact_message(card)?;
     client
         .send_message(to.into_lib(), message)
         .await
@@ -30,7 +30,7 @@ pub async fn send_contact(
 /// or vcard relay as ABSENT waproto fields (proto3 default == "not set"), same
 /// rule as everywhere else. The optional quote rides on the shared context
 /// builder (no mentions on a contact card, so the context carries none).
-pub(crate) fn build_contact_message(card: &ContactCard) -> wa::Message {
+pub(crate) fn build_contact_message(card: &ContactCard) -> Result<wa::Message, WamuxError> {
     let context = OutgoingContext {
         quote: card.quote.clone(),
         ..Default::default()
@@ -38,10 +38,10 @@ pub(crate) fn build_contact_message(card: &ContactCard) -> wa::Message {
     let mut contact = wa::message::ContactMessage::default();
     contact.display_name = nonempty_string(&card.display_name);
     contact.vcard = nonempty_string(&card.vcard);
-    contact.context_info = outgoing_context(&context);
+    contact.context_info = outgoing_context(&context)?;
     let mut message = wa::Message::default();
     message.contact_message = buffa::MessageField::some(contact);
-    message
+    Ok(message)
 }
 
 /// Create a poll. The lib validates (2..=12 options, no duplicate names, a

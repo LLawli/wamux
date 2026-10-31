@@ -165,10 +165,13 @@ fn parse_optional_reads_empty_as_absence() {
 // No quote, and a quote with no quoted key, carry nothing: no quote at all.
 #[test]
 fn no_quote_or_no_quoted_key_is_no_quote() {
-    assert_eq!(QuotedRef::from_proto(None, None).unwrap(), None);
-    assert_eq!(QuotedRef::from_proto(quote(None, ""), None).unwrap(), None);
+    assert_eq!(QuotedRef::from_proto(None, Vec::new(), None).unwrap(), None);
     assert_eq!(
-        QuotedRef::from_proto(quote(None, AUTHOR), None).unwrap(),
+        QuotedRef::from_proto(quote(None, ""), Vec::new(), None).unwrap(),
+        None
+    );
+    assert_eq!(
+        QuotedRef::from_proto(quote(None, AUTHOR), Vec::new(), None).unwrap(),
         None
     );
 }
@@ -180,6 +183,7 @@ fn a_quote_participant_overrides_the_quoted_key_participant() {
             Some(key(GROUP, "QUOTED-1", AUTHOR)),
             "5511888888888@s.whatsapp.net",
         ),
+        Vec::new(),
         None,
     )
     .unwrap()
@@ -193,9 +197,13 @@ fn a_quote_participant_overrides_the_quoted_key_participant() {
 
 #[test]
 fn a_quote_falls_back_to_the_key_participant() {
-    let quoted = QuotedRef::from_proto(quote(Some(key(GROUP, "QUOTED-1", AUTHOR)), ""), None)
-        .unwrap()
-        .expect("a quoted key is a quote");
+    let quoted = QuotedRef::from_proto(
+        quote(Some(key(GROUP, "QUOTED-1", AUTHOR)), ""),
+        Vec::new(),
+        None,
+    )
+    .unwrap()
+    .expect("a quoted key is a quote");
     assert_eq!(quoted.participant, Some(jid(AUTHOR)));
 }
 
@@ -205,7 +213,7 @@ fn an_unset_quote_participant_falls_back_to_the_key_participant() {
         quoted: Some(key(GROUP, "QUOTED-1", AUTHOR)),
         participant: None,
     };
-    let quoted = QuotedRef::from_proto(Some(context), None)
+    let quoted = QuotedRef::from_proto(Some(context), Vec::new(), None)
         .unwrap()
         .expect("a quoted key is a quote");
     assert_eq!(quoted.participant, Some(jid(AUTHOR)));
@@ -215,9 +223,13 @@ fn an_unset_quote_participant_falls_back_to_the_key_participant() {
 // key; that is the absent participant, never Some("").
 #[test]
 fn a_dm_quote_has_no_participant() {
-    let quoted = QuotedRef::from_proto(quote(Some(key(PHONE, "QUOTED-DM", "")), ""), None)
-        .unwrap()
-        .expect("a quoted key is a quote");
+    let quoted = QuotedRef::from_proto(
+        quote(Some(key(PHONE, "QUOTED-DM", "")), ""),
+        Vec::new(),
+        None,
+    )
+    .unwrap()
+    .expect("a quoted key is a quote");
     assert_eq!(quoted.participant, None);
 }
 
@@ -226,6 +238,7 @@ fn a_quote_with_an_empty_id_is_refused() {
     assert_eq!(
         invalid_argument(QuotedRef::from_proto(
             quote(Some(key(PHONE, "", "")), ""),
+            Vec::new(),
             None
         )),
         "empty quote.quoted.id; expected the id of the quoted message"
@@ -237,6 +250,7 @@ fn a_quote_with_a_malformed_participant_is_refused() {
     for (context, key_participant) in [("not a jid", ""), ("", "not a jid")] {
         let message = invalid_argument(QuotedRef::from_proto(
             quote(Some(key(PHONE, "QUOTED", key_participant)), context),
+            Vec::new(),
             None,
         ));
         assert!(message.starts_with("invalid jid 'not a jid'"), "{message}");
@@ -248,9 +262,14 @@ fn context_parses_mentions_in_order() {
     let mentions = [AUTHOR, "222000222000222@lid"]
         .map(|jid| pb::Mention { jid: wire(jid) })
         .to_vec();
-    let context =
-        OutgoingContext::from_proto(mentions, quote(Some(key(GROUP, "Q", "")), ""), 90, None)
-            .unwrap();
+    let context = OutgoingContext::from_proto(
+        mentions,
+        quote(Some(key(GROUP, "Q", "")), ""),
+        Vec::new(),
+        90,
+        None,
+    )
+    .unwrap();
     assert_eq!(
         context.mentions,
         vec![jid(AUTHOR), jid("222000222000222@lid")]
@@ -262,7 +281,7 @@ fn context_parses_mentions_in_order() {
 #[test]
 fn an_empty_context_is_the_default() {
     assert_eq!(
-        OutgoingContext::from_proto(Vec::new(), None, 0, None).unwrap(),
+        OutgoingContext::from_proto(Vec::new(), None, Vec::new(), 0, None).unwrap(),
         OutgoingContext::default()
     );
 }
@@ -272,17 +291,30 @@ fn an_empty_context_is_the_default() {
 fn a_malformed_mention_is_refused() {
     let mention = |jid: &str| vec![pb::Mention { jid: wire(jid) }];
     assert_eq!(
-        invalid_argument(OutgoingContext::from_proto(mention(""), None, 0, None)),
+        invalid_argument(OutgoingContext::from_proto(
+            mention(""),
+            None,
+            Vec::new(),
+            0,
+            None
+        )),
         "missing jid"
     );
     let unset = vec![pb::Mention { jid: None }];
     assert_eq!(
-        invalid_argument(OutgoingContext::from_proto(unset, None, 0, None)),
+        invalid_argument(OutgoingContext::from_proto(
+            unset,
+            None,
+            Vec::new(),
+            0,
+            None
+        )),
         "missing jid"
     );
     let message = invalid_argument(OutgoingContext::from_proto(
         mention("not a jid"),
         None,
+        Vec::new(),
         0,
         None,
     ));
@@ -293,7 +325,12 @@ fn a_malformed_mention_is_refused() {
 #[test]
 fn a_context_checks_mentions_before_the_quote() {
     let mentions = vec![pb::Mention { jid: None }];
-    let result =
-        OutgoingContext::from_proto(mentions, quote(Some(key(PHONE, "", "")), ""), 0, None);
+    let result = OutgoingContext::from_proto(
+        mentions,
+        quote(Some(key(PHONE, "", "")), ""),
+        Vec::new(),
+        0,
+        None,
+    );
     assert_eq!(invalid_argument(result), "missing jid");
 }

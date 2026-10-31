@@ -15,7 +15,7 @@ fn card(display_name: &str, vcard: &str) -> ContactCard {
 #[test]
 fn contact_relays_display_name_and_vcard_verbatim() {
     let vcard = "BEGIN:VCARD\nVERSION:3.0\nFN:Ana\nEND:VCARD";
-    let message = build_contact_message(&card("Ana", vcard));
+    let message = build_contact_message(&card("Ana", vcard)).expect("the context builds");
     let contact = message
         .contact_message
         .expect("contact_message must be set");
@@ -29,7 +29,7 @@ fn contact_relays_display_name_and_vcard_verbatim() {
 // fields, never Some("") — same wire-defaults rule pinned across the core.
 #[test]
 fn contact_empty_fields_map_to_none() {
-    let message = build_contact_message(&card("", ""));
+    let message = build_contact_message(&card("", "")).expect("the context builds");
     let contact = message
         .contact_message
         .expect("contact_message must be set");
@@ -44,10 +44,12 @@ fn contact_quote_rides_on_context_info() {
             id: MessageId::new("QUOTED-1").unwrap(),
             participant: Some(Jid::parse("5511777777777@s.whatsapp.net").unwrap()),
             remote_chat: None,
+            message: Vec::new(),
         }),
         ..card("Ana", "BEGIN:VCARD\nEND:VCARD")
     };
     let contact = build_contact_message(&with_quote)
+        .expect("the context builds")
         .contact_message
         .expect("contact_message must be set");
     let context = contact.context_info.expect("quote must build a context");

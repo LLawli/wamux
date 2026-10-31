@@ -20,6 +20,7 @@ async fn send_contact_reaches_the_peer() {
         display_name: "Maria".into(),
         vcard: vcard.into(),
         quote: None,
+        quoted_message: Vec::new(),
     };
     let sent = f
         .messages

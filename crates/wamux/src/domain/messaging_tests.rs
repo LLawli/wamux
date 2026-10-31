@@ -171,6 +171,7 @@ fn quote(quoted_id: &str, participant: Option<&str>) -> Option<QuotedRef> {
         id: id(quoted_id),
         participant: participant.map(jid),
         remote_chat: None,
+        message: Vec::new(),
     })
 }
 
