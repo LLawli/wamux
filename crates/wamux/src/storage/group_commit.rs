@@ -196,7 +196,21 @@ impl<C: BatchConn> BatchState<C> {
             return Ok(());
         }
         tracing::warn!("rolling back a job abandoned inside the open batch");
-        self.rollback_job().await
+        self.rollback_job_or_discard().await;
+        Ok(())
+    }
+
+    /// Roll the job's savepoint back. When that fails the transaction is gone
+    /// (the engine rolled it back on its own, #229), so the batch is discarded
+    /// and `job_open` is cleared: no path keeps a savepoint the engine lost.
+    /// `false` when the batch was discarded.
+    async fn rollback_job_or_discard(&mut self) -> bool {
+        let Err(error) = self.rollback_job().await else {
+            return true;
+        };
+        tracing::error!(%error, "rolling back a job to its savepoint failed; discarding the batch");
+        self.discard_after_lost_savepoint().await;
+        false
     }
 
     async fn rollback_job(&mut self) -> StoreResult<()> {
@@ -211,7 +225,7 @@ impl<C: BatchConn> BatchState<C> {
     async fn end_job(&mut self) -> StoreResult<usize> {
         if let Err(error) = self.run_control(ControlStatement::Release).await {
             // A savepoint that cannot be released must not reach the COMMIT.
-            let _ = self.rollback_job().await;
+            self.rollback_job_or_discard().await;
             return Err(error);
         }
         self.job_open = false;
@@ -436,8 +450,7 @@ impl<'a, C: BatchConn> JobGuard<'a, C> {
             owner,
             slot: _slot,
         } = self;
-        if let Err(error) = guard.rollback_job().await {
-            tracing::error!(%error, "rolling back a failed job to its savepoint failed");
+        if !guard.rollback_job_or_discard().await {
             return;
         }
         if owner.pending_writers().saturating_sub(1) == 0
@@ -488,3 +501,7 @@ mod tests;
 #[cfg(test)]
 #[path = "group_commit_cancel_tests.rs"]
 mod cancel_tests;
+
+#[cfg(test)]
+#[path = "group_commit_autorollback_tests.rs"]
+mod autorollback_tests;

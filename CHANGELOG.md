@@ -47,6 +47,15 @@ has to follow them.
 
 ### Fixed
 
+- **Pairing on the published image no longer fails with `SQLITE_IOERR_GETTEMPPATH`** (#229). The
+  `scratch` image has no `/tmp`, and an UPDATE over more than 64 KiB of pages inside a savepoint
+  (the first prekey upload after pairing) spills to a temp file. The SQLite store now keeps its
+  temporaries in memory (about 3 MB for a 3 MB savepoint, nothing measurable for the prekey batch;
+  store pages never reach a temp file) and the image ships a root-owned `/tmp` (mode 1777).
+- **The group commit no longer wedges every later write after SQLite rolls a batch back on its own**
+  (#229). After an I/O error or a full disk, the failed `ROLLBACK TO` left the batch open and every
+  following job failed the same way. The batch is now discarded, its waiters get an error, and the
+  next job starts a fresh one.
 - **CI jobs keep their Rust cache when the runner image changes** (issue
   #237). rust-cache hashes every installed toolchain into its key, and the
   hosted images ship a preinstalled stable whose version differs between images

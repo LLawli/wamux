@@ -60,11 +60,23 @@ impl<C: BatchConn> BatchState<C> {
     /// ROLLBACK, whatever the statement in flight was: no transaction is a
     /// normal outcome here. The open batch is dropped and its waiters told.
     async fn discard_transaction(&mut self) {
+        self.discard_batch(UNKNOWN_OUTCOME).await;
+    }
+
+    /// The savepoint cannot be rolled back: the engine ended the transaction on
+    /// its own (I/O error, full disk; #229), savepoint and batch with it. The
+    /// batch is dropped so the next job begins a fresh one, instead of retrying
+    /// the same failing ROLLBACK TO forever.
+    pub(super) async fn discard_after_lost_savepoint(&mut self) {
+        self.discard_batch(TRANSACTION_LOST).await;
+    }
+
+    async fn discard_batch(&mut self, message: &str) {
         if let Err(error) = self.run_control(ControlStatement::Rollback).await {
             tracing::debug!(%error, "no transaction to roll back while reconciling");
         }
         if let Some(batch) = self.open.take() {
-            answer_waiters(batch, Err(UNKNOWN_OUTCOME.to_string()));
+            answer_waiters(batch, Err(message.to_string()));
         }
         self.job_open = false;
     }
@@ -81,3 +93,5 @@ impl<C: BatchConn> BatchState<C> {
 }
 
 const UNKNOWN_OUTCOME: &str = "the batch's COMMIT was interrupted and its outcome is unknown; check the write before retrying";
+
+const TRANSACTION_LOST: &str = "the database rolled the batch's transaction back on its own (an I/O error or a full disk); the batch's writes were not committed";

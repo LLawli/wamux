@@ -51,6 +51,13 @@ impl FakeConn {
         }
     }
 
+    /// What SQLite does to the whole transaction when a statement fails with an
+    /// I/O error or a full disk (#229): it is gone, savepoint and all, and the
+    /// batch is not told.
+    pub(super) fn abort_transaction(&mut self) {
+        self.0.lock().unwrap().rollback_open();
+    }
+
     pub(super) fn in_transaction(&self) -> bool {
         self.0.lock().unwrap().in_transaction
     }

@@ -41,6 +41,14 @@ pub async fn connect_postgres(
 /// for it. The reference implementation's pragmas used NORMAL, which can lose
 /// the last commits on power loss; here nothing acknowledged is lost.
 ///
+/// `temp_store = MEMORY` on the writer and the readers (#229): the `scratch` image
+/// has no temp dir, and a savepoint that touches more than 64 KiB of pages spills
+/// its sub-journal to a temp file, which fails with SQLITE_IOERR_GETTEMPPATH and
+/// makes SQLite roll the whole transaction back (the first prekey upload after
+/// pairing). Store pages are a secret (#75), so keeping them in memory also means
+/// they never reach /tmp. Measured: +0 MB RSS for the 812-prekey batch, +2.9 MB
+/// for a 3 MB savepoint.
+///
 /// `foreign_keys` is not cosmetic: SQLite defaults it OFF, and every store table
 /// hangs off `accounts(device_id) ON DELETE CASCADE`. Without it, deleting an
 /// account would silently orphan all of its Signal rows.
@@ -68,6 +76,7 @@ fn writer_options(database_url: &str) -> Result<SqliteConnectOptions, sqlx::Erro
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
         .busy_timeout(BUSY_TIMEOUT)
+        .pragma("temp_store", "memory")
         .foreign_keys(true))
 }
 
@@ -78,5 +87,6 @@ fn reader_options(database_url: &str) -> Result<SqliteConnectOptions, sqlx::Erro
     Ok(SqliteConnectOptions::from_str(database_url)?
         .read_only(true)
         .create_if_missing(false)
+        .pragma("temp_store", "memory")
         .busy_timeout(BUSY_TIMEOUT))
 }
