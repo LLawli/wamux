@@ -8,7 +8,7 @@
 
 # Base images by digest and the build --locked (#78): the image we ship is built
 # from the inputs CI tested, not from whatever the tags point at today.
-FROM rust:trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS build
+FROM rust:trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137 AS build
 WORKDIR /src
 
 # musl-tools gives the musl C compiler the bundled C code (SQLite, mimalloc) is
