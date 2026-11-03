@@ -21,6 +21,12 @@ has to follow them.
   `SendInteractiveReply` already had. Bytes sent without a quote
   (`quote.quoted`), or that are not a `wa.Message`, are `InvalidArgument`;
   `SendMedia` refuses them before uploading. The core looks nothing up.
+- **Config key `blocking_shutdown_timeout_ms`** (issue #239, env
+  `WAMUX_BLOCKING_SHUTDOWN_TIMEOUT_MS`, default 5000): after the accounts
+  stop, how long the runtime waits for its blocking tasks before the process
+  exits without them. With the defaults the worst case after SIGTERM is
+  10 s (`shutdown_grace_ms`) + 3 s (`graceful_stop_timeout_ms`) + 5 s, well
+  under systemd's 90 s.
 
 ### Changed
 
@@ -57,6 +63,18 @@ has to follow them.
 
 ### Fixed
 
+- **The daemon exits after SIGTERM even when a blocking task is stuck** (issue
+  #239). A connect whose `web.whatsapp.com/sw.js` read stalls after the TLS
+  handshake leaves a `spawn_blocking` thread in a socket read that nothing
+  cancels, and dropping the tokio runtime waited for it forever: the process
+  logged `wamux stopped`, removed its socket and stayed alive until SIGKILL,
+  so systemd saw a failed stop. The runtime is now built by hand and shut down
+  with `blocking_shutdown_timeout_ms`; past it the daemon logs
+  `blocking tasks still running after 5s; exiting without them` and exits 0.
+  Reproduced against the real host with a relay that stops forwarding after
+  8000 bytes: before, still alive 60 s after SIGTERM; after, exit 0 in 8 s
+  (ConnectAccount) and 18 s (an open PairWithQr stream, which holds the full
+  shutdown grace, #247).
 - **Pairing on the published image no longer fails with `SQLITE_IOERR_GETTEMPPATH`** (#229). The
   `scratch` image has no `/tmp`, and an UPDATE over more than 64 KiB of pages inside a savepoint
   (the first prekey upload after pairing) spills to a temp file. The SQLite store now keeps its
