@@ -220,7 +220,9 @@ are noted here.
   [DEPLOYMENT.md](DEPLOYMENT.md).
 - SIGTERM/SIGINT fire one shutdown that ends every event stream; the server then
   drains within `shutdown_grace_ms`, the accounts stop gracefully, and the socket
-  is unlinked (#35).
+  is unlinked (#35). Last, the runtime waits at most `blocking_shutdown_timeout_ms`
+  for its blocking tasks (a read stuck on a stalled connection cannot be
+  cancelled), then the process exits without them and logs a warning (#239).
 - `Config` is loaded once at startup: defaults, then the TOML file (`WAMUX_CONFIG`
   or `wamux.toml`), then `WAMUX_` env (env wins). Each field's doc comment in
   `config.rs` is the reference. `store_key_file` names a path; the key itself is

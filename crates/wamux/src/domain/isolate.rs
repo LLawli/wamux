@@ -32,9 +32,9 @@ where
     tokio::task::spawn_blocking(move || {
         // `Handle::block_on` does not drive the I/O and time drivers itself on a
         // current_thread runtime (only `Runtime::block_on` does). That is fine
-        // because the daemon is multi-thread (`#[tokio::main]` in main.rs), so
-        // its worker threads keep the drivers moving while this blocking thread
-        // waits (#107).
+        // because the daemon's runtime is multi-thread
+        // (`daemon_runtime::block_on_bounded`), so its worker threads keep the
+        // drivers moving while this blocking thread waits (#107).
         //
         // Everything funnels through the shared classifier: the library error
         // keeps its honest IQ Status code, and the infra error (join) just

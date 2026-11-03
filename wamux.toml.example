@@ -64,6 +64,11 @@ graceful_stop_timeout_ms = 3000
 # at shutdown; this bounds anything else. Keep it under systemd's stop timeout.
 shutdown_grace_ms = 10000
 
+# After the accounts stop, the runtime waits at most this long for blocking
+# tasks (a read stuck on a stalled connection cannot be cancelled), then the
+# process exits without them (#239).
+blocking_shutdown_timeout_ms = 5000
+
 # Max bytes accepted for an inbound media send (inline streamed chunks), and the
 # largest file DownloadMedia will fetch (#79).
 media_max_bytes = 104857600

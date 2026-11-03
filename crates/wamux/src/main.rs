@@ -2,6 +2,7 @@
 //! account registry, load existing accounts (connect is edge-driven), bind the
 //! socket, serve.
 
+use std::future::Future;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 
 use wamux::cli::{self, Command};
 use wamux::config::Config;
+use wamux::daemon_runtime::{BlockingPoolExit, block_on_bounded};
 use wamux::state::{AccountRegistry, RegistryTuning};
 use wamux::storage::{StoreKey, store_key::key_id_hex};
 use wamux::{server, spool, storage, transport};
@@ -49,11 +51,15 @@ fn load_store_key(config: &Config) -> anyhow::Result<Option<StoreKey>> {
     Ok(Some(key))
 }
 
+/// How long a one-shot store command waits for blocking tasks at exit. They
+/// spawn no long blocking work, so this is only a backstop (#239).
+const ONE_SHOT_BLOCKING_BOUND: Duration = Duration::from_secs(5);
+
 /// `wamux` with no arguments serves; the other commands are one-shot (#165).
 /// A usage error exits 2, any other failure 1 (the `Err` `main` returns),
-/// success 0.
-#[tokio::main]
-async fn main() -> anyhow::Result<ExitCode> {
+/// success 0. No `#[tokio::main]`: the runtime is built by hand so its exit is
+/// bounded (#239).
+fn main() -> anyhow::Result<ExitCode> {
     restrict_umask();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match cli::parse(&args) {
@@ -65,11 +71,38 @@ async fn main() -> anyhow::Result<ExitCode> {
             println!("{}", cli::usage());
             Ok(ExitCode::SUCCESS)
         }
-        Ok(Command::Serve) => serve().await.map(|()| ExitCode::SUCCESS),
-        Ok(Command::StoreDecrypt { yes }) => store_decrypt(yes).await.map(|()| ExitCode::SUCCESS),
-        Ok(Command::StoreRotateKey { new_key_file }) => store_rotate_key(&new_key_file)
-            .await
-            .map(|()| ExitCode::SUCCESS),
+        Ok(Command::Serve) => run_serve(),
+        Ok(Command::StoreDecrypt { yes }) => run_one_shot(store_decrypt(yes)),
+        Ok(Command::StoreRotateKey { new_key_file }) => {
+            run_one_shot(store_rotate_key(&new_key_file))
+        }
+    }
+}
+
+/// Loads the config first: the blocking bound must be known before the runtime
+/// exists.
+fn run_serve() -> anyhow::Result<ExitCode> {
+    let config = Config::load().context("loading config")?;
+    let bound = Duration::from_millis(config.blocking_shutdown_timeout_ms);
+    let run = block_on_bounded(serve(config), bound).context("building the tokio runtime")?;
+    report_blocking_pool_exit(bound, run.blocking_pool);
+    run.output.map(|()| ExitCode::SUCCESS)
+}
+
+fn run_one_shot(command: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<ExitCode> {
+    let run =
+        block_on_bounded(command, ONE_SHOT_BLOCKING_BOUND).context("building the tokio runtime")?;
+    run.output.map(|()| ExitCode::SUCCESS)
+}
+
+/// Logged after the runtime is gone; the global subscriber installed by
+/// `init_tracing` outlives it.
+fn report_blocking_pool_exit(bound: Duration, exit: BlockingPoolExit) {
+    match exit {
+        BlockingPoolExit::Drained => tracing::info!("blocking pool drained"),
+        BlockingPoolExit::Abandoned => {
+            tracing::warn!("blocking tasks still running after {bound:?}; exiting without them");
+        }
     }
 }
 
@@ -123,8 +156,7 @@ async fn store_rotate_key(new_key_file: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn serve() -> anyhow::Result<()> {
-    let config = Config::load().context("loading config")?;
+async fn serve(config: Config) -> anyhow::Result<()> {
     init_tracing(&config);
 
     // The key file is read before the store opens, and a bad one stops startup

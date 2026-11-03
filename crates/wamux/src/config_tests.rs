@@ -99,3 +99,20 @@ fn config_default_socket_path_follows_the_running_os() {
         default_socket_path(std::env::consts::OS)
     );
 }
+
+/// #239: after the accounts stop, the runtime waits at most this long for its
+/// blocking tasks. 5 s keeps the worst exit (10 s grace + 3 s stop + 5 s) far
+/// under systemd's 90 s stop timeout.
+#[test]
+fn blocking_shutdown_timeout_defaults_to_5s() {
+    assert_eq!(Config::default().blocking_shutdown_timeout_ms, 5000);
+}
+
+#[test]
+fn blocking_shutdown_timeout_comes_from_toml() {
+    let config: Config = Figment::from(Serialized::defaults(Config::default()))
+        .merge(Toml::string("blocking_shutdown_timeout_ms = 1500"))
+        .extract()
+        .unwrap();
+    assert_eq!(config.blocking_shutdown_timeout_ms, 1500);
+}

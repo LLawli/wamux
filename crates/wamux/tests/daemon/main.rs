@@ -12,6 +12,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod daemon_exit;
 mod daemon_umask;
 mod event_order;
 mod event_subscription;
