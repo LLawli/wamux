@@ -6,7 +6,7 @@
 # with `docker build -f Dockerfile.glibc .`.
 
 # Base images by digest and the build --locked (#78).
-FROM rust:trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS build
+FROM rust:trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137 AS build
 WORKDIR /src
 
 # The pinned nightly (the one upstream whatsapp-rust builds on, #30) is
