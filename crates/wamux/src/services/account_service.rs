@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use tokio::sync::broadcast;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use wamux_types::{AccountRef, relay_lib_jid};
@@ -12,14 +13,30 @@ use crate::domain::pairing_update::pairing_stream_ends;
 use crate::proto::v1 as pb;
 use crate::proto::v1::account_service_server::AccountService;
 use crate::state::{AccountHandle, AccountRegistry};
+use crate::transport::shutdown::Shutdown;
 
 pub struct AccountSvc {
     registry: Arc<AccountRegistry>,
+    shutdown: Shutdown,
 }
 
 impl AccountSvc {
+    /// A service whose pairing streams end only when their flow finishes or
+    /// their client hangs up. What the in-process tests want; the daemon wires
+    /// `with_shutdown`.
     pub fn new(registry: Arc<AccountRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            shutdown: Shutdown::new(),
+        }
+    }
+
+    /// End every pairing stream when `shutdown` fires (#247): a stream waiting
+    /// on a phone never ends on its own, and tonic waits for it before `serve`
+    /// returns.
+    pub fn with_shutdown(mut self, shutdown: Shutdown) -> Self {
+        self.shutdown = shutdown;
+        self
     }
 }
 
@@ -42,46 +59,76 @@ fn status_of(handle: &AccountHandle, jid: Option<pb::Jid>) -> pb::AccountStatus 
     }
 }
 
-/// Spawn the (re)connect and forward only pairing updates until paired/error.
+type PairingTx = tokio::sync::mpsc::Sender<Result<pb::PairingUpdate, Status>>;
+
+/// Spawn the (re)connect and forward only pairing updates until paired/error,
+/// the client hanging up, or `shutdown`.
 fn pairing_stream(
     registry: Arc<AccountRegistry>,
     handle: Arc<AccountHandle>,
     pair_code: Option<PairCodeOptions>,
     skip_history: bool,
+    shutdown: Shutdown,
 ) -> ReceiverStream<Result<pb::PairingUpdate, Status>> {
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     // Subscribe before connecting so we never miss the first QR/code.
-    let mut events = handle.subscribe();
+    let events = handle.subscribe();
     tokio::spawn(async move {
-        {
-            let registry = registry.clone();
-            let handle = handle.clone();
-            tokio::spawn(async move {
-                // skip_history is the relay-pure default; the caller flips it via
-                // backfill_history to capture the InitialBootstrap dump that the
-                // phone pushes right after linking.
-                let _ = registry.connect(&handle, pair_code, skip_history).await;
-            });
-        }
-        loop {
-            match events.recv().await {
-                Ok(envelope) => {
-                    if let Some(pb::event_envelope::Event::Pairing(update)) = envelope.event {
-                        let done = pairing_stream_ends(&update);
-                        if tx.send(Ok(update)).await.is_err() {
-                            break;
-                        }
-                        if done {
-                            break;
-                        }
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => break,
-            }
-        }
+        spawn_connect(registry, handle, pair_code, skip_history);
+        forward_pairing_updates(events, tx, shutdown).await;
     });
     ReceiverStream::new(rx)
+}
+
+fn spawn_connect(
+    registry: Arc<AccountRegistry>,
+    handle: Arc<AccountHandle>,
+    pair_code: Option<PairCodeOptions>,
+    skip_history: bool,
+) {
+    tokio::spawn(async move {
+        // skip_history is the relay-pure default; the caller flips it via
+        // backfill_history to capture the InitialBootstrap dump that the
+        // phone pushes right after linking.
+        let _ = registry.connect(&handle, pair_code, skip_history).await;
+    });
+}
+
+/// Owns `tx`, so returning drops it, which is the client's clean end of stream.
+async fn forward_pairing_updates(
+    mut events: broadcast::Receiver<pb::EventEnvelope>,
+    tx: PairingTx,
+    shutdown: Shutdown,
+) {
+    // One select around the whole loop, not per `recv`, so a `send` blocked on a
+    // client that stopped reading is cut too. `shutdown`: a stream waiting on a
+    // phone never ends on its own, and tonic waits for it (#247, see #35).
+    // `tx.closed()`: `send` notices a gone client only on the next pairing
+    // update, which may never come, and the task would stay parked on the
+    // account's broadcast.
+    tokio::select! {
+        () = relay_pairing_events(&mut events, &tx) => {}
+        () = tx.closed() => {}
+        () = shutdown.triggered() => {}
+    }
+}
+
+async fn relay_pairing_events(events: &mut broadcast::Receiver<pb::EventEnvelope>, tx: &PairingTx) {
+    loop {
+        match events.recv().await {
+            Ok(envelope) => {
+                let Some(pb::event_envelope::Event::Pairing(update)) = envelope.event else {
+                    continue;
+                };
+                let done = pairing_stream_ends(&update);
+                if tx.send(Ok(update)).await.is_err() || done {
+                    return;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(_) => return,
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -138,6 +185,7 @@ impl AccountService for AccountSvc {
             handle,
             None,
             !req.backfill_history,
+            self.shutdown.clone(),
         )))
     }
 
@@ -161,6 +209,7 @@ impl AccountService for AccountSvc {
             handle,
             Some(options),
             !req.backfill_history,
+            self.shutdown.clone(),
         )))
     }
 
@@ -217,3 +266,7 @@ impl AccountService for AccountSvc {
         Ok(Response::new(pb::Empty {}))
     }
 }
+
+#[cfg(test)]
+#[path = "account_service_tests.rs"]
+mod tests;
