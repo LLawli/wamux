@@ -200,7 +200,7 @@ dev-dependencies are excluded because they never reach the binary.
 | protoc-bin-vendored-macos-aarch_64 | 3.2.0 | MIT |
 | protoc-bin-vendored-macos-x86_64 | 3.2.0 | MIT |
 | protoc-bin-vendored-win32 | 3.2.0 | MIT |
-| pulldown-cmark | 0.13.5 | MIT |
+| pulldown-cmark | 0.13.6 | MIT |
 | pulldown-cmark-to-cmark | 22.0.3 | Apache-2.0 |
 | quanta | 0.12.6 | MIT |
 | quote | 1.0.45 | MIT OR Apache-2.0 |
@@ -5066,7 +5066,7 @@ Apache License
 
 ### LICENSE: 1 crate(s)
 
-<details><summary>pulldown-cmark 0.13.5</summary>
+<details><summary>pulldown-cmark 0.13.6</summary>
 
 ```
 The MIT License

@@ -87,6 +87,8 @@ has to follow them.
   build scope: from 6 failures and a slowest login of 7.8 s to none, with the
   slowest login at 233 ms. Production builds still fetch the version as
   before.
+- **pulldown-cmark 0.13.6** for RUSTSEC-2026-0433. Build time only: prost-build
+  renders the proto doc comments with it, and it does not reach the binary.
 
 ## [0.2.3] - 2026-10-29
 
