@@ -7,6 +7,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod daemon_runtime;
 pub mod domain;
 pub mod error;
 pub mod observe;

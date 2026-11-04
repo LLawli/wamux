@@ -60,6 +60,9 @@ pub struct Config {
     /// their own when shutdown fires; this bounds anything else. Keep it, plus
     /// `graceful_stop_timeout_ms`, well under systemd's 90 s stop timeout.
     pub shutdown_grace_ms: u64,
+    /// After the accounts stop, how long (ms) the runtime waits for its
+    /// blocking tasks before the process exits without them (#239).
+    pub blocking_shutdown_timeout_ms: u64,
     /// Max bytes accepted for an inbound media send (inline streamed chunks),
     /// and the largest `file_length` DownloadMedia will fetch (#79).
     pub media_max_bytes: u64,
@@ -108,6 +111,7 @@ impl Default for Config {
             max_connected_accounts: 200,
             graceful_stop_timeout_ms: 3000,
             shutdown_grace_ms: 10_000,
+            blocking_shutdown_timeout_ms: 5000,
             media_max_bytes: 100 * 1024 * 1024,
             media_spool_dir: "/var/cache/wamux".to_string(),
             media_spool_max_bytes: 2 * 1024 * 1024 * 1024,

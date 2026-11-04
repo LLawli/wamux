@@ -3,7 +3,7 @@
 //! opened inside would stay bound to that runtime's dead I/O driver (Postgres
 //! connections left in the pool would then hold every later acquire until
 //! `acquire_timeout`), and a task the library `tokio::spawn`s would die with it.
-//! Multi-thread, like the daemon's `#[tokio::main]`.
+//! Multi-thread, like the daemon's runtime (`daemon_runtime::block_on_bounded`).
 
 use std::time::Duration;
 
