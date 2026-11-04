@@ -135,7 +135,11 @@ service AccountService {
   rpc CreateAccount(CreateAccountRequest) returns (Account);
   rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
   rpc GetAccountStatus(AccountRef) returns (AccountStatus);
+  // A connect that fails fails this call itself, with the Status ConnectAccount
+  // gives, before any stream exists (#250).
   rpc PairWithQr(PairWithQrRequest) returns (stream PairingUpdate);
+  // A connect that fails fails this call itself, with the Status ConnectAccount
+  // gives, before any stream exists (#250).
   rpc PairWithCode(PairWithCodeRequest) returns (stream PairingUpdate);
   rpc ConnectAccount(ConnectAccountRequest) returns (AccountStatus);
   rpc DisconnectAccount(AccountRef) returns (AccountStatus);

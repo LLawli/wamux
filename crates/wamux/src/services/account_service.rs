@@ -61,37 +61,27 @@ fn status_of(handle: &AccountHandle, jid: Option<pb::Jid>) -> pb::AccountStatus 
 
 type PairingTx = tokio::sync::mpsc::Sender<Result<pb::PairingUpdate, Status>>;
 
-/// Spawn the (re)connect and forward only pairing updates until paired/error,
-/// the client hanging up, or `shutdown`.
-fn pairing_stream(
+/// Connect, then forward only pairing updates until paired/error, the client
+/// hanging up, or `shutdown`. A failed connect fails the call itself, before
+/// any stream exists (#250): no pairing event follows a connect that failed,
+/// so a stream would stay silent, and the connect only builds the bot, so
+/// waiting for it costs milliseconds.
+async fn pairing_stream(
     registry: Arc<AccountRegistry>,
     handle: Arc<AccountHandle>,
     pair_code: Option<PairCodeOptions>,
     skip_history: bool,
     shutdown: Shutdown,
-) -> ReceiverStream<Result<pb::PairingUpdate, Status>> {
+) -> Result<ReceiverStream<Result<pb::PairingUpdate, Status>>, Status> {
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     // Subscribe before connecting so we never miss the first QR/code.
     let events = handle.subscribe();
-    tokio::spawn(async move {
-        spawn_connect(registry, handle, pair_code, skip_history);
-        forward_pairing_updates(events, tx, shutdown).await;
-    });
-    ReceiverStream::new(rx)
-}
-
-fn spawn_connect(
-    registry: Arc<AccountRegistry>,
-    handle: Arc<AccountHandle>,
-    pair_code: Option<PairCodeOptions>,
-    skip_history: bool,
-) {
-    tokio::spawn(async move {
-        // skip_history is the relay-pure default; the caller flips it via
-        // backfill_history to capture the InitialBootstrap dump that the
-        // phone pushes right after linking.
-        let _ = registry.connect(&handle, pair_code, skip_history).await;
-    });
+    // skip_history is the relay-pure default; the caller flips it via
+    // backfill_history to capture the InitialBootstrap dump that the phone
+    // pushes right after linking.
+    registry.connect(&handle, pair_code, skip_history).await?;
+    tokio::spawn(forward_pairing_updates(events, tx, shutdown));
+    Ok(ReceiverStream::new(rx))
 }
 
 /// Owns `tx`, so returning drops it, which is the client's clean end of stream.
@@ -180,13 +170,16 @@ impl AccountService for AccountSvc {
         let handle = self
             .registry
             .resolve(&AccountRef::from_proto(req.account.as_ref())?)?;
-        Ok(Response::new(pairing_stream(
-            self.registry.clone(),
-            handle,
-            None,
-            !req.backfill_history,
-            self.shutdown.clone(),
-        )))
+        Ok(Response::new(
+            pairing_stream(
+                self.registry.clone(),
+                handle,
+                None,
+                !req.backfill_history,
+                self.shutdown.clone(),
+            )
+            .await?,
+        ))
     }
 
     type PairWithCodeStream = ReceiverStream<Result<pb::PairingUpdate, Status>>;
@@ -204,13 +197,16 @@ impl AccountService for AccountSvc {
             custom_code: req.custom_code,
             ..Default::default()
         };
-        Ok(Response::new(pairing_stream(
-            self.registry.clone(),
-            handle,
-            Some(options),
-            !req.backfill_history,
-            self.shutdown.clone(),
-        )))
+        Ok(Response::new(
+            pairing_stream(
+                self.registry.clone(),
+                handle,
+                Some(options),
+                !req.backfill_history,
+                self.shutdown.clone(),
+            )
+            .await?,
+        ))
     }
 
     async fn connect_account(
