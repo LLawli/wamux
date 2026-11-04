@@ -63,6 +63,16 @@ has to follow them.
 
 ### Fixed
 
+- **An open `PairWithQr` or `PairWithCode` stream no longer holds the shutdown**
+  (issue #247). These streams wait on a phone and never ended on their own, so
+  every shutdown during a pairing waited the whole `shutdown_grace_ms` and the
+  client saw a torn connection. They now end cleanly when shutdown fires, the
+  way `SubscribeEvents` does. Note for the edge: a pairing stream can now end
+  with no terminal update, which means the daemon is stopping; asking again
+  once it is back is the caller's decision. Measured with a real QR on screen:
+  10.06 s and a transport error before, 0.06 s and a clean end of stream after.
+  The forwarder also ends as soon as its client hangs up, instead of staying
+  parked until the next pairing update.
 - **The daemon exits after SIGTERM even when a blocking task is stuck** (issue
   #239). A connect whose `web.whatsapp.com/sw.js` read stalls after the TLS
   handshake leaves a `spawn_blocking` thread in a socket read that nothing
