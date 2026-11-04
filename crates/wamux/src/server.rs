@@ -36,8 +36,8 @@ use crate::transport::shutdown::Shutdown;
 /// router.
 pub type ObservedRouter = Router<Stack<PeerAllowlistLayer, Stack<RequestObserveLayer, Identity>>>;
 
-/// `shutdown` ends every event subscription when it fires, which is what lets
-/// the server drain at all (#35).
+/// `shutdown` ends every event subscription and pairing stream when it fires,
+/// which is what lets the server drain at all (#35, #247).
 pub fn build_router(
     registry: Arc<AccountRegistry>,
     config: &Config,
@@ -54,7 +54,9 @@ pub fn build_router(
             config.allowed_uids.clone(),
             config.allowed_gids.clone(),
         )))
-        .add_service(AccountServiceServer::new(AccountSvc::new(registry.clone())))
+        .add_service(AccountServiceServer::new(
+            AccountSvc::new(registry.clone()).with_shutdown(shutdown.clone()),
+        ))
         .add_service(EventServiceServer::new(
             EventSvc::new(registry.clone()).with_shutdown(shutdown),
         ))

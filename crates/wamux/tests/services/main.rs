@@ -20,6 +20,7 @@ mod logout_events;
 mod media_service;
 mod messaging_service;
 mod newsletter_service;
+mod pairing_shutdown;
 mod stress_newsletter_history;
 mod stress_newsletter_parse;
 mod stress_newsletter_poll_vote;

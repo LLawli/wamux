@@ -218,8 +218,8 @@ are noted here.
   group, so run wamux as the group that should share the socket. Startup refuses to run when another daemon already serves the path.
   `allowed_uids`/`allowed_gids` add an optional `SO_PEERCRED` allowlist. See
   [DEPLOYMENT.md](DEPLOYMENT.md).
-- SIGTERM/SIGINT fire one shutdown that ends every event stream; the server then
-  drains within `shutdown_grace_ms`, the accounts stop gracefully, and the socket
+- SIGTERM/SIGINT fire one shutdown that ends every event stream and every
+  pairing stream (#247); the server then drains within `shutdown_grace_ms`, the accounts stop gracefully, and the socket
   is unlinked (#35). Last, the runtime waits at most `blocking_shutdown_timeout_ms`
   for its blocking tasks (a read stuck on a stalled connection cannot be
   cancelled), then the process exits without them and logs a warning (#239).
