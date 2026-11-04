@@ -71,20 +71,20 @@ turso = { workspace = true, optional = true }
 
 thiserror = "2"
 # #148: decodes a sticker's base64 filehash into the SHA-256 DownloadMedia checks.
-base64 = "0.22"
+base64 = "0.23"
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 # metrics facade + Prometheus exposition. Rendered over the socket by AdminService;
 # default features off to drop the HTTP/TCP listener and push-gateway (no TCP here).
 metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.16", default-features = false }
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 # http-body Body/Frame traits for the per-request observability tower layer (wraps
 # the response body to read the grpc-status trailer at end-of-stream).
 http-body = "1"
 uuid.workspace = true
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1.1"
 figment = { version = "0.10", features = ["toml", "env"] }
 dashmap = "6"
 bytes.workspace = true
