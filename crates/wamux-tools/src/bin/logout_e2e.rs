@@ -3,7 +3,8 @@
 //!   2. Logout -> sends the RemoveCompanionDevice IQ; the device should vanish
 //!      from the phone's "linked devices" list.
 //!   3. GetAccountStatus -> expect DISCONNECTED. Logout keeps the account row +
-//!      local keys (re-pairable); only DeleteAccount wipes state.
+//!      the stored identity, which cannot pair again;
+//!      only DeleteAccount wipes state.
 //!
 //! Env: WAMUX_REF (required), WAMUX_SOCKET_PATH.
 
@@ -39,7 +40,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     println!(
         "\n=== CONFIRM ON YOUR PHONE ===\n\
          WhatsApp -> Settings -> Linked devices: the wamux device should be GONE.\n\
-         The account row + local keys are kept (re-pairable via QR)."
+         The account row + stored identity is kept and cannot pair again; DeleteAccount and CreateAccount can."
     );
     Ok(report.finish())
 }

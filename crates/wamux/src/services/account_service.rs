@@ -10,6 +10,7 @@ use whatsapp_rust::pair_code::PairCodeOptions;
 
 use super::account_to_proto;
 use crate::domain::pairing_update::pairing_stream_ends;
+use crate::error::WamuxError;
 use crate::proto::v1 as pb;
 use crate::proto::v1::account_service_server::AccountService;
 use crate::state::{AccountHandle, AccountRegistry};
@@ -61,11 +62,15 @@ fn status_of(handle: &AccountHandle, jid: Option<pb::Jid>) -> pb::AccountStatus 
 
 type PairingTx = tokio::sync::mpsc::Sender<Result<pb::PairingUpdate, Status>>;
 
-/// Connect, then forward only pairing updates until paired/error, the client
-/// hanging up, or `shutdown`. A failed connect fails the call itself, before
-/// any stream exists (#250): no pairing event follows a connect that failed,
-/// so a stream would stay silent, and the connect only builds the bot, so
-/// waiting for it costs milliseconds.
+/// Refuse an account holding a paired identity, then connect and forward only
+/// pairing updates until paired/error, the client hanging up, or `shutdown`.
+/// The library logs in whenever a `pn` is stored, so such an account never
+/// asks for a QR and the stream would stay silent (#253); the refusal comes
+/// before subscribe and connect so a refused call starts nothing.
+///
+/// A failed connect fails the call itself, before any stream exists (#250): no
+/// pairing event follows a connect that failed, so a stream would stay silent,
+/// and the connect only builds the bot, so waiting for it costs milliseconds.
 async fn pairing_stream(
     registry: Arc<AccountRegistry>,
     handle: Arc<AccountHandle>,
@@ -73,6 +78,13 @@ async fn pairing_stream(
     skip_history: bool,
     shutdown: Shutdown,
 ) -> Result<ReceiverStream<Result<pb::PairingUpdate, Status>>, Status> {
+    if registry.has_stored_pn(&handle).await? {
+        return Err(WamuxError::FailedPrecondition(
+            "account holds a paired identity: DeleteAccount and CreateAccount to pair again"
+                .to_string(),
+        )
+        .into());
+    }
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     // Subscribe before connecting so we never miss the first QR/code.
     let events = handle.subscribe();
@@ -244,8 +256,9 @@ impl AccountService for AccountSvc {
             .registry
             .resolve(&AccountRef::from_proto(Some(&reference))?)?;
         // Real server-side unlink (RemoveCompanionDevice IQ); requires a live
-        // connection, else FailedPrecondition. Local keys are kept (re-pairable);
-        // DeleteAccount wipes state.
+        // connection, else FailedPrecondition. The stored identity stays, so
+        // this account cannot pair again: that takes DeleteAccount and
+        // CreateAccount.
         self.registry.logout(&handle).await?;
         Ok(Response::new(pb::Empty {}))
     }

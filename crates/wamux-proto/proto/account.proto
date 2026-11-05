@@ -137,9 +137,15 @@ service AccountService {
   rpc GetAccountStatus(AccountRef) returns (AccountStatus);
   // A connect that fails fails this call itself, with the Status ConnectAccount
   // gives, before any stream exists (#250).
+  // An account with a stored identity (paired or logged out) gets
+  // FailedPrecondition: it would log in, and no QR or code would ever come
+  // (#253). To pair again, DeleteAccount and CreateAccount.
   rpc PairWithQr(PairWithQrRequest) returns (stream PairingUpdate);
   // A connect that fails fails this call itself, with the Status ConnectAccount
   // gives, before any stream exists (#250).
+  // An account with a stored identity (paired or logged out) gets
+  // FailedPrecondition: it would log in, and no QR or code would ever come
+  // (#253). To pair again, DeleteAccount and CreateAccount.
   rpc PairWithCode(PairWithCodeRequest) returns (stream PairingUpdate);
   rpc ConnectAccount(ConnectAccountRequest) returns (AccountStatus);
   rpc DisconnectAccount(AccountRef) returns (AccountStatus);

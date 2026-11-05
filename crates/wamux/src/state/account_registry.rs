@@ -237,6 +237,17 @@ impl AccountRegistry {
         Ok(())
     }
 
+    /// Whether the stored device holds a `pn`, the library's own rule for login
+    /// (present) versus registration (absent): a `lid` alone does not lead to
+    /// login. Read from the store because LOGGED_OUT lives only in memory, so
+    /// after a daemon restart the same account reads DISCONNECTED. A store
+    /// error fails the call; it must not read as "not paired" (#253).
+    pub async fn has_stored_pn(&self, handle: &AccountHandle) -> Result<bool, WamuxError> {
+        let backend = self.storage.device_backend(handle.device_id);
+        let device = backend.load().await?;
+        Ok(device.is_some_and(|device| device.pn.is_some()))
+    }
+
     pub async fn disconnect(&self, handle: &Arc<AccountHandle>) {
         handle.stop().await;
     }
@@ -249,9 +260,11 @@ impl AccountRegistry {
     }
 
     /// Real device unlink: send the server-side RemoveCompanionDevice IQ, then
-    /// stop the bot. Keeps the `accounts` row + local keys so the account can be
-    /// re-paired (use `delete` to wipe state). The library only emits the IQ
-    /// while connected, so we require a live connection and surface `NotConnected`
+    /// stop the bot. Keeps the `accounts` row and the stored identity, which
+    /// still holds a `pn`: the next connect tries to log in and the server
+    /// answers 401, so the account cannot pair again (use `delete`, then create
+    /// a new one). The library only emits the IQ while connected, so we require
+    /// a live connection and surface `NotConnected`
     /// otherwise — the edge decides whether to connect first.
     pub async fn logout(&self, handle: &Arc<AccountHandle>) -> Result<(), WamuxError> {
         let client = handle.client().await.ok_or(WamuxError::NotConnected)?;
