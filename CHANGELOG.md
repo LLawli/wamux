@@ -63,6 +63,16 @@ has to follow them.
 
 ### Fixed
 
+- **`PairWithQr` and `PairWithCode` refuse an account that holds a paired
+  identity** (issue #253). Such an account logs in and never asks for a QR or a
+  code, so the call stayed open with no frame and no error. It now returns
+  `FailedPrecondition` at once, before anything connects, whether the account is
+  running, stopped or logged out. Note for the edge: this includes a logged-out
+  account. `Logout` keeps the stored identity, the next connect logs in, and
+  WhatsApp answers 401, so that account never gets a QR. To pair again, call
+  `DeleteAccount` and `CreateAccount`, which gives a new uuid (#255 tracks keeping
+  it). Measured against WhatsApp: `PairWithQr` after `Logout` hung until the
+  client's own 30 s deadline before, and is refused in 0.02 s now.
 - **`PairWithQr` and `PairWithCode` fail when the connect fails** (issue #250). A
   full connection budget or a bot that could not be built used to leave the call
   open with no frame and no error, for as long as the client waited. The call now
