@@ -195,6 +195,9 @@ impl AccountRegistry {
                 self.tuning.max_connected_accounts
             )));
         }
+        // Restore the exact prior state on failure, not a literal Disconnected:
+        // connect overwrites LoggedOut/Banned, and those are terminal.
+        let before = handle.current_state();
         let _ = handle.state_tx.send(pb::ConnectionState::Connecting);
         let bot = build_bot(
             self.storage.device_backend(handle.device_id),
@@ -204,7 +207,10 @@ impl AccountRegistry {
             self.tuning.ws_url_override.as_deref(),
         )
         .await
-        .map_err(client_err)?;
+        .map_err(|err| {
+            let _ = handle.state_tx.send(before);
+            client_err(err)
+        })?;
         handle.set_client(bot.client()).await;
         // `Bot::run()` blocks the calling task and is infallible; `spawn()`
         // is the background form and consumes the Bot, so there is no

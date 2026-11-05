@@ -63,6 +63,15 @@ has to follow them.
 
 ### Fixed
 
+- **`PairWithQr` and `PairWithCode` fail when the connect fails** (issue #250). A
+  full connection budget or a bot that could not be built used to leave the call
+  open with no frame and no error, for as long as the client waited. The call now
+  returns the `Status` `ConnectAccount` gives (`ResourceExhausted`, `Unavailable`)
+  before any stream exists, and a failed build puts the account back in the state
+  it had instead of leaving it at `CONNECTING`, so `LOGGED_OUT` and `BANNED`
+  survive it. Measured against WhatsApp with `max_connected_accounts = 1` and one
+  account pairing: a second `PairWithQr` hung until the client's own 8 s deadline
+  before, and returns `ResourceExhausted` in 0.02 s now.
 - **An open `PairWithQr` or `PairWithCode` stream no longer holds the shutdown**
   (issue #247). These streams wait on a phone and never ended on their own, so
   every shutdown during a pairing waited the whole `shutdown_grace_ms` and the
