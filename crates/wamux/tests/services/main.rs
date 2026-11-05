@@ -21,6 +21,7 @@ mod media_service;
 mod messaging_service;
 mod newsletter_service;
 mod pairing_connect_errors;
+mod pairing_paired_account;
 mod pairing_shutdown;
 mod stress_newsletter_history;
 mod stress_newsletter_parse;
