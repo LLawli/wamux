@@ -9,6 +9,7 @@ pub mod commit_bench;
 pub mod delivery;
 pub mod inproc;
 pub mod live_env;
+pub mod logout_check;
 pub mod media_kit;
 pub mod post_pairing;
 pub mod profile;

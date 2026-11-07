@@ -91,8 +91,8 @@ of nothing, proved nothing and exits non-zero.
 
 - **Needs:** the daemon, `WAMUX_REF` paired.
 - **Env:** `WAMUX_REF`, `WAMUX_SOCKET_PATH`.
-- **Proves:** Logout unlinks the device and the account then reports DISCONNECTED (the row and keys are kept, so it can be paired again).
-- **Writes to WhatsApp:** it unlinks the device from the phone's linked-devices list. Destructive: you must pair again.
+- **Proves:** Logout unlinks the device and the account reports LOGGED_OUT as soon as the RPC returns. The row and keys are kept, but it cannot pair again: only DeleteAccount and CreateAccount can (see #255).
+- **Writes to WhatsApp:** it unlinks the device from the phone's linked-devices list. Destructive: to use the number again you must DeleteAccount, CreateAccount and pair anew.
 
 ### newsletter_history_live
 
