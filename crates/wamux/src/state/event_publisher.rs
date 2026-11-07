@@ -10,6 +10,10 @@
 //! that reached the ring late would be lost to a subscriber that joined in
 //! between.
 //!
+//! Connection state is the exception: it is applied inline in `publish_lib`,
+//! before the event is queued, because readers of the state cannot wait for the
+//! queue (#257).
+//!
 //! The queue is unbounded on purpose. The library calls its handler inline on
 //! its dispatch path and expects it never to wait; a bounded queue would have
 //! to drop, and a relay cannot lose an event. The consumer only maps, stamps
@@ -20,10 +24,11 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use futures::FutureExt;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use wacore::types::events::Event;
 
 use super::event_bridge::{self, EventCtx};
+use crate::proto::v1::ConnectionState;
 use crate::proto::v1::event_envelope::Event as WireEvent;
 
 /// One queued publish. `Wire` carries the channel that confirms delivery; its
@@ -47,19 +52,28 @@ impl Job {
 #[derive(Clone)]
 pub struct EventPublisher {
     queue: mpsc::UnboundedSender<Job>,
+    state_tx: Arc<watch::Sender<ConnectionState>>,
 }
 
 impl EventPublisher {
     /// Spawn the task that owns `ctx`'s sequence, ring and broadcast. Needs a
     /// tokio runtime.
-    pub fn spawn(ctx: EventCtx) -> Self {
+    pub fn spawn(ctx: EventCtx, state_tx: Arc<watch::Sender<ConnectionState>>) -> Self {
         let (queue, jobs) = mpsc::unbounded_channel();
         tokio::spawn(drain(ctx, jobs));
-        Self { queue }
+        Self { queue, state_tx }
     }
 
-    /// The library path: enqueue and return. Never waits, never drops.
+    /// The library path: apply the connection state, enqueue the event and
+    /// return. Never waits, never drops.
+    ///
+    /// The state is applied here and not by the draining task because `Logout`
+    /// and `stop` read it while the queue may still be behind: a `LoggedOut`
+    /// waiting in the queue would let `stop` write DISCONNECTED first (#257).
+    /// The watch send is synchronous and does not block, so the library's
+    /// inline handler still never waits.
     pub fn publish_lib(&self, event: Arc<Event>) {
+        event_bridge::update_state(&self.state_tx, &event);
         // While any clone exists the receiver lives, so a send fails only if
         // the task died some other way (the runtime shutting down). Nothing
         // can be published then, and there is nobody to tell.

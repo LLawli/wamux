@@ -1,7 +1,8 @@
 //! Maps each whatsapp-rust event to an `EventEnvelope`, stamps it with
-//! sequence + timestamp, pushes to the ring, and broadcasts it. Also tracks
-//! connection state into the per-account watch channel. Driven only by the
-//! account's `EventPublisher` task.
+//! sequence + timestamp, pushes to the ring, and broadcasts it. Also holds
+//! `update_state`, which tracks connection state into the per-account watch
+//! channel; the account's `EventPublisher` calls it inline from `publish_lib`,
+//! not from its draining task.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -21,19 +22,16 @@ pub struct EventCtx {
     pub uuid: String,
     pub events_tx: broadcast::Sender<EventEnvelope>,
     pub ring: Arc<EventRing>,
-    pub state_tx: Arc<watch::Sender<ConnectionState>>,
     pub seq: Arc<AtomicI64>,
     /// Largest event (encoded bytes) still kept in the replay ring; 0 = no cap.
     pub replay_max_event_bytes: u64,
 }
 
-/// Publish one library event: update connection state, then map each wire
-/// event it fans out to and publish it. Called only by the account's
-/// publisher task, which is what makes the stamp-then-deliver steps below
-/// atomic with respect to other events (#213).
+/// Publish one library event: map each wire event it fans out to and publish
+/// it. Connection state is not touched here (see `update_state`). Called only
+/// by the account's publisher task, which is what makes the stamp-then-deliver
+/// steps below atomic with respect to other events (#213).
 pub(super) async fn dispatch(ctx: &EventCtx, event: &Event) {
-    update_state(ctx, event);
-
     // One lib event can fan out to several wire events: whatsapp-rust
     // delivers inbound messages in batches, and the wire contract is one
     // message per envelope. Each gets its own monotonic_seq, so the edge keeps
@@ -76,7 +74,22 @@ pub(crate) fn replayable(envelope: &EventEnvelope, max_bytes: u64) -> bool {
     true
 }
 
-fn update_state(ctx: &EventCtx, event: &Event) {
+/// Whether `state` came from an event that already recorded the truth about the
+/// account, so a later disconnect must not overwrite it.
+pub(super) fn is_terminal(state: ConnectionState) -> bool {
+    matches!(state, ConnectionState::LoggedOut | ConnectionState::Banned)
+}
+
+/// Apply a library event to the connection state. Runs inline on the library's
+/// dispatch path, so it must stay synchronous and cheap (a watch send never
+/// blocks). It cannot wait for the event queue: `Logout` and `stop` read the
+/// state while the queue may still be behind (#257).
+///
+/// `Disconnected` never replaces a terminal state. A local logout does not mark
+/// the disconnect as expected, so a server that closes right after the IQ
+/// produces a `Disconnected` behind the `LoggedOut`, and nothing would correct
+/// it. `Connected` and `PairSuccess` still replace one: a new session is real.
+pub(super) fn update_state(state_tx: &watch::Sender<ConnectionState>, event: &Event) {
     let next = match event {
         Event::Connected(_) | Event::PairSuccess(_) => Some(ConnectionState::Connected),
         Event::Disconnected(_) => Some(ConnectionState::Disconnected),
@@ -84,9 +97,17 @@ fn update_state(ctx: &EventCtx, event: &Event) {
         Event::TemporaryBan(_) => Some(ConnectionState::Banned),
         _ => None,
     };
-    if let Some(state) = next {
-        let _ = ctx.state_tx.send(state);
-    }
+    let Some(state) = next else { return };
+    // Decide and write under one lock: `Disconnected` (library read task) and
+    // `LoggedOut` (logout task) race, and a read-then-send could let the former
+    // land over the latter.
+    state_tx.send_if_modified(|current| {
+        if state == ConnectionState::Disconnected && is_terminal(*current) {
+            return false;
+        }
+        *current = state;
+        true
+    });
 }
 
 fn now_millis() -> i64 {
