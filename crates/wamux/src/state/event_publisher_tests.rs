@@ -11,7 +11,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 
 use tokio::sync::{broadcast, watch};
-use wacore::types::events::{Event, Receipt};
+use wacore::net::DisconnectReason;
+use wacore::types::events::{
+    ConnectFailureReason, Connected, Disconnected, Event, LoggedOut, Receipt, TempBanReason,
+    TemporaryBan,
+};
 use wacore::types::message::MessageSource;
 use wacore::types::presence::ReceiptType;
 
@@ -35,14 +39,16 @@ fn bench(capacity: usize) -> Bench {
     let (events_tx, rx) = broadcast::channel(capacity);
     let (state_tx, _) = watch::channel(ConnectionState::Disconnected);
     let ring = Arc::new(EventRing::new(capacity));
-    let publisher = EventPublisher::spawn(EventCtx {
-        uuid: "account".to_string(),
-        events_tx,
-        ring: ring.clone(),
-        state_tx: Arc::new(state_tx),
-        seq: Arc::new(AtomicI64::new(0)),
-        replay_max_event_bytes: 0,
-    });
+    let publisher = EventPublisher::spawn(
+        EventCtx {
+            uuid: "account".to_string(),
+            events_tx,
+            ring: ring.clone(),
+            seq: Arc::new(AtomicI64::new(0)),
+            replay_max_event_bytes: 0,
+        },
+        Arc::new(state_tx),
+    );
     Bench {
         publisher,
         ring,
@@ -212,4 +218,102 @@ async fn wire_and_library_events_share_one_sequence() {
     let mut expected_echoes: Vec<String> = (0..ECHOES).map(|i| format!("echo{i}")).collect();
     expected_echoes.sort();
     assert_eq!(echo_labels, expected_echoes, "every echo, exactly once");
+}
+
+/// A publisher and a live read of the state it maintains. The receiver is kept
+/// because a watch with none drops what is sent, which would read as "never
+/// applied".
+fn state_bench() -> (EventPublisher, watch::Receiver<ConnectionState>) {
+    let (events_tx, _) = broadcast::channel(16);
+    let (state_tx, state_rx) = watch::channel(ConnectionState::Disconnected);
+    let publisher = EventPublisher::spawn(
+        EventCtx {
+            uuid: "account".to_string(),
+            events_tx,
+            ring: Arc::new(EventRing::new(16)),
+            seq: Arc::new(AtomicI64::new(0)),
+            replay_max_event_bytes: 0,
+        },
+        Arc::new(state_tx),
+    );
+    (publisher, state_rx)
+}
+
+fn logged_out() -> Arc<Event> {
+    Arc::new(Event::LoggedOut(Box::new(
+        LoggedOut::builder()
+            .on_connect(false)
+            .reason(ConnectFailureReason::LoggedOut)
+            .build(),
+    )))
+}
+
+fn banned() -> Arc<Event> {
+    Arc::new(Event::TemporaryBan(Box::new(
+        TemporaryBan::builder()
+            .code(TempBanReason::BlockedByUsers)
+            .expire(wacore::time::from_secs(60).unwrap() - wacore::time::from_secs(0).unwrap())
+            .build(),
+    )))
+}
+
+fn disconnected() -> Arc<Event> {
+    Arc::new(Event::Disconnected(
+        Disconnected::builder()
+            .reason(DisconnectReason::StreamEnded)
+            .build(),
+    ))
+}
+
+fn connected() -> Arc<Event> {
+    Arc::new(Event::Connected(Connected::builder().build()))
+}
+
+/// Returns once everything published before it has been drained: the queue is
+/// one task in order, so a confirmed wire event is behind all of it.
+async fn drained(publisher: &EventPublisher) {
+    publisher.publish_wire(wire("barrier")).await;
+}
+
+/// The default runtime is one thread and nothing here awaits, so the task that
+/// drains the queue cannot have run: only an inline apply can pass. `Logout`
+/// answers while a burst is still queued, and the state must already be true
+/// then (#257).
+#[tokio::test]
+async fn publish_lib_applies_the_state_before_the_queue_drains() {
+    let (publisher, state) = state_bench();
+    publisher.publish_lib(logged_out());
+    assert_eq!(*state.borrow(), ConnectionState::LoggedOut);
+}
+
+/// The local logout does not mark its disconnect as expected, so a server that
+/// closes right after the unlink IQ gets a `Disconnected` behind the
+/// `LoggedOut`, and nothing would ever correct it (#257).
+#[tokio::test]
+async fn disconnected_does_not_overwrite_logged_out() {
+    let (publisher, state) = state_bench();
+    publisher.publish_lib(logged_out());
+    publisher.publish_lib(disconnected());
+    drained(&publisher).await;
+    assert_eq!(*state.borrow(), ConnectionState::LoggedOut);
+}
+
+#[tokio::test]
+async fn disconnected_does_not_overwrite_banned() {
+    let (publisher, state) = state_bench();
+    publisher.publish_lib(banned());
+    publisher.publish_lib(disconnected());
+    drained(&publisher).await;
+    assert_eq!(*state.borrow(), ConnectionState::Banned);
+}
+
+/// The guard is about `Disconnected` only: a terminal state must still give
+/// way to a connection the edge asked for.
+#[tokio::test]
+async fn connected_still_replaces_a_terminal_state() {
+    let (publisher, state) = state_bench();
+    publisher.publish_lib(logged_out());
+    publisher.publish_lib(connected());
+    drained(&publisher).await;
+    assert_eq!(*state.borrow(), ConnectionState::Connected);
 }

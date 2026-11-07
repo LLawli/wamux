@@ -84,7 +84,8 @@ turso_storage_cases() {
 # the built binaries refusing a bad config. Every suite but inproc runs its
 # daemon fixture on SQLite; inproc is Postgres-backed like the bins it serves.
 TOOLS_NO_PG_SUITES=(--test live_env --test report --test delivery --test media_qr
-  --test socket_client --test bin_contract --test runbook --test commit_bench)
+  --test socket_client --test bin_contract --test runbook --test commit_bench
+  --test logout_check)
 
 # Fail fast with an actionable message if Postgres isn't reachable (tests need it).
 # Parse host:port from any valid URL shape: strip the scheme, then optional

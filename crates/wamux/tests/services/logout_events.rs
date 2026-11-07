@@ -9,10 +9,14 @@
 //! `WAMUX_TEST_ENGINE`; `scripts/ci.sh` runs it on both engines.
 
 use crate::common;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
+use wacore::types::events::{Event, Receipt};
+use wacore::types::message::MessageSource;
+use wacore::types::presence::ReceiptType;
 use wamux::proto::v1 as pb;
 use wamux::proto::v1::account_service_client::AccountServiceClient;
 use wamux::proto::v1::event_service_client::EventServiceClient;
@@ -23,6 +27,11 @@ use common::mock_wire::account_ref;
 /// Long enough for a loaded CI runner, short enough to fail fast when the
 /// event never comes.
 const EVENT_WAIT: Duration = Duration::from_secs(10);
+
+/// Enough queued events that the publisher is still behind when `Logout`
+/// answers: measured on #257, the first read came back DISCONNECTED in 10 of 10
+/// rounds at this size and in 1 of 10 at 2,000.
+const QUEUED_BURST: usize = 20_000;
 
 struct Fixture {
     _mock: MockWaServer,
@@ -107,5 +116,49 @@ async fn logout_relays_logged_out_and_leaves_the_account_logged_out() {
         }
     })
     .await;
+    f.logged.cleanup().await;
+}
+
+fn queued_receipt() -> Arc<Event> {
+    let jid = "5511999990000@s.whatsapp.net";
+    let source = MessageSource {
+        chat: jid.parse().expect("chat jid"),
+        sender: jid.parse().expect("sender jid"),
+        is_from_me: false,
+        ..Default::default()
+    };
+    Arc::new(Event::Receipt(
+        Receipt::builder()
+            .source(source)
+            .message_ids(vec!["queued".into()])
+            .timestamp(wacore::time::from_secs(1_717_932_111).expect("timestamp"))
+            .r#type(ReceiptType::Delivered)
+            .offline(false)
+            .build(),
+    ))
+}
+
+/// One read, no retry: the state must be true when the RPC answers, even with
+/// the event queue behind, as it is after the burst that follows a connect
+/// (#257). The test above waits for the event first, so it cannot see this.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn logout_reads_logged_out_the_moment_the_rpc_returns() {
+    let mut f = fixture("logout_reads_logged_out_the_moment_the_rpc_returns").await;
+    let receipt = queued_receipt();
+    for _ in 0..QUEUED_BURST {
+        f.logged.handle.publisher.publish_lib(receipt.clone());
+    }
+    f.accounts.logout(f.account.clone()).await.expect("logout");
+
+    let status = f
+        .accounts
+        .get_account_status(f.account.clone())
+        .await
+        .expect("status")
+        .into_inner();
+    assert_eq!(
+        pb::ConnectionState::try_from(status.state),
+        Ok(pb::ConnectionState::LoggedOut)
+    );
     f.logged.cleanup().await;
 }

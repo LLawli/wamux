@@ -61,14 +61,16 @@ impl AccountHandle {
         let ring = Arc::new(EventRing::new(ring_capacity));
         let state_tx = Arc::new(state_tx);
         let seq = Arc::new(AtomicI64::new(0));
-        let publisher = EventPublisher::spawn(EventCtx {
-            uuid: row.uuid.to_string(),
-            events_tx: events_tx.clone(),
-            ring: ring.clone(),
-            state_tx: state_tx.clone(),
-            seq: seq.clone(),
-            replay_max_event_bytes,
-        });
+        let publisher = EventPublisher::spawn(
+            EventCtx {
+                uuid: row.uuid.to_string(),
+                events_tx: events_tx.clone(),
+                ring: ring.clone(),
+                seq: seq.clone(),
+                replay_max_event_bytes,
+            },
+            state_tx.clone(),
+        );
         Self {
             uuid: row.uuid,
             external_ref: row.external_ref.clone(),
@@ -151,10 +153,7 @@ impl AccountHandle {
     /// LOGGED_OUT and BANNED come from an event that already recorded the
     /// truth; a stop after a logout must not overwrite it with DISCONNECTED.
     fn is_terminal_state(&self) -> bool {
-        matches!(
-            self.current_state(),
-            ConnectionState::LoggedOut | ConnectionState::Banned
-        )
+        super::event_bridge::is_terminal(self.current_state())
     }
 
     pub fn current_state(&self) -> ConnectionState {
