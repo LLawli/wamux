@@ -63,6 +63,17 @@ has to follow them.
 
 ### Fixed
 
+- **`GetAccountStatus` reads `LOGGED_OUT` as soon as `Logout` returns** (issue
+  #257). The connection state was applied by the task that drains the event
+  queue, so with a burst queued `Logout` answered first and the account read
+  `DISCONNECTED` until the queue caught up: 10 of 10 rounds with 20,000 events
+  queued. The state now moves when the library dispatches the event, which
+  also covers `BANNED` and a stop. The status can therefore lead the matching
+  `ConnectionStateChanged` by the queue's delay. `Event::Disconnected` no longer
+  overwrites `LOGGED_OUT` or `BANNED`.
+- **`logout_e2e` expects `LOGGED_OUT`** (issue #257): it reported a failure on a
+  logout that worked, because it compared the state with `DISCONNECTED`. Its
+  runbook entry no longer says a logged-out account can pair again.
 - **`PairWithQr` and `PairWithCode` refuse an account that holds a paired
   identity** (issue #253). Such an account logs in and never asks for a QR or a
   code, so the call stayed open with no frame and no error. It now returns
