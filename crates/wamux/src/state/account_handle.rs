@@ -20,7 +20,7 @@ use crate::storage::AccountRow;
 /// that aborts the bot; `Bot::spawn` consumed the `Bot`), awaits the run
 /// loop's terminal exit (the library handles transient reconnects internally,
 /// so this resolves only when the library has given up), then marks the account
-/// down truthfully. Aborting it is the hard-stop fallback.
+/// down truthfully. `stop` aborts it when the grace period runs out.
 pub struct RunningBot {
     pub supervisor: JoinHandle<()>,
 }
@@ -42,7 +42,7 @@ pub struct AccountHandle {
     /// The one writer of this account's events (#213): every publish, from
     /// the library or the send echo, goes through it.
     pub publisher: EventPublisher,
-    /// Grace period for `stop` before falling back to detaching the run loop.
+    /// Grace period for `stop` before falling back to a hard abort of the supervisor.
     graceful_stop_timeout: Duration,
     client: RwLock<Option<Arc<Client>>>,
     running: Mutex<Option<RunningBot>>,
@@ -98,8 +98,9 @@ impl AccountHandle {
 
     pub async fn set_running(&self, running: RunningBot) {
         // Defensive only: `connect` guards on `is_running`, so a live replace
-        // shouldn't happen. Aborting the previous supervisor would orphan its
-        // run loop, hence the guard upstream is what we rely on.
+        // shouldn't happen. If it did, aborting the previous supervisor drops
+        // its `BotHandle`, which aborts that bot, and its drop guard returns
+        // the budget slot, so nothing is orphaned.
         if let Some(previous) = self.running.lock().await.replace(running) {
             previous.supervisor.abort();
         }
@@ -123,9 +124,11 @@ impl AccountHandle {
 
     /// Graceful stop: ask the library to exit its run loop (`shutdown` flushes
     /// outbound + closes the transport, flipping `is_running` off), then wait for
-    /// the supervisor to observe the exit. On timeout we detach rather than abort
-    /// (`shutdown` already requested the exit, so the run loop self-terminates
-    /// and no task is orphaned).
+    /// the supervisor to observe the exit. On timeout we abort the supervisor and
+    /// wait for the abort: a bot stuck in its handshake never sees `shutdown`, and
+    /// detaching it would leave it alive after `stop` returns, still holding a
+    /// budget slot and, once `on_bot_exited` finally ran, clearing the slot of a
+    /// newer connect (#252). Dropping the supervisor's `BotHandle` aborts the bot.
     pub async fn stop(&self) {
         let client = self.client().await;
         let supervisor = self.running.lock().await.take().map(|r| r.supervisor);
@@ -133,21 +136,31 @@ impl AccountHandle {
         if let Some(client) = &client {
             client.shutdown().await;
         }
-        if let Some(supervisor) = supervisor
-            && tokio::time::timeout(self.graceful_stop_timeout, supervisor)
-                .await
-                .is_err()
-        {
-            tracing::warn!(
-                uuid = %self.uuid,
-                "graceful stop timed out; run loop will exit on its own"
-            );
+        if let Some(supervisor) = supervisor {
+            self.await_or_abort(supervisor).await;
         }
 
         *self.client.write().await = None;
         if !self.is_terminal_state() {
             let _ = self.state_tx.send(ConnectionState::Disconnected);
         }
+    }
+
+    /// Waits `graceful_stop_timeout` for the supervisor, then aborts it and
+    /// waits for the abort, so the bot is gone when this returns.
+    async fn await_or_abort(&self, mut supervisor: JoinHandle<()>) {
+        if tokio::time::timeout(self.graceful_stop_timeout, &mut supervisor)
+            .await
+            .is_ok()
+        {
+            return;
+        }
+        supervisor.abort();
+        let _ = supervisor.await;
+        tracing::warn!(
+            uuid = %self.uuid,
+            "graceful stop timed out; supervisor aborted"
+        );
     }
 
     /// LOGGED_OUT and BANNED come from an event that already recorded the

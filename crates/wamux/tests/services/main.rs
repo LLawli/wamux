@@ -23,6 +23,7 @@ mod newsletter_service;
 mod pairing_connect_errors;
 mod pairing_paired_account;
 mod pairing_shutdown;
+mod stop_stuck_handshake;
 mod stress_newsletter_history;
 mod stress_newsletter_parse;
 mod stress_newsletter_poll_vote;

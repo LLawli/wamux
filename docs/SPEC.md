@@ -147,7 +147,8 @@ are noted here.
   it has given up, then marks the account down truthfully (so `is_running` never
   lies) and releases the budget slot. Any reconnect-after-terminal is edge policy.
 - `stop`/`disconnect` are **graceful**: `Client::disconnect` (flush + close) then
-  await the supervisor within `graceful_stop_timeout_ms`, detaching on timeout.
+  await the supervisor within `graceful_stop_timeout_ms`, aborting the
+  supervisor (and so the bot) on timeout.
 - `EventService` single-account → one forwarder; all → one per handle into the
   stream's shared mpsc, plus a follower that attaches a forwarder (full-ring
   replay) for each account created later (a `subscription_gap` marker if it misses
