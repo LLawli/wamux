@@ -41,7 +41,8 @@ async fn main() -> anyhow::Result<ExitCode> {
     println!(
         "\n=== CONFIRM ON YOUR PHONE ===\n\
          WhatsApp -> Settings -> Linked devices: the wamux device should be GONE.\n\
-         The account row + stored identity is kept and cannot pair again; DeleteAccount and CreateAccount can."
+         The account row + stored identity is kept and cannot pair again; DeleteAccount and CreateAccount\n\
+         (same external_ref) can."
     );
     Ok(report.finish())
 }
