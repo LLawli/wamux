@@ -148,6 +148,17 @@ has to follow them.
 - **pulldown-cmark 0.13.6** for RUSTSEC-2026-0433. Build time only: prost-build
   renders the proto doc comments with it, and it does not reach the binary.
 
+### Security
+
+- **RUSTSEC-2026-0459 is ignored, with a trigger** (CVE-2026-119375,
+  published 2026-10-30; issue #260). The SQLite that sqlx bundles, from
+  `libsqlite3-sys` 0.30.1, can return uninitialized page-cache memory when
+  it opens a database with a `-wal` file of a different page size. The fix
+  (`libsqlite3-sys` 0.39) is out of reach: `sqlx-sqlite` 0.9.0 caps it below
+  0.38. The daemon opens only its own store (0600, in a 0700 directory), so
+  the files the attack needs are ones only the daemon's user can write. The
+  entry leaves `.cargo/audit.toml` with the sqlx release that lifts the cap.
+
 ## [0.2.3] - 2026-10-29
 
 ### Added

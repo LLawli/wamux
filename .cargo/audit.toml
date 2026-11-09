@@ -11,4 +11,13 @@ ignore = [
     # entry together with that module and the dependency, and refuses a store
     # that is still bincode (#84, #179).
     "RUSTSEC-2025-0141",
+    # RUSTSEC-2026-0459: SQLite before 3.54 can return uninitialized page-cache
+    # memory when it opens a database with a `-wal` file of a different page
+    # size. sqlx's `sqlite-bundled` builds it from `libsqlite3-sys` 0.30, and
+    # `sqlx-sqlite` 0.9.0 caps that crate below 0.38, short of the fixed 0.39.
+    # The daemon opens only its own store, 0600 in a 0700 directory: whoever
+    # can write that pair can already rewrite the store. Linking the system
+    # SQLite would break the static musl binary. Remove this entry when a
+    # `sqlx-sqlite` release accepts `libsqlite3-sys` >= 0.39 (#260).
+    "RUSTSEC-2026-0459",
 ]
