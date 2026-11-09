@@ -48,8 +48,9 @@ enum Upstream {
     /// stream stays open. The mock would end a PairWithCode stream, because a
     /// pair code request it cannot answer is a terminal `code_error`.
     Silent(TcpListener),
-    /// A real handshake, so `stop` ends the bot. Stuck on a silent upstream it
-    /// outlives `stop`, and its supervisor keeps the account alive.
+    /// A real handshake, so `stop` ends the bot through the library's own
+    /// graceful path. On a silent upstream `stop` only ends it by aborting the
+    /// supervisor after the grace period, which is a different path.
     Mock(MockWaServer),
 }
 

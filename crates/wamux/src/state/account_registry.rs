@@ -65,6 +65,16 @@ fn within_connection_budget(current: usize, cap: usize) -> bool {
     cap == 0 || current < cap
 }
 
+/// One slot of the connection budget, held by a supervisor task. The drop
+/// returns it, so it comes back on a normal exit and on an abort alike.
+struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub struct AccountRegistry {
     storage: Arc<dyn StorageEngine>,
     tuning: RegistryTuning,
@@ -229,9 +239,11 @@ impl AccountRegistry {
         let supervised = handle.clone();
         let connected = self.connected.clone();
         let supervisor = tokio::spawn(async move {
+            // Released by drop, not by a statement after the await: an aborted
+            // task (`stop` timing out, #252) never reaches the end of its body.
+            let _slot = ConnectionSlot(connected);
             bot_handle.await;
             supervised.on_bot_exited().await;
-            connected.fetch_sub(1, Ordering::SeqCst);
         });
         handle.set_running(RunningBot { supervisor }).await;
         Ok(())

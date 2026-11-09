@@ -63,6 +63,17 @@ has to follow them.
 
 ### Fixed
 
+- **A bot stuck in its handshake no longer outlives `stop`** (issue #252): the
+  library waits on the transport and the noise handshake without watching for
+  shutdown, so on a silent upstream `stop` timed out and detached the
+  supervisor. The bot stayed alive for up to the connect timeout, kept its
+  budget slot, and when the old supervisor finally exited it cleared the slot
+  of a connect made in the meantime, leaving that bot running but
+  uncontrollable. `stop` now aborts the supervisor when
+  `graceful_stop_timeout_ms` runs out and waits for the abort, which drops the
+  bot, and the budget slot is returned by a drop guard so it also comes back
+  on an abort.
+
 - **`GetAccountStatus` reads `LOGGED_OUT` as soon as `Logout` returns** (issue
   #257). The connection state was applied by the task that drains the event
   queue, so with a burst queued `Logout` answered first and the account read
