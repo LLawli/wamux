@@ -80,7 +80,7 @@ async fn pairing_stream(
 ) -> Result<ReceiverStream<Result<pb::PairingUpdate, Status>>, Status> {
     if registry.has_stored_pn(&handle).await? {
         return Err(WamuxError::FailedPrecondition(
-            "account holds a paired identity: DeleteAccount and CreateAccount to pair again"
+            "account holds a paired identity: DeleteAccount and CreateAccount (same external_ref) to pair again"
                 .to_string(),
         )
         .into());

@@ -263,9 +263,10 @@ impl AccountRegistry {
     /// stop the bot. Keeps the `accounts` row and the stored identity, which
     /// still holds a `pn`: the next connect tries to log in and the server
     /// answers 401, so the account cannot pair again (use `delete`, then create
-    /// a new one). The library only emits the IQ while connected, so we require
-    /// a live connection and surface `NotConnected`
-    /// otherwise — the edge decides whether to connect first.
+    /// a new one with the same `external_ref`; the edge composes that, #255).
+    /// The library only emits the IQ while connected, so we require a live
+    /// connection and surface `NotConnected` otherwise — the edge decides
+    /// whether to connect first.
     pub async fn logout(&self, handle: &Arc<AccountHandle>) -> Result<(), WamuxError> {
         let client = handle.client().await.ok_or(WamuxError::NotConnected)?;
         if !client.is_socket_connected() {
