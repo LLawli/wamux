@@ -48,6 +48,20 @@ pub const GET_SENDER_KEY: &str =
     "SELECT record FROM sender_keys WHERE address = $1 AND device_id = $2";
 pub const DELETE_SENDER_KEY: &str = "DELETE FROM sender_keys WHERE address = $1 AND device_id = $2";
 
+/// Every address one user holds Signal state under, for one account: `$2` is
+/// the user and the address must continue with `@` (device 0) or `:` (a
+/// companion). An exact prefix comparison, not `LIKE` (a `_` or `%` in `$2`
+/// would be a wildcard) and not a `>=`/`<` range (Postgres compares text by
+/// the database collation, not by bytes). It scans the account's rows, which
+/// is fine for the one caller: the library's cold path after a contact's
+/// verified identity changes. `UNION` drops an address seen in two sources.
+pub const SIGNAL_ADDRESSES_FOR_USER: &str = "SELECT address FROM sessions
+     WHERE device_id = $1 AND substr(address, 1, length($2) + 1) IN ($2 || '@', $2 || ':')
+     UNION SELECT address FROM identities
+     WHERE device_id = $1 AND substr(address, 1, length($2) + 1) IN ($2 || '@', $2 || ':')
+     UNION SELECT device_jid FROM sender_key_devices
+     WHERE device_id = $1 AND substr(device_jid, 1, length($2) + 1) IN ($2 || '@', $2 || ':')";
+
 // The statement text is the same for every call and never varies by
 // deployment, so it is built once, not per call.
 pub static SELECT_SESSIONS: LazyLock<String> = LazyLock::new(|| {

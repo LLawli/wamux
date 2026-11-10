@@ -1,6 +1,6 @@
 //! Engine parity for every method the two stores implement (#60).
 //!
-//! The SQL family implements 80 methods of the wacore traits on both engines
+//! The SQL family implements 81 methods of the wacore traits on both engines
 //! (59 until #93 overrode four wrong defaults, 63 until #104 overrode the
 //! throughput ones). This is the
 //! crypto-critical state of every account, and #65 is about to rewrite all of
@@ -30,3 +30,4 @@ mod protocol;
 mod protocol_cache;
 mod protocol_overrides;
 mod signal;
+mod signal_addresses;

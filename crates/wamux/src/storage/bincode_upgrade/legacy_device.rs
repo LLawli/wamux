@@ -75,6 +75,7 @@ impl From<LegacyDevice> for Device {
         signed_pre_key_signature[..32].copy_from_slice(&sig_head);
         signed_pre_key_signature[32..].copy_from_slice(&sig_tail);
         Device {
+            mobile_session: None,
             pn: old.pn,
             lid: old.lid,
             registration_id: old.registration_id,

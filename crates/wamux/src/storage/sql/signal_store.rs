@@ -14,8 +14,8 @@ use super::{SqlBackend, prekeys_sql};
 use crate::storage::statements::signal::{
     DELETE_IDENTITY, DELETE_PREKEY, DELETE_SENDER_KEY, DELETE_SESSION, GET_SENDER_KEY, GET_SESSION,
     LOAD_ALL_SIGNED_PREKEYS, LOAD_IDENTITY, LOAD_PREKEY, LOAD_SIGNED_PREKEY, MAX_PREKEY_ID,
-    PUT_IDENTITY, PUT_SENDER_KEY, PUT_SESSION, REMOVE_SIGNED_PREKEY, STORE_PREKEY,
-    STORE_SIGNED_PREKEY,
+    PUT_IDENTITY, PUT_SENDER_KEY, PUT_SESSION, REMOVE_SIGNED_PREKEY, SIGNAL_ADDRESSES_FOR_USER,
+    STORE_PREKEY, STORE_SIGNED_PREKEY,
 };
 
 #[async_trait]
@@ -79,6 +79,20 @@ impl SignalStore for SqlBackend {
     async fn delete_session(&self, address: &str) -> Result<()> {
         execute_sql!(&self.pool, DELETE_SESSION, address, self.device_id)?;
         Ok(())
+    }
+
+    async fn get_signal_addresses_for_user(&self, user: &str) -> Result<Vec<Arc<str>>> {
+        let rows = row_all_sql!(
+            (String,),
+            &self.pool,
+            SIGNAL_ADDRESSES_FOR_USER,
+            self.device_id,
+            user
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|(address,)| Arc::from(address))
+            .collect())
     }
 
     // --- PreKeys ---
