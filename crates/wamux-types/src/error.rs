@@ -121,7 +121,7 @@ impl From<WamuxError> for tonic::Status {
 }
 
 /// Full `Display` cause chain ("outer: middle: root"), for integral logging.
-fn cause_chain(err: &dyn std::error::Error) -> String {
+pub fn cause_chain(err: &dyn std::error::Error) -> String {
     let mut out = err.to_string();
     let mut source = err.source();
     while let Some(cause) = source {
