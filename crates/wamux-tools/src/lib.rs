@@ -16,3 +16,4 @@ pub mod profile;
 pub mod qr;
 pub mod report;
 pub mod socket_client;
+pub mod store_decode_audit;
