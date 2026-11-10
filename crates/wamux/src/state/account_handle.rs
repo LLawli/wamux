@@ -13,6 +13,7 @@ use whatsapp_rust::Client;
 use super::event_bridge::EventCtx;
 use super::event_publisher::EventPublisher;
 use super::event_ring::EventRing;
+use super::shutdown_report::log_shutdown_report;
 use crate::proto::v1::{ConnectionState, EventEnvelope};
 use crate::storage::AccountRow;
 
@@ -134,7 +135,8 @@ impl AccountHandle {
         let supervisor = self.running.lock().await.take().map(|r| r.supervisor);
 
         if let Some(client) = &client {
-            client.shutdown().await;
+            let report = client.shutdown().await;
+            log_shutdown_report(self.uuid, &report);
         }
         if let Some(supervisor) = supervisor {
             self.await_or_abort(supervisor).await;

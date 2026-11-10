@@ -308,7 +308,7 @@ fn a_create_the_parser_rejects_still_relays_the_element() {
             .attr("jid", COMMUNITY)
             .build()])
         .build();
-    let update = update_of(GroupNotificationAction::Create { raw });
+    let update = update_of(GroupNotificationAction::create().raw(raw).build());
     assert_eq!(
         group_update_of(&update).action,
         Some(Action::Create(pb::GroupCreated {
@@ -324,9 +324,11 @@ fn a_create_the_parser_rejects_still_relays_the_element() {
 
 #[test]
 fn a_bare_suggestion_element_relays_as_a_leaf() {
-    let update = update_of(GroupNotificationAction::RevokedSubGroupSuggestions {
-        raw: NodeBuilder::new("revoked_sub_group_suggestions").build(),
-    });
+    let update = update_of(
+        GroupNotificationAction::revoked_sub_group_suggestions()
+            .raw(NodeBuilder::new("revoked_sub_group_suggestions").build())
+            .build(),
+    );
     assert_eq!(
         group_update_of(&update).action,
         Some(Action::RevokedSubGroupSuggestions(

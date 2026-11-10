@@ -26,7 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 FAMILIES = ("sql", "turso")
-MIN_STORE_METHODS = 80
+MIN_STORE_METHODS = 81
 ASYNC_FN = re.compile(r"\basync\s+fn\s+(\w+)")
 CALL = re.compile(r"\.\s*(\w+)\s*\(")
 

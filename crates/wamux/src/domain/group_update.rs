@@ -38,28 +38,35 @@ pub fn group_update_of(update: &GroupUpdate) -> pb::GroupUpdate {
     }
 }
 
-/// One arm per library variant and no wildcard: a variant added upstream
-/// breaks the build at the bump instead of reaching the edge as nothing.
-/// Long on purpose, each arm only delegates or names a case.
+/// One arm per library variant. The library marks the enum and its variants
+/// `#[non_exhaustive]`, so every pattern ends in `..` and the match needs the
+/// fallback arm; a variant added upstream compiles into it.
+/// `scripts/check-group-actions.py` fails CI until such a variant gets its own
+/// arm. Long on purpose, each arm only delegates or names a case.
 fn action_of(action: &Lib) -> Action {
     match action {
         Lib::Add {
             participants,
             reason,
+            ..
         } => Action::Add(participants_change(participants, reason.as_ref())),
         Lib::Remove {
             participants,
             reason,
+            ..
         } => Action::Remove(participants_change(participants, reason.as_ref())),
-        Lib::Promote { participants } => Action::Promote(participants_change(participants, None)),
-        Lib::Demote { participants } => Action::Demote(participants_change(participants, None)),
-        Lib::Modify { participants } => Action::Modify(participants_change(participants, None)),
+        Lib::Promote { participants, .. } => {
+            Action::Promote(participants_change(participants, None))
+        }
+        Lib::Demote { participants, .. } => Action::Demote(participants_change(participants, None)),
+        Lib::Modify { participants, .. } => Action::Modify(participants_change(participants, None)),
         Lib::Subject {
             subject,
             subject_owner,
             subject_owner_pn,
             subject_owner_username,
             subject_time,
+            ..
         } => Action::Subject(pb::GroupSubjectChange {
             subject: subject.clone(),
             subject_owner: relay_optional_lib_jid(subject_owner.as_ref()),
@@ -67,11 +74,13 @@ fn action_of(action: &Lib) -> Action {
             subject_owner_username: subject_owner_username.clone(),
             subject_time: subject_time.map(millis_from_seconds),
         }),
-        Lib::Description { id, description } => Action::Description(pb::GroupDescriptionChange {
+        Lib::Description {
+            id, description, ..
+        } => Action::Description(pb::GroupDescriptionChange {
             id: id.clone(),
             description: description.clone(),
         }),
-        Lib::Locked { threshold } => Action::Locked(pb::GroupLockedChange {
+        Lib::Locked { threshold, .. } => Action::Locked(pb::GroupLockedChange {
             threshold: threshold.clone(),
         }),
         Lib::Unlocked => Action::Unlocked(pb::Empty {}),
@@ -80,16 +89,18 @@ fn action_of(action: &Lib) -> Action {
         Lib::Ephemeral {
             expiration,
             trigger,
+            ..
         } => Action::Ephemeral(pb::GroupEphemeralSettings {
             expiration_seconds: Some(*expiration),
             trigger: *trigger,
         }),
-        Lib::MembershipApprovalMode { enabled } => {
+        Lib::MembershipApprovalMode { enabled, .. } => {
             Action::MembershipApprovalMode(pb::GroupMembershipApprovalMode { enabled: *enabled })
         }
         Lib::MembershipApprovalRequest {
             request_method,
             parent_group_jid,
+            ..
         } => Action::MembershipApprovalRequest(pb::GroupMembershipApprovalRequest {
             request_method: membership_request_method_of(request_method) as i32,
             parent_group: relay_optional_lib_jid(parent_group_jid.as_ref()),
@@ -98,37 +109,39 @@ fn action_of(action: &Lib) -> Action {
             request_method,
             parent_group_jid,
             requests,
+            ..
         } => Action::CreatedMembershipRequests(pb::GroupCreatedMembershipRequests {
             request_method: membership_request_method_of(request_method) as i32,
             parent_group: relay_optional_lib_jid(parent_group_jid.as_ref()),
             requests: notification_participants(requests),
         }),
-        Lib::RevokedMembershipRequests { participants } => {
+        Lib::RevokedMembershipRequests { participants, .. } => {
             Action::RevokedMembershipRequests(pb::GroupRevokedMembershipRequests {
                 participants: participants.iter().filter_map(relay_lib_jid).collect(),
             })
         }
-        Lib::MemberAddMode { mode } => Action::MemberAddMode(member_add_mode_change(mode)),
+        Lib::MemberAddMode { mode, .. } => Action::MemberAddMode(member_add_mode_change(mode)),
         Lib::NoFrequentlyForwarded => Action::NoFrequentlyForwarded(pb::Empty {}),
         Lib::FrequentlyForwardedOk => Action::FrequentlyForwardedOk(pb::Empty {}),
-        Lib::Invite { code } => Action::Invite(pb::GroupInviteJoin { code: code.clone() }),
+        Lib::Invite { code, .. } => Action::Invite(pb::GroupInviteJoin { code: code.clone() }),
         Lib::RevokeInvite => Action::Revoke(pb::Empty {}),
         // The unit of `expiration` is not verified, so it crosses verbatim.
         Lib::GrowthLocked {
             expiration,
             lock_type,
+            ..
         } => Action::GrowthLocked(pb::GrowthLockInfo {
             lock_type: lock_type.clone(),
             expiration: u64::from(*expiration),
         }),
         Lib::GrowthUnlocked => Action::GrowthUnlocked(pb::Empty {}),
-        Lib::Create { raw } => Action::Create(group_created_of(raw)),
-        Lib::Delete { reason } => Action::Delete(pb::GroupDeleted {
+        Lib::Create { raw, .. } => Action::Create(group_created_of(raw)),
+        Lib::Delete { reason, .. } => Action::Delete(pb::GroupDeleted {
             reason: reason.clone(),
         }),
         // The typed fields are only part of what the library parsed; `raw`
         // (`#[wire(skip)]`) crosses whole so the edge sees the rest (#146).
-        Lib::Link { link_type, raw } => Action::Link(pb::GroupLinked {
+        Lib::Link { link_type, raw, .. } => Action::Link(pb::GroupLinked {
             link_type: link_type.clone(),
             stanza: Some(stanza_node_of(raw)),
         }),
@@ -136,15 +149,16 @@ fn action_of(action: &Lib) -> Action {
             unlink_type,
             unlink_reason,
             raw,
+            ..
         } => Action::Unlink(pb::GroupUnlinked {
             unlink_type: unlink_type.clone(),
             unlink_reason: unlink_reason.clone(),
             stanza: Some(stanza_node_of(raw)),
         }),
-        Lib::LinkedGroupPromote { participants } => {
+        Lib::LinkedGroupPromote { participants, .. } => {
             Action::LinkedGroupPromote(participants_change(participants, None))
         }
-        Lib::LinkedGroupDemote { participants } => {
+        Lib::LinkedGroupDemote { participants, .. } => {
             Action::LinkedGroupDemote(participants_change(participants, None))
         }
         Lib::Suspended => Action::Suspended(pb::Empty {}),
@@ -152,7 +166,7 @@ fn action_of(action: &Lib) -> Action {
         Lib::AutoAddDisabled => Action::AutoAddDisabled(pb::Empty {}),
         Lib::IsCapiHostedGroup => Action::IsCapiHostedGroup(pb::Empty {}),
         Lib::GroupSafetyCheck => Action::GroupSafetyCheck(pb::Empty {}),
-        Lib::LimitSharingEnabled { trigger } => {
+        Lib::LimitSharingEnabled { trigger, .. } => {
             Action::LimitSharingEnabled(pb::GroupLimitSharing { trigger: *trigger })
         }
         Lib::AllowAdminReports => Action::AllowAdminReports(pb::Empty {}),
@@ -175,6 +189,7 @@ fn action_of(action: &Lib) -> Action {
         Lib::ChangeNumber {
             new_owner,
             sub_group_suggestions,
+            ..
         } => Action::ChangeNumber(pb::GroupChangeNumber {
             new_owner: relay_optional_lib_jid(new_owner.as_ref()),
             sub_group_suggestions: sub_group_suggestions
@@ -182,7 +197,12 @@ fn action_of(action: &Lib) -> Action {
                 .filter_map(relay_lib_jid)
                 .collect(),
         }),
-        Lib::Unknown { tag } => Action::Unknown(pb::GroupUnknownAction { tag: tag.clone() }),
+        Lib::Unknown { tag, .. } => Action::Unknown(pb::GroupUnknownAction { tag: tag.clone() }),
+        // A variant this build does not know yet: its wire tag still crosses,
+        // the same way the library reports a tag it cannot parse.
+        other => Action::Unknown(pb::GroupUnknownAction {
+            tag: other.tag_name().to_string(),
+        }),
     }
 }
 

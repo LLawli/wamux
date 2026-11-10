@@ -108,6 +108,7 @@ pub fn decode_device(bytes: &[u8]) -> Result<Device, StoreError> {
             .map(cert_chain_from_wire)
             .transpose()?,
         login_counter: blob.login_counter,
+        mobile_session: None,
         lid_migrated: blob.lid_migrated,
         last_signed_pre_key_rotation_ms: blob.last_signed_pre_key_rotation_ms,
         server_client_expiration: blob.server_client_expiration.map(expiration_from_wire),

@@ -114,10 +114,18 @@ fn iq_reply(
     request: &wacore_binary::NodeRef<'_>,
     answers: &SharedIqAnswers,
 ) -> wacore_binary::Node {
+    // The server answers from the address the IQ went to, and the library's
+    // contextual parsers (SetGroupSubject first) reject a reply whose `from`
+    // differs from the request's `to`, so a bare reply would read as a failure.
+    let from = request.get_attr("to").map(|v| v.to_string());
     let bare = |kind: &str| {
-        NodeBuilder::new("iq")
+        let iq = NodeBuilder::new("iq")
             .attr("type", kind)
-            .attr("id", shape.id.clone())
+            .attr("id", shape.id.clone());
+        match &from {
+            Some(to) => iq.attr("from", to.clone()),
+            None => iq,
+        }
     };
     let Ok(answers) = answers.lock() else {
         return bare("result").build();

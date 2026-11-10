@@ -12,6 +12,8 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 use wamux_types::AccountRef;
 use whatsapp_rust::DeregistrationOutcome;
+
+use super::shutdown_report::log_shutdown_report;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use crate::config::DEFAULT_REPLAY_MAX_EVENT_BYTES;
@@ -294,6 +296,7 @@ impl AccountRegistry {
         if let DeregistrationOutcome::Failed { source } = &report.deregistration {
             tracing::warn!(account = %handle.uuid, error = %source, "logout deregistration failed");
         }
+        log_shutdown_report(handle.uuid, &report.shutdown);
         handle.stop().await;
         Ok(())
     }

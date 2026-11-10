@@ -164,6 +164,13 @@ of nothing, proved nothing and exits non-zero.
 - **Proves:** SetProfilePicture changes the picture as read back, and the restore is itself a recorded check.
 - **Writes to WhatsApp:** it replaces the account's profile picture with a test image, then restores (or removes) it.
 
+### store_decode_audit
+
+- **Needs:** a COPY of an unsealed store and no daemon on it: `sqlite3 wamux.db ".backup copy.db"`, or a Postgres database. It opens SQLite read-only. A sealed store (a store key is set) reads as all failures.
+- **Env:** none. Argument: `<sqlite://path | postgres://...>`.
+- **Proves:** every stored device, session, sender-key, prekey, signed-prekey and identity blob decodes with the pinned whatsapp-rust, the way a restart reads them. Run it before a bump ships. Prints per-table counts and each distinct error, never a key or an address; exits 1 when a blob fails, 2 when the store cannot be read.
+- **Writes to WhatsApp:** nothing, and nothing to the store.
+
 ### stress_live
 
 - **Needs:** Postgres, a paired real account, and the `stress` feature (`cargo run --features stress --bin stress_live`). Not built by default.

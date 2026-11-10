@@ -27,9 +27,37 @@ has to follow them.
   exits without them. With the defaults the worst case after SIGTERM is
   10 s (`shutdown_grace_ms`) + 3 s (`graceful_stop_timeout_ms`) + 5 s, well
   under systemd's 90 s.
+- **`store_decode_audit`** (`wamux-tools`): decodes every stored Signal and
+  device blob of a store copy with the pinned library, the way a restart reads
+  them, and prints per-table counts (never a key or an address). Run it before
+  a whatsapp-rust bump ships: a stricter decoder drops the session it rejects,
+  and no test holds production records.
 
 ### Changed
 
+- **whatsapp-rust moves from `3870ce5c` to `66eb7331`**, 68 commits, same
+  toolchain (`nightly-2026-06-16`). No proto field changes. What reaches the
+  edge:
+  - the library now verifies a contact's device list against its ADV
+    signature (upstream #1836, #1864, #1866, #1868, #1870). A companion it
+    cannot verify is left out of a group send, a DM to a list without the
+    signature fails, and an inbound message from such a companion arrives as an
+    undecryptable message, with a retry receipt asking the sender to resend;
+  - `Logout` and `stop` log, once, what the library's shutdown left unfinished
+    (a device snapshot that did not flush, message secrets not written, a drain
+    that timed out). The RPCs succeed either way, as before;
+  - a group action this build does not know yet (the library's enum is now
+    `#[non_exhaustive]`) relays as `GroupUnknownAction` with its wire tag.
+    `scripts/check-group-actions.py` fails CI until such an action is mapped,
+    which is what the build used to do;
+  - the text of a WhatsApp error in the logs is the library's redacted form
+    (`other(len=N)` instead of the server's text).
+  Every stored blob of a real two-account store (7,257: device, sessions,
+  sender keys, prekeys, identities) decodes with the new Signal engine
+  (upstream #1842), checked with `store_decode_audit`. Live, on two real
+  numbers paired to a second daemon: DMs both ways `delivered`, the same
+  channel history as `3870ce5c`, and `3870ce5c` started on the store this
+  version wrote connects and delivers too, so a rollback keeps the sessions.
 - **`scripts/ci.sh` is faster** (issue #233). Measured on the maintainer's
   laptop with `--full`: the pull request scenario went from 1541 s to
   864 s, a cold run from 2338 s to 1531 s, and `target/debug` from 76.2 to
@@ -63,6 +91,14 @@ has to follow them.
 
 ### Fixed
 
+- **A contact whose identity changes no longer breaks its device-list
+  resolution.** The new library asks the store for every address a user holds
+  Signal state under, to clean up after a verified identity change; the trait
+  default refuses, and the library propagates that, so the contact's lookup
+  failed (in a group refresh too) and the identity change never reached the
+  edge. All three engines answer it now, from sessions, identities and
+  sender-key devices, matching the user exactly (`_` and `%` are literal, a
+  longer number is another person).
 - **A bot stuck in its handshake no longer outlives `stop`** (issue #252): the
   library waits on the transport and the noise handshake without watching for
   shutdown, so on a silent upstream `stop` timed out and detached the

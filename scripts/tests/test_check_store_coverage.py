@@ -11,7 +11,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 CHECK = REPO / "scripts" / "check-store-coverage.py"
-FLOOR = 80
+FLOOR = 81
 
 
 def run_check(root, families=("sql",)):
