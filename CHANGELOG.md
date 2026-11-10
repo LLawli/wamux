@@ -12,6 +12,8 @@ has to follow them.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-10
+
 ### Added
 
 - **`SendText`, `SendMedia` and `SendContact` take `quoted_message`** (issue
@@ -2062,7 +2064,8 @@ reconnection policy, and any HTTP API. The core exposes the primitives (a
 `SendResult.message_id`, `Receipt` events, connection-state events) and lets
 the edge compose the policy. See the "Core purity" section in `CLAUDE.md`.
 
-[Unreleased]: https://github.com/LLawli/wamux/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/LLawli/wamux/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/LLawli/wamux/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/LLawli/wamux/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/LLawli/wamux/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/LLawli/wamux/compare/v0.2.0...v0.2.1
