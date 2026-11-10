@@ -150,6 +150,13 @@ scripts/check-store-coverage.py
 stage "store trait defaults"
 scripts/check-store-defaults.py
 
+# The library's GroupNotificationAction is non_exhaustive, so action_of needs a
+# fallback arm and a variant added upstream compiles into it, reaching the edge
+# as GroupUnknownAction. A bump that adds one fails here until it is mapped.
+# Needs cargo (metadata, offline), not the database.
+stage "group actions mapped"
+scripts/check-group-actions.py
+
 # #106: two engine families run the same statements, so they are written once
 # in storage/statements/ and never inline in a family. Pure text check.
 stage "store SQL written once"
