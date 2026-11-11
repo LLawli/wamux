@@ -61,6 +61,24 @@ experimentally). It keeps no message history.
 - Network exposure, if ever needed, is a separate front (a reverse proxy or a
   second binary), never a flag flipped here.
 
+## Footprint in production
+
+Measured on the maintainer's VPS, which switched from
+[WAHA](https://waha.devlike.pro/) (with its GOWS engine) to `wamux` under the
+same workload: notifications sent by services on that VPS, which talk to the
+socket directly. The last column adds
+[wamux-http](https://github.com/LLawli/wamux-http), the WAHA-compatible HTTP
+edge, in its image with ffmpeg (WAHA converts audio too), running next to the
+core over a 12-hour window.
+
+|                            | WAHA (GOWS) | wamux  | wamux + wamux-http |
+|----------------------------|------------:|-------:|-------------------:|
+| Memory in use, median      | 296 MiB     | 63 MiB | 81 MiB             |
+| Memory in use, p95         | 413 MiB     | 65 MiB | 83 MiB             |
+| Memory in use, peak        | 474 MiB     | 66 MiB | 83 MiB             |
+| RSS (process only), median | 232 MiB     | 62 MiB | 78 MiB             |
+| Docker image               | 2.17 GB     | 43 MB  | 358 MB             |
+
 ## Requirements
 
 - **Rust nightly**: pinned in `rust-toolchain.toml`, the nightly upstream
