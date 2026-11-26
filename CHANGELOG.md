@@ -12,6 +12,15 @@ has to follow them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`CreateAccount` with a taken `external_ref` answers `ALREADY_EXISTS`**
+  (issue #269), with the message `account with external_ref '<ref>' already
+  exists`. It answered `INTERNAL`: no store engine told the UNIQUE violation
+  apart from any other database error. Postgres, SQLite and Turso now report
+  it the same way, so an edge that adopts an existing account by creating it
+  and reading `ALREADY_EXISTS` works on every engine. No proto change.
+
 ### Security
 
 - **`url` moves from 2.5.8 to 2.5.9** (RUSTSEC-2026-0592): `Url::origin()`
