@@ -15,8 +15,8 @@ use uuid::Uuid;
 use wacore::store::error::Result;
 
 use super::{SqlPool, end_job};
-use crate::storage::engine::AccountRow;
-use crate::storage::sqlx_error::db;
+use crate::storage::engine::{AccountRow, CreateAccountError};
+use crate::storage::sqlx_error::{create_account_error, db, taken_external_ref};
 use crate::storage::statements::accounts::{DELETE_ACCOUNT, INSERT_ACCOUNT, LIST_ACCOUNTS};
 
 /// Decode a Postgres row into the neutral `AccountRow`: `uuid` from UUID,
@@ -55,11 +55,12 @@ impl sqlx::FromRow<'_, SqliteRow> for AccountRow {
 /// Insert a new account; `device_id` is assigned by the IDENTITY column
 /// (Postgres) or AUTOINCREMENT (SQLite). On SQLite it is a job of the batch:
 /// a write with RETURNING never goes through the read pool (#173), and the row
-/// is handed back only once the COMMIT that carries it ran.
+/// is handed back only once the COMMIT that carries it ran. A UNIQUE violation
+/// on a `Some` ref is `ExternalRefTaken` (#269), any other failure is `Store`.
 pub(super) async fn create_account(
     pool: &SqlPool,
     external_ref: Option<&str>,
-) -> Result<AccountRow> {
+) -> std::result::Result<AccountRow, CreateAccountError> {
     let uuid = Uuid::new_v4();
     match pool {
         SqlPool::Pg(pool) => sqlx::query_as(INSERT_ACCOUNT)
@@ -67,16 +68,26 @@ pub(super) async fn create_account(
             .bind(external_ref)
             .fetch_one(pool)
             .await
-            .map_err(db),
+            .map_err(|e| create_account_error(e, external_ref)),
         SqlPool::Sqlite(lite) => {
             let mut job = lite.begin_job().await?;
             let inserted = sqlx::query_as(INSERT_ACCOUNT)
                 .bind(uuid.to_string())
                 .bind(external_ref)
                 .fetch_one(&mut *job)
-                .await
-                .map_err(db);
-            end_job(job, inserted).await
+                .await;
+            // Classified before `db` drops the type; the job still ends through
+            // `end_job` so a collision rolls back to its savepoint and the
+            // batch is not poisoned.
+            let taken = inserted
+                .as_ref()
+                .err()
+                .and_then(|e| taken_external_ref(e, external_ref));
+            let ended = end_job(job, inserted.map_err(db)).await;
+            match taken {
+                Some(taken) => Err(CreateAccountError::ExternalRefTaken(taken)),
+                None => Ok(ended?),
+            }
         }
     }
 }

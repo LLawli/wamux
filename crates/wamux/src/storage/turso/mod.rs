@@ -54,7 +54,7 @@ use wacore::store::traits::Backend;
 use crate::storage::StoreBlobFormat;
 use crate::storage::blob_cipher::BlobCipher;
 use crate::storage::blob_format::store_blob_format;
-use crate::storage::engine::{AccountRow, StorageEngine};
+use crate::storage::engine::{AccountRow, CreateAccountError, StorageEngine};
 use crate::storage::group_commit::{CommitStats, DEFAULT_BATCH_CAP};
 use crate::storage::statements::PING;
 use crate::storage::statements::bincode_upgrade::SELECT_BLOB_FORMAT;
@@ -180,8 +180,11 @@ impl TursoStore {
 
 #[async_trait::async_trait]
 impl StorageEngine for TursoStore {
-    async fn create_account(&self, external_ref: Option<&str>) -> StoreResult<AccountRow> {
-        accounts::create_account(&self.conn, external_ref).await
+    async fn create_account(
+        &self,
+        external_ref: Option<&str>,
+    ) -> Result<AccountRow, CreateAccountError> {
+        Ok(accounts::create_account(&self.conn, external_ref).await?)
     }
 
     async fn list_accounts(&self) -> StoreResult<Vec<AccountRow>> {

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use uuid::Uuid;
-use wacore::store::error::Result as StoreResult;
+use wacore::store::error::{Result as StoreResult, StoreError};
 use wacore::store::traits::Backend;
 
 use super::blob_format::StoreBlobFormat;
@@ -30,6 +30,17 @@ pub struct AccountRow {
     pub created_at: i64,
 }
 
+/// Why `create_account` failed. wacore's `StoreError` has no "already there"
+/// case, and the edge adopts an existing account by creating it and reading
+/// `ALREADY_EXISTS` (#269), so the taken ref needs a type of its own.
+#[derive(Debug, thiserror::Error)]
+pub enum CreateAccountError {
+    #[error("external_ref '{0}' is already taken")]
+    ExternalRefTaken(String),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
 /// Account persistence plus a per-account `Backend` factory.
 ///
 /// Kept to exactly what the registry and the health probe call. Engine-specific
@@ -39,8 +50,12 @@ pub struct AccountRow {
 #[async_trait]
 pub trait StorageEngine: Send + Sync + 'static {
     /// Insert a new account. The engine assigns `device_id` (Postgres IDENTITY,
-    /// SQLite AUTOINCREMENT), so it is never passed in.
-    async fn create_account(&self, external_ref: Option<&str>) -> StoreResult<AccountRow>;
+    /// SQLite AUTOINCREMENT), so it is never passed in. A taken `external_ref`
+    /// is `ExternalRefTaken`, on every engine.
+    async fn create_account(
+        &self,
+        external_ref: Option<&str>,
+    ) -> Result<AccountRow, CreateAccountError>;
 
     /// Every persisted account, ordered by `device_id`. Called once at startup
     /// to rebuild the in-memory handles; connect stays edge-driven.

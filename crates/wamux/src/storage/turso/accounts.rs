@@ -9,7 +9,8 @@ use wacore::store::error::{Result, StoreError};
 use super::TursoConn;
 use super::exec::binds;
 use super::row_values::{int, int32, opt_text, uuid_text};
-use crate::storage::engine::AccountRow;
+use super::turso_error::is_constraint;
+use crate::storage::engine::{AccountRow, CreateAccountError};
 use crate::storage::statements::accounts::{DELETE_ACCOUNT, INSERT_ACCOUNT, LIST_ACCOUNTS};
 
 /// `uuid, external_ref, device_id, push_name, created_at`, the column order of
@@ -25,18 +26,26 @@ fn account_row(row: &Row) -> Result<AccountRow> {
 }
 
 /// `device_id` is assigned by AUTOINCREMENT. Goes through
-/// `write_returning_optional`: a write with RETURNING (see `exec`).
+/// `write_returning_optional`: a write with RETURNING (see `exec`). A constraint
+/// violation on a `Some` ref is `ExternalRefTaken` (#269), the rest is `Store`.
 pub(super) async fn create_account(
     conn: &TursoConn,
     external_ref: Option<&str>,
-) -> Result<AccountRow> {
+) -> std::result::Result<AccountRow, CreateAccountError> {
     let uuid = Uuid::new_v4().to_string();
-    let row = conn
+    let inserted = conn
         .write_returning_optional(INSERT_ACCOUNT, binds![uuid, external_ref])
-        .await?;
+        .await;
+    let row = match (inserted, external_ref) {
+        // Same rule as the sqlx drivers (#269): only a `Some` ref can collide.
+        (Err(err), Some(taken)) if is_constraint(&err) => {
+            return Err(CreateAccountError::ExternalRefTaken(taken.to_owned()));
+        }
+        (inserted, _) => inserted?,
+    };
     let row =
         row.ok_or_else(|| StoreError::Validation("the account insert returned no row".into()))?;
-    account_row(&row)
+    Ok(account_row(&row)?)
 }
 
 pub(super) async fn list_accounts(conn: &TursoConn) -> Result<Vec<AccountRow>> {

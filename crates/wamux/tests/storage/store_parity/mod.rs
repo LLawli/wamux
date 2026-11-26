@@ -17,6 +17,7 @@
 //! `scripts/check-store-coverage.py` fails CI if a store method stops being
 //! called from `crates/wamux/tests/`.
 
+mod accounts;
 mod app_sync;
 mod atomicity;
 mod batches_protocol;

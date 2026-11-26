@@ -31,7 +31,7 @@ mod engine_dispatch_tests;
 
 pub use blob_cipher::{BlobCipher, BlobContext};
 pub use blob_format::StoreBlobFormat;
-pub use engine::{AccountRow, StorageEngine};
+pub use engine::{AccountRow, CreateAccountError, StorageEngine};
 pub use group_commit::CommitStats;
 pub use store_key::{StoreKey, StoreKeyError};
 
