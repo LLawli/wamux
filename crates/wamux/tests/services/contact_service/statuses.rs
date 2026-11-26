@@ -1,4 +1,4 @@
-//! #197: every one of the 15 ContactService RPCs answers a status that comes
+//! #197: every one of the 16 ContactService RPCs answers a status that comes
 //! from the account, not from the operation, before any wire work.
 
 use tonic::Code;
@@ -12,7 +12,8 @@ use crate::contact_service::harness::{CONTACT_LID, CONTACT_PN, fixture, jid};
 
 type Outcome = (&'static str, Result<(), tonic::Status>);
 
-/// The four RPCs #197 added, with arguments valid in shape.
+/// The RPCs added since #197 (its four, and #271's UnsubscribePresence),
+/// with arguments valid in shape.
 async fn call_new_rpcs(
     contacts: &mut ContactServiceClient<Channel>,
     account: &pb::AccountRef,
@@ -44,6 +45,16 @@ async fn call_new_rpcs(
         (
             "GetBlocklist",
             contacts.get_blocklist(account.clone()).await.map(drop),
+        ),
+        (
+            "UnsubscribePresence",
+            contacts
+                .unsubscribe_presence(pb::SubscribePresenceRequest {
+                    account: a(),
+                    jid: jid(CONTACT_PN),
+                })
+                .await
+                .map(drop),
         ),
     ]
 }
@@ -155,7 +166,7 @@ async fn every_rpc_answers_not_found_for_an_unknown_account() {
     let unknown = account_ref(&uuid::Uuid::new_v4().to_string());
     let mut outcomes = call_older_rpcs(&mut f.contacts, &unknown).await;
     outcomes.extend(call_new_rpcs(&mut f.contacts, &unknown).await);
-    assert_every(outcomes, 15, Code::NotFound);
+    assert_every(outcomes, 16, Code::NotFound);
     f.cleanup().await;
 }
 
@@ -172,7 +183,7 @@ async fn new_rpcs_answer_failed_precondition_when_not_connected() {
         .expect("idle account");
     let idle_ref = account_ref(&idle.uuid.to_string());
     let outcomes = call_new_rpcs(&mut f.contacts, &idle_ref).await;
-    assert_every(outcomes, 4, Code::FailedPrecondition);
+    assert_every(outcomes, 5, Code::FailedPrecondition);
     f.logged
         .registry
         .delete(&idle)

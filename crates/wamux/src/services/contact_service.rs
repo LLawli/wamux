@@ -157,6 +157,16 @@ impl ContactService for ContactSvc {
         Ok(Response::new(pb::Empty {}))
     }
 
+    async fn unsubscribe_presence(
+        &self,
+        request: Request<pb::SubscribePresenceRequest>,
+    ) -> Result<Response<pb::Empty>, Status> {
+        let req = request.into_inner();
+        let client = client_of(&self.registry, req.account.as_ref()).await?;
+        contacts::unsubscribe_presence(&client, &Jid::from_required_wire(req.jid)?).await?;
+        Ok(Response::new(pb::Empty {}))
+    }
+
     async fn resolve_lid_pn(
         &self,
         request: Request<pb::ResolveLidPnRequest>,
