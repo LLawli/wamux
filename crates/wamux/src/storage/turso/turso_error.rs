@@ -32,3 +32,15 @@ pub fn is_busy(err: &::turso::Error) -> bool {
         ::turso::Error::Busy(_) | ::turso::Error::BusySnapshot(_)
     )
 }
+
+/// A constraint violation (UNIQUE, NOT NULL, ...) the statement hit, read back
+/// from the boxed turso error `exec` already wrapped into a `StoreError`.
+pub fn is_constraint(err: &StoreError) -> bool {
+    let StoreError::Database(source) = err else {
+        return false;
+    };
+    matches!(
+        source.downcast_ref::<::turso::Error>(),
+        Some(::turso::Error::Constraint(_))
+    )
+}

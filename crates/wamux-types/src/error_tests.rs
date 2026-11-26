@@ -15,6 +15,16 @@ fn assert_status(err: WamuxError, code: Code, message: &str) {
     assert_eq!(status.message(), message);
 }
 
+/// #269: the edge keys adoption on this code; the message relays as written.
+#[test]
+fn already_exists_relays_its_message() {
+    assert_status(
+        WamuxError::AlreadyExists("account with external_ref 'default' already exists".into()),
+        Code::AlreadyExists,
+        "account with external_ref 'default' already exists",
+    );
+}
+
 #[test]
 fn client_facing_errors_keep_their_code_and_message() {
     assert_status(

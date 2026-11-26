@@ -38,6 +38,11 @@ pub enum WamuxError {
     #[error("resource exhausted: {0}")]
     ResourceExhausted(String),
 
+    /// The thing the request creates is already there, an account whose
+    /// `external_ref` is taken (#269). The message relays as written.
+    #[error("already exists: {0}")]
+    AlreadyExists(String),
+
     /// The peer's `SO_PEERCRED` is in neither allowlist (#77); `None` when the
     /// kernel gave no credentials.
     #[error("peer not allowed: uid={uid:?}, gid={gid:?}")]
@@ -97,6 +102,10 @@ impl From<WamuxError> for tonic::Status {
             WamuxError::ResourceExhausted(message) => {
                 tracing::warn!(reason = %message, "resource exhausted");
                 Status::resource_exhausted(message.clone())
+            }
+            WamuxError::AlreadyExists(message) => {
+                tracing::debug!(reason = %message, "already exists");
+                Status::already_exists(message.clone())
             }
             WamuxError::PeerNotAllowed { uid, gid } => {
                 // The uid and gid go to the log only: the client already knows

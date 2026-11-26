@@ -84,6 +84,51 @@ async fn account_lifecycle_over_socket() {
     assert_eq!(after.unwrap_err().code(), tonic::Code::NotFound);
 }
 
+/// #269: the edge adopts an account by creating it and reading ALREADY_EXISTS,
+/// so a taken `external_ref` must answer that code, never INTERNAL, and the
+/// message names the ref the caller sent.
+#[tokio::test]
+async fn create_with_a_taken_external_ref_is_already_exists() {
+    let (channel, engine) = common::spawn_server().await;
+    let prefix = common::test_prefix("grpc_server", "taken_external_ref");
+    common::sweep_orphans(&engine, &prefix).await;
+    let mut client = AccountServiceClient::new(channel);
+    let external = format!("{prefix}{}", uuid::Uuid::new_v4());
+    let request = pb::CreateAccountRequest {
+        external_ref: Some(external.clone()),
+    };
+
+    let created = client
+        .create_account(request.clone())
+        .await
+        .expect("first create_account")
+        .into_inner();
+    let refused = client
+        .create_account(request)
+        .await
+        .expect_err("a taken external_ref must be refused");
+    assert_eq!(refused.code(), tonic::Code::AlreadyExists, "{refused:?}");
+    assert_eq!(
+        refused.message(),
+        format!("account with external_ref '{external}' already exists")
+    );
+
+    let listed = client
+        .list_accounts(pb::ListAccountsRequest {})
+        .await
+        .expect("list")
+        .into_inner();
+    let holders: Vec<_> = listed
+        .accounts
+        .iter()
+        .filter(|a| a.external_ref == external)
+        .collect();
+    assert_eq!(holders.len(), 1, "exactly one account holds {external}");
+    assert_eq!(holders[0].uuid, created.uuid);
+
+    common::sweep_orphans(&engine, &prefix).await;
+}
+
 #[tokio::test]
 async fn admin_health_and_metrics_over_socket() {
     let (channel, _engine) = common::spawn_server().await;

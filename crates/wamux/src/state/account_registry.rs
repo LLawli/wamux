@@ -22,7 +22,7 @@ use crate::error::{WamuxError, client_err};
 use crate::proto::v1 as pb;
 use crate::state::account_handle::RunningBot;
 use crate::state::{AccountHandle, EventRing};
-use crate::storage::{AccountRow, StorageEngine};
+use crate::storage::{AccountRow, CreateAccountError, StorageEngine};
 
 /// Deployment-tunable runtime knobs, injected once from `Config`. Bins/tests use
 /// `Default` and override only what they care about.
@@ -65,6 +65,17 @@ impl RegistryTuning {
 /// Decide whether one more connection fits the budget. `cap == 0` is unlimited.
 fn within_connection_budget(current: usize, cap: usize) -> bool {
     cap == 0 || current < cap
+}
+
+/// A failed create as the boundary sees it: a taken ref is `ALREADY_EXISTS`,
+/// which the edge reads as "adopt it" (#269); anything else stays internal.
+fn account_create_failure(err: CreateAccountError) -> WamuxError {
+    match err {
+        CreateAccountError::ExternalRefTaken(taken) => WamuxError::AlreadyExists(format!(
+            "account with external_ref '{taken}' already exists"
+        )),
+        CreateAccountError::Store(source) => WamuxError::Store(source),
+    }
 }
 
 /// One slot of the connection budget, held by a supervisor task. The drop
@@ -143,7 +154,11 @@ impl AccountRegistry {
         &self,
         external_ref: Option<&str>,
     ) -> Result<Arc<AccountHandle>, WamuxError> {
-        let row = self.storage.create_account(external_ref).await?;
+        let row = self
+            .storage
+            .create_account(external_ref)
+            .await
+            .map_err(account_create_failure)?;
         Ok(self.insert_handle(&row))
     }
 
