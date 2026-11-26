@@ -12,6 +12,12 @@ has to follow them.
 
 ## [Unreleased]
 
+### Security
+
+- **`url` moves from 2.5.8 to 2.5.9** (RUSTSEC-2026-0592): `Url::origin()`
+  recursed once per nested `blob:` prefix and could overflow the stack. It
+  comes in through sqlx. Lockfile only, with `form_urlencoded` 1.2.3.
+
 ## [0.2.4] - 2026-11-10
 
 ### Added
