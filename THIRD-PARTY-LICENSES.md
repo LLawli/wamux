@@ -95,7 +95,7 @@ dev-dependencies are excluded because they never reach the binary.
 | fnv | 1.0.7 | Apache-2.0 / MIT |
 | foldhash | 0.1.5 | Zlib |
 | foldhash | 0.2.0 | Zlib |
-| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
+| form_urlencoded | 1.2.3 | MIT OR Apache-2.0 |
 | futures | 0.3.32 | MIT OR Apache-2.0 |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 |
@@ -310,7 +310,7 @@ dev-dependencies are excluded because they never reach the binary.
 | unty | 0.0.4 | MIT OR Apache-2.0 |
 | ureq | 3.4.2 | MIT OR Apache-2.0 |
 | ureq-proto | 0.6.5 | MIT OR Apache-2.0 |
-| url | 2.5.8 | MIT OR Apache-2.0 |
+| url | 2.5.9 | MIT OR Apache-2.0 |
 | utf8-zero | 0.8.1 | MIT OR Apache-2.0 |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
 | uuid | 1.23.2 | Apache-2.0 OR MIT |
@@ -3102,7 +3102,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### LICENSE-MIT: 3 crate(s)
 
-<details><summary>idna 1.1.0, percent-encoding 2.3.2, url 2.5.8</summary>
+<details><summary>idna 1.1.0, percent-encoding 2.3.2, url 2.5.9</summary>
 
 ```
 Copyright (c) 2013-2025 The rust-url developers
@@ -9464,7 +9464,7 @@ THE SOFTWARE.
 
 ### LICENSE-MIT: 1 crate(s)
 
-<details><summary>form_urlencoded 1.2.2</summary>
+<details><summary>form_urlencoded 1.2.3</summary>
 
 ```
 Copyright (c) 2013-2016 The rust-url developers
