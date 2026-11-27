@@ -156,6 +156,14 @@ pub async fn subscribe_presence(client: &Client, jid: &Jid) -> Result<(), WamuxE
         .map_err(client_err)
 }
 
+pub async fn unsubscribe_presence(client: &Client, jid: &Jid) -> Result<(), WamuxError> {
+    client
+        .presence()
+        .unsubscribe(jid.as_lib())
+        .await
+        .map_err(client_err)
+}
+
 #[cfg(test)]
 #[path = "contacts_tests.rs"]
 mod tests;

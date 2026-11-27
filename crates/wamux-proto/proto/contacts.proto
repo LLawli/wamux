@@ -208,6 +208,10 @@ service ContactService {
   rpc GetBlocklist(AccountRef) returns (GetBlocklistResponse);
   rpc GetBusinessProfile(JidRequest) returns (BusinessProfileResponse);
   rpc SubscribePresence(SubscribePresenceRequest) returns (Empty);
+  // Release a SubscribePresence (#271). The library forgets the jid only after
+  // the unsubscribe stanza is sent, so an error leaves the subscription in
+  // place (it is renewed on the next reconnect): retry to release it.
+  rpc UnsubscribePresence(SubscribePresenceRequest) returns (Empty);
   // Targeted LID<->PN lookup, batched. Reads the live client (in-memory cache
   // first, durable store on miss), so it also sees mappings learned during an
   // offline history replay, which are cached before they are persisted.

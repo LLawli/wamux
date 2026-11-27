@@ -244,7 +244,7 @@ scripts/check-service-coverage.py MessagingService crates/wamux/tests/services/m
 # #197: same net under ContactService (15 RPCs). Its older RPCs are also tested
 # in grpc_server and group_service; this suite calls every one of them.
 stage "ContactService RPC coverage"
-scripts/check-service-coverage.py ContactService crates/wamux/tests/services/contact_service 15
+scripts/check-service-coverage.py ContactService crates/wamux/tests/services/contact_service 16
 
 # #200: same net under CallService (1 RPC, RejectCall).
 stage "CallService RPC coverage"

@@ -12,6 +12,16 @@ has to follow them.
 
 ## [Unreleased]
 
+### Added
+
+- **`ContactService.UnsubscribePresence`** (issue #271): releases a
+  `SubscribePresence`, taking the same `SubscribePresenceRequest`. It relays
+  the library's unsubscribe, which sends `<presence type="unsubscribe">` and
+  stops renewing the subscription on reconnect. The library forgets the jid
+  only after the stanza is sent, so an error leaves the subscription in place:
+  retry to release it. Additive: no existing field or RPC changes; an edge
+  calling it on an older daemon gets `UNIMPLEMENTED`.
+
 ### Fixed
 
 - **`CreateAccount` with a taken `external_ref` answers `ALREADY_EXISTS`**
