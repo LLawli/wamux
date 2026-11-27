@@ -10,8 +10,8 @@ use wamux_types::{
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::PreviewType;
 
 use super::{
-    build_text_message, recipient_fanout_to_proto, refuse_status_revoke, send_result_to_proto,
-    wa_message_key,
+    build_text_message, recipient_fanout_to_proto, refuse_status_revoke, revoke_type_of,
+    send_result_to_proto, wa_message_key,
 };
 use crate::error::WamuxError;
 use crate::proto::v1 as pb;
@@ -49,6 +49,83 @@ fn only_a_status_revoke_is_refused() {
             "{chat}"
         );
     }
+}
+
+const GROUP_276: &str = "120363041234567276@g.us";
+const AUTHOR_PN: &str = "5511900000276@s.whatsapp.net";
+const AUTHOR_LID: &str = "100000000000276@lid";
+
+/// A key for a message in `chat`, written by `participant` unless `from_me`.
+fn revoke_target(chat: &str, from_me: bool, participant: Option<&str>) -> MessageTarget {
+    MessageTarget {
+        from_me,
+        participant: participant.map(jid),
+        ..target_in(chat)
+    }
+}
+
+/// The InvalidArgument text, or a panic naming what came back instead.
+fn refusal_text(target: &MessageTarget) -> String {
+    match revoke_type_of(target) {
+        Err(WamuxError::InvalidArgument(text)) => text,
+        other => panic!("expected InvalidArgument, got {other:?}"),
+    }
+}
+
+/// #276: the account's own message is revoked as its sender, in a DM or a
+/// group, whether or not the key also names a participant.
+#[test]
+fn revoke_of_own_message_is_a_sender_revoke() {
+    let own = [
+        revoke_target("5511999000111@s.whatsapp.net", true, None),
+        revoke_target(GROUP_276, true, None),
+        revoke_target(GROUP_276, true, Some(AUTHOR_PN)),
+    ];
+    for target in own {
+        let kind = revoke_type_of(&target).expect("own message");
+        assert_eq!(kind, whatsapp_rust::RevokeType::Sender, "{target:?}");
+    }
+}
+
+/// #276: someone else's message in a group is an admin revoke naming them.
+#[test]
+fn revoke_of_anothers_group_message_is_an_admin_revoke_naming_them() {
+    let target = revoke_target(GROUP_276, false, Some(AUTHOR_PN));
+    let kind = revoke_type_of(&target).expect("another's group message");
+    let want = whatsapp_rust::RevokeType::Admin {
+        original_sender: jid(AUTHOR_PN).into_lib(),
+    };
+    assert_eq!(kind, want);
+}
+
+/// #276: the protocol key must match the original message's key, so a LID
+/// author stays a LID author.
+#[test]
+fn admin_revoke_keeps_a_lid_participant_verbatim() {
+    let target = revoke_target(GROUP_276, false, Some(AUTHOR_LID));
+    let kind = revoke_type_of(&target).expect("a lid author");
+    let whatsapp_rust::RevokeType::Admin { original_sender } = kind else {
+        panic!("expected an admin revoke, got {kind:?}");
+    };
+    assert_eq!(original_sender.to_string(), AUTHOR_LID);
+}
+
+/// #276: only a group has admins, so another's message elsewhere is refused.
+#[test]
+fn revoke_not_from_me_outside_a_group_is_refused() {
+    let target = revoke_target("5511999000111@s.whatsapp.net", false, None);
+    let text = refusal_text(&target);
+    assert!(text.contains("3EB0TARGET"), "{text}");
+    assert!(text.contains("group"), "{text}");
+}
+
+/// #276: an admin revoke names the author; a key without one cannot be sent.
+#[test]
+fn revoke_not_from_me_without_a_participant_is_refused() {
+    let target = revoke_target(GROUP_276, false, None);
+    let text = refusal_text(&target);
+    assert!(text.contains("3EB0TARGET"), "{text}");
+    assert!(text.contains("participant"), "{text}");
 }
 
 #[test]

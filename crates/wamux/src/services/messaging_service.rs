@@ -72,7 +72,8 @@ impl MessagingSvc {
     /// The target of a DeleteMessage, with the account it acts on. The key is
     /// checked for shape BEFORE the account is looked up in both modes (#41,
     /// #101), so a malformed key answers InvalidArgument even for an unknown
-    /// account. Only a revoke for everyone also refuses a status.
+    /// account. Only a revoke for everyone also refuses a status and a key no
+    /// revoke can be built from (#276).
     async fn delete_target(
         &self,
         account: Option<&pb::AccountRef>,
@@ -89,6 +90,7 @@ impl MessagingSvc {
         let target = MessageTarget::try_from(key)?;
         if for_everyone {
             messaging::refuse_status_revoke(&target, true)?;
+            messaging::revoke_type_of(&target)?;
         }
         let (handle, client) = account_of(&self.registry, account).await?;
         Ok((handle, client, target))
