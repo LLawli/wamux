@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::net::TcpStream;
 use wacore::framing::FrameDecoder;
-use wacore_binary::encoder::EncodeNode;
 use wacore_binary::marshal::unmarshal_ref;
 use wacore_noise::NoiseCipher;
 

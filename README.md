@@ -81,8 +81,8 @@ core over a 12-hour window.
 
 ## Requirements
 
-- **Rust nightly**: pinned in `rust-toolchain.toml`, the nightly upstream
-  `whatsapp-rust` builds and tests on (the lib is pinned to a git revision of
+- **Rust 1.100.0** (stable): pinned in `rust-toolchain.toml`, the release
+  upstream `whatsapp-rust` builds and tests on (the lib is pinned to a git revision of
   its main branch, see #30). `rustup` will pick up the pinned toolchain
   automatically.
 - **Postgres or SQLite** for the Signal/device store. The `database_url`

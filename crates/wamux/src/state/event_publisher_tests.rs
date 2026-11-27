@@ -252,7 +252,7 @@ fn banned() -> Arc<Event> {
     Arc::new(Event::TemporaryBan(Box::new(
         TemporaryBan::builder()
             .code(TempBanReason::BlockedByUsers)
-            .expire(wacore::time::from_secs(60).unwrap() - wacore::time::from_secs(0).unwrap())
+            .expire(std::time::Duration::from_secs(60))
             .build(),
     )))
 }

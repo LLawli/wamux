@@ -57,6 +57,10 @@ message SendResult {
 // to do about it (retry, warn, wait for a receipt) is the edge's call. A send
 // that reached no recipient device at all never answers with this: it fails.
 //
+// `addressed` counts the recipient's hosted devices too (WhatsApp Business
+// Coexistence, `@hosted` / `@hosted.lid`), so for such a recipient a failed
+// hosted device makes `encrypted < addressed`.
+//
 // All zeros means a self-chat, which has no recipient half. It says nothing
 // about this account's own devices, so a note to self is NOT settled by it:
 // that case still has neither a receipt nor a count.

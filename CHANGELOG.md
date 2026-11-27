@@ -38,8 +38,37 @@ has to follow them.
   and nothing is sent. Such a key used to go out as a sender revoke with
   `fromMe = true`, which named a different message (the account's own with
   that id), so it never deleted the one asked for.
+- **whatsapp-rust moves from `66eb7331` to `c03cb783`, and the toolchain from
+  `nightly-2026-06-16` to stable `1.100.0`** (issue #281), the release
+  upstream builds on. A source build needs no nightly any more, and
+  `.cargo/config.toml` (which only held the nightly `-Zthreads` flag) is gone.
+  The store format is unchanged: no migration, and the previous binary opens a
+  store the new one wrote (verified on a live account).
+- **Text and media inside a wrapper are projected** (issue #281). An inbound or
+  echoed message wrapped in a spoiler, a group mention, view-once, ephemeral,
+  an audio sticker, an edit or a `device_sent` envelope used to reach the edge
+  with its mentions and quote but no `text`, `media` or `caption`, and a revoke
+  inside an ephemeral wrapper was not seen as a delete. `InboundMessage` now
+  reads text, reaction, media, caption, sticker pack and the edit or revoke
+  from the same unwrapped message the mentions and quote come from.
+  `raw_message` still carries the payload whole, wrappers included. An audio
+  sticker arrives as the plain sticker underneath; its sound is #278. No proto
+  change.
+- **The offline drain dispatches up to 8 stanzas at a time** (issue #281, the
+  library default). `monotonic_seq` still follows dispatch order, but after a
+  reconnect that order holds only within each chat, not across chats. The
+  `events.proto` comment says so.
+- **`RecipientFanout.addressed` counts hosted devices** (issue #281): a DM to a
+  WhatsApp Business account on Coexistence now also encrypts to its hosted
+  devices, so `addressed` can be higher than before for those recipients.
 
 ### Fixed
+
+- **The streaming sidecar of a sent video or audio matches the one the WhatsApp
+  apps build** (issue #281, upstream #1922). Each 64 KiB window now opens with
+  the 16 bytes before it (the IV for the first), which is the CBC block a
+  reader that seeks to that window needs; the old windows were laid out
+  differently, so their HMACs did not match what the apps compute.
 
 - **`CreateAccount` with a taken `external_ref` answers `ALREADY_EXISTS`**
   (issue #269), with the message `account with external_ref '<ref>' already

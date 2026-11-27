@@ -28,10 +28,7 @@ fi
 echo "building wamux $VERSION for $TARGET"
 # --locked: the release must build the dependency tree CI tested, so a stale
 # Cargo.lock fails here instead of shipping unreviewed versions (#78).
-#
-# RUSTFLAGS="" (empty, not unset): cargo then ignores the dev-only
-# `-Zthreads` in .cargo/config.toml, so the attested binary is built as before (#233).
-RUSTFLAGS="" cargo build --release --locked --target "$TARGET" -p wamux --bin wamux
+cargo build --release --locked --target "$TARGET" -p wamux --bin wamux
 
 rm -rf "${OUTDIR:?}/${NAME}"
 mkdir -p "${OUTDIR}/${NAME}/contrib" "${OUTDIR}/${NAME}/docs"

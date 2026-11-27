@@ -37,7 +37,7 @@ impl SpoolBudget {
     fn claim(&self, bytes: u64) -> Result<(), WamuxError> {
         let claimed = self
             .held
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
                 let total = held.saturating_add(bytes);
                 (self.max_bytes == 0 || total <= self.max_bytes).then_some(total)
             });

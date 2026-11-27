@@ -1009,9 +1009,12 @@ message EventEnvelope {
   // (the replay, then live, with no repeat between them). A subscriber may
   // treat a seq at or below the highest it accepted as a duplicate. The only
   // exceptions are the gap markers (seq -1). There is no order across
-  // accounts. The sequence lives in the daemon's memory: it starts again at 0
-  // when the daemon restarts, so a subscriber that keeps its highest seq across
-  // a restart must reset it when the stream ends (#213).
+  // accounts. During an offline drain the library processes independent chats
+  // in parallel (up to 8 at once, one per core by default), so in that phase
+  // the order is guaranteed within a chat but not across chats. The sequence
+  // lives in the daemon's memory: it starts again at 0 when the daemon
+  // restarts, so a subscriber that keeps its highest seq across a restart must
+  // reset it when the stream ends (#213).
   int64 monotonic_seq = 2;
   int64 ts_unix_ms = 3;
   oneof event {

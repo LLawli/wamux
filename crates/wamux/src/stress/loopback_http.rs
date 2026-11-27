@@ -11,9 +11,10 @@
 //! depend on the network. Compiled only with the `stress` feature, like the
 //! mock it serves.
 
-use anyhow::Result;
 use async_trait::async_trait;
-use wacore::net::{HttpClient, HttpRequest, HttpResponse, StreamingHttpResponse, UploadBody};
+use wacore::net::{
+    HttpClient, HttpError, HttpRequest, HttpResponse, StreamingHttpResponse, UploadBody,
+};
 use whatsapp_rust_ureq_http_client::UreqHttpClient;
 
 const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
@@ -89,14 +90,14 @@ impl Default for LoopbackHttpClient {
 
 /// Apply the loopback rewrite to a request's URL, leaving the rest intact, or
 /// refuse a URL off loopback so a stress run cannot reach the internet.
-fn rewritten(mut request: HttpRequest) -> Result<HttpRequest, OffLoopbackRequest> {
-    request.url = loopback_request_url(&request.url)?;
+fn rewritten(mut request: HttpRequest) -> Result<HttpRequest, HttpError> {
+    request.url = loopback_request_url(&request.url).map_err(HttpError::adapter)?;
     Ok(request)
 }
 
 #[async_trait]
 impl HttpClient for LoopbackHttpClient {
-    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse> {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
         self.inner.execute(rewritten(request)?).await
     }
 
@@ -104,7 +105,7 @@ impl HttpClient for LoopbackHttpClient {
         self.inner.supports_streaming()
     }
 
-    fn execute_streaming(&self, request: HttpRequest) -> Result<StreamingHttpResponse> {
+    fn execute_streaming(&self, request: HttpRequest) -> Result<StreamingHttpResponse, HttpError> {
         self.inner.execute_streaming(rewritten(request)?)
     }
 
@@ -117,7 +118,7 @@ impl HttpClient for LoopbackHttpClient {
         request: HttpRequest,
         body: UploadBody,
         content_length: u64,
-    ) -> Result<HttpResponse> {
+    ) -> Result<HttpResponse, HttpError> {
         self.inner
             .execute_upload(rewritten(request)?, body, content_length)
     }

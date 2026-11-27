@@ -9,7 +9,7 @@ pub fn quick_reply_update_of(update: &QuickReplyUpdate) -> pb::QuickReplyUpdate 
     let action = &update.action;
     pb::QuickReplyUpdate {
         id: update.id.clone(),
-        timestamp: update.timestamp.timestamp_millis(),
+        timestamp: update.timestamp.as_millis(),
         from_full_sync: update.from_full_sync,
         shortcut: action.shortcut.clone(),
         message: action.message.clone(),

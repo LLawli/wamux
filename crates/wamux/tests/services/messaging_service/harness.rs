@@ -94,6 +94,7 @@ async fn fixture_built(test: &str, config: Config, shape: impl FnOnce(&mut Devic
     let prefix = common::test_prefix("messaging_service", test);
     let logged = common::logged_in_companion(&mock, &prefix, shape).await;
     await_login_presence(&mock).await;
+    await_peer_mappings(&logged.client, &[&peer, &other, &phone]).await;
     let channel = common::serve_registry_with(logged.registry.clone(), config).await;
     let account = account_ref(&logged.handle.uuid.to_string());
     Fixture {
@@ -191,6 +192,23 @@ async fn await_login_presence(mock: &MockWaServer) {
         || async { (!mock.client_stanzas("presence").is_empty()).then_some(()) },
     )
     .await;
+}
+
+/// The mock teaches each served peer's LID<->PN pair in a contact notification
+/// at login, and the library handles it concurrently with the rest of the
+/// login, so the presence above can come first. A send that resolves a PN
+/// recipient to its LID (a status) drops one it cannot resolve yet, so wait
+/// until the library knows every pair (#281).
+async fn await_peer_mappings(client: &whatsapp_rust::Client, peers: &[&MockPeer]) {
+    for peer in peers {
+        let pn = peer.pn();
+        common::poll_until(
+            &format!("the LID of {pn}"),
+            Duration::from_secs(5),
+            || async { client.get_lid_pn_entry(&pn).await.ok().flatten().map(drop) },
+        )
+        .await;
+    }
 }
 
 /// Send `body` to the peer and return the key the RPC answered with.

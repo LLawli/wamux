@@ -62,7 +62,8 @@ impl StoreKey {
             return Err(StoreKeyError::BadFormat);
         }
         let mut bytes = [0u8; 32];
-        for (slot, pair) in bytes.iter_mut().zip(raw.chunks_exact(2)) {
+        let (pairs, _) = raw.as_chunks::<2>();
+        for (slot, pair) in bytes.iter_mut().zip(pairs) {
             *slot = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
         }
         Ok(Self { bytes })

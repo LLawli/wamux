@@ -25,10 +25,6 @@ scripts/ci.sh --full         # also the #[ignore] scale tests
 The dev profile uses `debug = "line-tables-only"`: backtraces and panics keep
 file:line, and `target/debug` is about a third of the size. If you need a
 debugger with variables, build with `CARGO_PROFILE_DEV_DEBUG=2`.
-`.cargo/config.toml` also passes `-Zthreads=4` (the nightly's parallel
-front-end) to dev and CI builds. The release does not use it: the release
-scripts build with `RUSTFLAGS=""` so the attested binary is compiled as before,
-and `scripts/check-release-pins.py` enforces that (R16).
 
 Postgres for the full run:
 
@@ -37,8 +33,8 @@ docker run -d --name wamux-pg -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux 
   -e POSTGRES_DB=wamux -p 5433:5432 postgres:16
 ```
 
-The toolchain is a pinned nightly (`rust-toolchain.toml`), the one upstream
-`whatsapp-rust` builds on; the lib itself is pinned to a git revision (#30).
+The toolchain is a pinned stable release (`rust-toolchain.toml`), the one
+upstream `whatsapp-rust` builds on; the lib itself is pinned to a git revision (#30).
 `rustup` picks it up on its own.
 
 ## The rule that overrides the others

@@ -10,7 +10,7 @@ pub fn missed_call_event_of(missed: &MissedCall) -> pb::CallEvent {
     pb::CallEvent {
         from: relay_lib_jid(&missed.from),
         call_id: missed.call_id.clone(),
-        timestamp: missed.timestamp.timestamp_millis(),
+        timestamp: missed.timestamp.as_millis(),
         // The CallEvent's own flag says "replayed from the offline queue", which
         // is exactly the Offline reason (#151).
         offline: matches!(missed.reason, MissedReason::Offline),

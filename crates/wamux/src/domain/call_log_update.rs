@@ -20,7 +20,7 @@ pub fn call_log_update_of(sync: &CallLogSync) -> pb::CallLogUpdate {
         call_creator: relay_lib_jid(&sync.call_creator_jid),
         call_id: sync.call_id.clone(),
         from_me: sync.from_me,
-        timestamp: sync.timestamp.timestamp_millis(),
+        timestamp: sync.timestamp.as_millis(),
         from_full_sync: sync.from_full_sync,
         result: fields.result,
         is_dnd_mode: fields.is_dnd_mode,

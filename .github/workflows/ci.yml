@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
 
-# The pinned nightly (rust-toolchain.toml) is what every job resolves to;
+# The pinned toolchain (rust-toolchain.toml) is what every job resolves to;
 # rustup honors that file automatically, so no job names a toolchain by hand.
 env:
   CARGO_TERM_COLOR: always
@@ -26,7 +26,7 @@ jobs:
       # commit restores on one image and compiles cold on the next. The cache
       # step runs inside the action below, after the install, so only a step
       # before it can take the stable out of the hash: drop every toolchain and
-      # let the action install just the nightly from rust-toolchain.toml (#237).
+      # let the action install just the pinned one from rust-toolchain.toml (#237).
       # With no toolchain installed, the loop's one "name" is rustup's
       # "no installed toolchains" line, which uninstall skips with exit 0.
       - name: drop the runner's toolchains
@@ -36,7 +36,7 @@ jobs:
         with:
           # Reads channel and components from rust-toolchain.toml, and caches
           # the toolchain plus ~/.cargo and target/. Without the cache each run
-          # re-downloads a whole nightly.
+          # re-downloads a whole toolchain.
           cache: true
 
       # Same script as the full job, minus the database-backed gates. The

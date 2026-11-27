@@ -20,6 +20,7 @@ overrides landed in #104 (2026-10-03), after the storage rewrite (#65).
 | Method | Trait | Decision | Why |
 |---|---|---|---|
 | `put_identities_batch` | SignalStore | override | One transaction per batch (#104): one connection and one commit instead of one per row, and all-or-nothing, which the flush already assumes (it clears `dirty` only after the whole batch returns `Ok`). |
+| `load_identities_batch` | SignalStore | default | The default answers `None`, and the identity cache then warms nothing ahead: each identity is read on its own when first used, as before. A batch read only saves round trips. |
 | `delete_identities_batch` | SignalStore | override | One transaction per batch (#104): one connection and one commit instead of one per row, and all-or-nothing, which the flush already assumes (it clears `dirty` only after the whole batch returns `Ok`). |
 | `put_sessions_batch` | SignalStore | override | One transaction per batch (#104): one connection and one commit instead of one per row, and all-or-nothing, which the flush already assumes (it clears `dirty` only after the whole batch returns `Ok`). |
 | `get_sessions_batch` | SignalStore | override | Fixed-size `IN` list of 100 values per query, the last chunk padded with a repeat (#104): one statement text, no round trip per item. |
@@ -29,6 +30,7 @@ overrides landed in #104 (2026-10-03), after the storage rewrite (#65).
 | `get_signal_addresses_for_user` | SignalStore | override | The default fails, and the library calls it with `?` when a known contact's verified identity changes: the contact's device-list resolution then fails, in a group refresh too, and the identity-change event never reaches the edge. One shared statement over sessions, identities and sender-key devices, matched by exact prefix (not `LIKE`, not a collation-dependent range). |
 | `initialize_mobile_device` | DeviceStore | default | Atomic setup of a store for a mobile primary registration. wamux pairs companions only, so the library never calls it; the default refuses, which is the honest answer. |
 | `store_prekeys_batch` | SignalStore | override | One transaction per batch (#104): one connection and one commit instead of one per row, and all-or-nothing, which the flush already assumes (it clears `dirty` only after the whole batch returns `Ok`). |
+| `store_packed_prekeys` | SignalStore | default | The default writes the generated batch through `store_prekeys_batch`, which the families override with one transaction (#104). Keeping prekeys packed is an in-memory layout the SQL rows do not have. |
 | `load_prekeys_batch` | SignalStore | override | Fixed-size `IN` list of 100 values per query, the last chunk padded with a repeat (#104): one statement text, no round trip per item. |
 | `remove_prekeys_batch` | SignalStore | override | One transaction per batch (#104): one connection and one commit instead of one per row, and all-or-nothing, which the flush already assumes (it clears `dirty` only after the whole batch returns `Ok`). |
 | `put_sender_keys_batch` | SignalStore | override | One transaction per batch (#104): one connection and one commit instead of one per row, and all-or-nothing, which the flush already assumes (it clears `dirty` only after the whole batch returns `Ok`). |
@@ -53,6 +55,8 @@ overrides landed in #104 (2026-10-03), after the storage rewrite (#65).
 | `read_pending_inbound_group_bounded` | ProtocolStore | default | Hook-only, like `read_pending_inbound_bounded`: fails closed. |
 | `replace_pending_inbound_if` | ProtocolStore | default | Hook-only, like `read_pending_inbound_bounded`: fails closed. |
 | `delete_pending_inbound_if` | ProtocolStore | default | Hook-only, like `read_pending_inbound_bounded`: fails closed. |
+| `insert_pending_batch_if_missing` | ProtocolStore | default | Hook-only, and the library calls it only when `supports_pending_insert_batch()` is true, which it is not on the default: never reached. If it were, the default fails closed. |
+| `delete_pending_inbound_batch_if` | ProtocolStore | default | Hook-only, like `read_pending_inbound_bounded`. The default answers `None` ("no batch form"), and the caller then cleans the rows one by one. |
 | `snapshot_db` | DeviceStore | default | A debugging snapshot of the database to a file, on library request. The relay writes no files of its own; the operator backs the store up. |
 | `resource_report` | DeviceStore | default | "Not reported" is accurate: the engines do not introspect their memory. |
 | `maintenance` | DeviceStore | override | SQLite: `PRAGMA analysis_limit = 400`, `PRAGMA optimize` and `PRAGMA wal_checkpoint(TRUNCATE)`, a busy checkpoint skipped, not failed (#104). Postgres: nothing, autovacuum does the upkeep. |
