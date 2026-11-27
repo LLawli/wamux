@@ -485,7 +485,9 @@ fn quote_of(ci: &wa::ContextInfo, reply_chat: &str) -> Option<pb::QuoteContext> 
 }
 
 /// Project a `wa::Message`'s content onto an already-addressed `InboundMessage`:
-/// text, mentions, quote, reaction, edit/revoke flags, media.
+/// text, mentions, quote, reaction, edit/revoke flags, media. Wrappers are
+/// peeled first (see the body), so a spoiler or ephemeral message projects its
+/// content like a bare one.
 ///
 /// Split out of `map_message` so an ECHO of a message this relay sent goes
 /// through the exact same projection as one WhatsApp delivered (issue #22).
@@ -496,12 +498,14 @@ fn quote_of(ci: &wa::ContextInfo, reply_chat: &str) -> Option<pb::QuoteContext> 
 /// `wa::Message` a live event carries, and the same message must not project
 /// two ways depending on which call returned it.
 pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, chat: &str) {
-    if let Some(text) = &msg.conversation {
-        out.text = text.clone();
-    } else if let Some(ext) = msg.extended_text_message.as_option()
-        && let Some(text) = &ext.text
-    {
-        out.text = text.clone();
+    // Every projection reads the base message the library unwraps to (device
+    // sent, ephemeral, view once, spoiler, group mentioned, audio sticker,
+    // edited, ...), the same one `context_info()` looks through. Reading text
+    // and media from the top level while mentions and quote come from the base
+    // would project half of one message.
+    let base: &wa::Message = msg.get_base_message();
+    if let Some(text) = message_text(base) {
+        out.text = text;
     }
     // Any message type can carry a quote and mentions (a media caption reply
     // included), so the context is read wherever the library finds it (#217).
@@ -510,7 +514,7 @@ pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, c
         out.quote = quote_of(ci, chat);
     }
 
-    if let Some(reaction) = msg.reaction_message.as_option() {
+    if let Some(reaction) = base.reaction_message.as_option() {
         out.reaction = reaction.text.clone().unwrap_or_default();
         out.reaction_target = reaction.key.as_option().map(wa_key_to_proto);
     }
@@ -518,20 +522,22 @@ pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, c
     // An inbound edit or revoke surfaces the typed flags the proto reserves
     // (the edge otherwise reads is_edit/is_delete hard-false and never the new
     // text or target). Relay-pure: only reprojects what raw_message already
-    // carries.
-    if let Some(pm) = effective_protocol_message(msg) {
+    // carries. A revoke is a top-level `protocol_message`, an edit is the one
+    // inside the `edited_message` wrapper; peeling that wrapper is what puts
+    // both on `base`, and reading only the top level would drop every edit.
+    if let Some(pm) = base.protocol_message.as_option() {
         project_protocol_message(out, pm);
     }
-    if is_secret_message_edit(msg) {
+    if is_secret_message_edit(base) {
         out.is_edit = true;
     }
 
-    if let Some((descriptor, caption)) = extract_media(msg) {
+    if let Some((descriptor, caption)) = extract_media(base) {
         out.media = Some(descriptor);
         out.caption = caption;
     }
-    // Issue #58: `media` above is the pack's ZIP; this is the rest of it.
-    out.sticker_pack = msg
+    // `media` above is the pack's ZIP; this is the rest of it (#58).
+    out.sticker_pack = base
         .sticker_pack_message
         .as_option()
         .map(sticker_packs::sticker_pack_info);
@@ -595,25 +601,6 @@ fn message_text(m: &wa::Message) -> Option<String> {
     m.extended_text_message
         .as_option()
         .and_then(|e| e.text.clone())
-}
-
-/// The `protocol_message` an inbound edit or revoke carries. The two arrive in
-/// DIFFERENT shapes (E2E triage re-run 2026-06-16): a revoke is a top-level
-/// `protocol_message`, but an edit is wrapped one level deeper, in
-/// `edited_message`(FutureProofMessage)`.message.protocol_message` — exactly the
-/// container the lib's `Client::edit_message` builds (client.rs:3556). Checking
-/// only the top level surfaces revokes but silently drops every edit. The
-/// top-level form wins when both somehow exist.
-fn effective_protocol_message(msg: &wa::Message) -> Option<&wa::message::ProtocolMessage> {
-    if let Some(pm) = msg.protocol_message.as_option() {
-        return Some(pm);
-    }
-    msg.edited_message
-        .as_option()?
-        .message
-        .as_option()?
-        .protocol_message
-        .as_option()
 }
 
 /// Surface an inbound edit/revoke onto the typed flags + target key. The target
@@ -745,3 +732,6 @@ mod stanza_tests;
 #[cfg(test)]
 #[path = "event_mapping_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "event_mapping_wrapper_tests.rs"]
+mod wrapper_tests;
