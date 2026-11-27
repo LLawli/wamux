@@ -31,7 +31,7 @@ pub fn group_update_of(update: &GroupUpdate) -> pb::GroupUpdate {
         participant_pn: relay_optional_lib_jid(update.participant_pn.as_ref()),
         participant_username: update.participant_username.clone(),
         participant_country_code: update.participant_country_code.clone(),
-        timestamp: update.timestamp.timestamp_millis(),
+        timestamp: update.timestamp.as_millis(),
         is_lid_addressing_mode: update.is_lid_addressing_mode,
         has_incomplete_participant_information: update.has_incomplete_participant_information,
         action: Some(action_of(&update.action)),

@@ -181,7 +181,7 @@ mod tests {
         whatsapp_rust::features::MexError::GraphQl {
             code,
             message: message.into(),
-            source: Box::new(IqError::ParseError(anyhow::Error::new(fatal))),
+            source: Box::new(IqError::ParseError(Box::new(fatal))),
         }
     }
 

@@ -824,13 +824,10 @@ fn maps_logged_out_with_a_typed_reason() {
 
 #[test]
 fn maps_temporary_ban_to_banned_state() {
-    // chrono::Duration without a direct chrono dep: subtract two DateTimes.
-    let start = wacore::time::from_secs(0).unwrap();
-    let end = wacore::time::from_secs(3_600).unwrap();
     let c = mapped_connection(&Event::TemporaryBan(Box::new(
         TemporaryBan::builder()
             .code(TempBanReason::BlockedByUsers)
-            .expire(end - start)
+            .expire(std::time::Duration::from_secs(3_600))
             .build(),
     )));
     assert_eq!(c.state, pb::ConnectionState::Banned as i32);

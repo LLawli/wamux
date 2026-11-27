@@ -1,8 +1,8 @@
-# Pinned nightly, aligned with the whatsapp-rust revision pinned in the root
-# Cargo.toml, [workspace.dependencies] (#30). The lib no longer needs `simd`
-# (removed upstream, #1262) and uses no `#![feature]`, but upstream builds and tests on this exact nightly, so this is
-# the toolchain the pinned graph is validated against. Re-align it on every bump.
+# Stable, aligned with the whatsapp-rust revision pinned in the root
+# Cargo.toml, [workspace.dependencies] (#30): upstream builds and tests on this
+# exact release, so it is the toolchain the pinned graph is validated against.
+# Re-align it on every bump.
 [toolchain]
-channel = "nightly-2026-06-16"
+channel = "1.100.0"
 components = ["rustfmt", "clippy", "rust-src"]
 profile = "default"

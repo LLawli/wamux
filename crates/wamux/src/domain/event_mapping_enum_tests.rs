@@ -42,8 +42,7 @@ fn a_temporary_ban_carries_reason_expiry_message_and_url() {
     let c = connection_of(&Event::TemporaryBan(Box::new(
         TemporaryBan::builder()
             .code(TempBanReason::SentToTooManyPeople)
-            // A duration without a direct chrono dep: the difference of two instants.
-            .expire(wacore::time::from_secs(3_600).unwrap() - wacore::time::from_secs(0).unwrap())
+            .expire(std::time::Duration::from_secs(3_600))
             .message("try again later".to_string())
             .url("https://faq.whatsapp.com/ban".to_string())
             .build(),
@@ -63,8 +62,7 @@ fn a_ban_with_an_unknown_code_relays_the_code() {
     let c = connection_of(&Event::TemporaryBan(Box::new(
         TemporaryBan::builder()
             .code(TempBanReason::Unknown(107))
-            // A duration without a direct chrono dep: the difference of two instants.
-            .expire(wacore::time::from_secs(3_600).unwrap() - wacore::time::from_secs(0).unwrap())
+            .expire(std::time::Duration::from_secs(3_600))
             .build(),
     )));
     let ban = c.ban.expect("BANNED carries its info");

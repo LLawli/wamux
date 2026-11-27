@@ -18,7 +18,7 @@ account(s)' events to receive (one / all / none = send-only).
 history. See `docs/PRD.md` and `docs/SPEC.md` for the product/spec, and `docs/crate-notes/`
 for the verbatim whatsapp-rust API map.
 
-**Toolchain.** Pinned **nightly** (`rust-toolchain.toml`), aligned with the nightly upstream
+**Toolchain.** Pinned **stable** release (`rust-toolchain.toml`), aligned with the one upstream
 `whatsapp-rust` builds on. The lib itself is pinned to a git `rev` on main, not a crates.io
 release (#30): re-align both on every bump, and move every crate of the family together.
 

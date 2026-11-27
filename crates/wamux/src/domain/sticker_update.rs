@@ -26,7 +26,7 @@ pub fn favorite_sticker_update_of(update: &FavoriteStickerUpdate) -> pb::Sticker
     };
     sticker_update_of(
         &update.filehash,
-        update.timestamp.timestamp_millis(),
+        update.timestamp.as_millis(),
         update.from_full_sync,
         pb::sticker_update::Action::Favorite(change),
     )
@@ -39,7 +39,7 @@ pub fn remove_recent_sticker_update_of(update: &RemoveRecentStickerUpdate) -> pb
     };
     sticker_update_of(
         &update.filehash,
-        update.timestamp.timestamp_millis(),
+        update.timestamp.as_millis(),
         update.from_full_sync,
         pb::sticker_update::Action::RemoveRecent(change),
     )

@@ -90,7 +90,7 @@ The complete, current contract is
 | Socket trust | No core auth; FS perms (`socket_mode`, default 0660) + optional owning group (`socket_group`); SO_PEERCRED uid in request logs and an optional allowlist (`allowed_uids`, `allowed_gids`): a peer passes on either list, and the gid matched is the peer's effective one, not its supplementary groups |
 | Config | TOML + `WAMUX_` env overrides |
 | Observability | tracing logs; `AdminService.GetMetrics` (Prometheus text) and `AdminService.Check` (liveness/readiness) over the socket |
-| Toolchain | Pinned nightly + edition 2024, aligned with upstream whatsapp-rust |
+| Toolchain | Pinned stable (1.100.0) + edition 2024, aligned with upstream whatsapp-rust |
 | Name | crate/binary `wamux` |
 | Deploy | systemd and container |
 

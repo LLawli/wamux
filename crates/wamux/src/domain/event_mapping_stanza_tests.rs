@@ -36,8 +36,7 @@ fn logged_out_with(raw: Option<&str>, on_connect: bool) -> Event {
 fn ban_with(raw: Option<&str>) -> Event {
     let builder = TemporaryBan::builder()
         .code(TempBanReason::SentToTooManyPeople)
-        // A duration without a direct chrono dep: the difference of two instants.
-        .expire(wacore::time::from_secs(3_600).unwrap() - wacore::time::from_secs(0).unwrap());
+        .expire(std::time::Duration::from_secs(3_600));
     Event::TemporaryBan(Box::new(builder.maybe_raw(raw.map(node_of_xml)).build()))
 }
 

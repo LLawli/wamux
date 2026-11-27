@@ -11,8 +11,8 @@ use crate::proto::v1 as pb;
 pub fn contact_update_of(update: &ContactUpdate) -> pb::ContactUpdate {
     pb::ContactUpdate {
         jid: relay_lib_jid(&update.jid),
-        timestamp: update.timestamp.timestamp_millis(),
-        action_timestamp: update.action_timestamp.map(|at| at.timestamp_millis()),
+        timestamp: update.timestamp.as_millis(),
+        action_timestamp: update.action_timestamp.map(|at| at.as_millis()),
         from_full_sync: update.from_full_sync,
         action: Some(contact_action_of(&update.action)),
         removed: false,
@@ -24,8 +24,8 @@ pub fn contact_update_of(update: &ContactUpdate) -> pb::ContactUpdate {
 pub fn contact_removed_of(removal: &ContactRemoved) -> pb::ContactUpdate {
     pb::ContactUpdate {
         jid: relay_lib_jid(&removal.jid),
-        timestamp: removal.timestamp.timestamp_millis(),
-        action_timestamp: removal.action_timestamp.map(|at| at.timestamp_millis()),
+        timestamp: removal.timestamp.as_millis(),
+        action_timestamp: removal.action_timestamp.map(|at| at.as_millis()),
         from_full_sync: removal.from_full_sync,
         action: None,
         removed: true,

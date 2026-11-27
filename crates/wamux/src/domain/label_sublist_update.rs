@@ -12,7 +12,7 @@ pub fn label_sublist_update_of(update: &LabelSublistUpdate) -> pb::LabelSublistU
     pb::LabelSublistUpdate {
         predefined_id: update.predefined_id,
         chat: relay_lib_jid(&update.chat_jid),
-        action_timestamp: update.action_timestamp.map(|at| at.timestamp_millis()),
+        action_timestamp: update.action_timestamp.map(|at| at.as_millis()),
         from_full_sync: update.from_full_sync,
         change: change_of(update.change),
     }

@@ -17,7 +17,7 @@ use crate::proto::v1::account_setting_update::Setting;
 /// The action's own flag, not the library's derived `previews_disabled`.
 pub fn link_previews_update_of(update: &DisableLinkPreviewsUpdate) -> pb::AccountSettingUpdate {
     pb::AccountSettingUpdate {
-        timestamp: update.timestamp.timestamp_millis(),
+        timestamp: update.timestamp.as_millis(),
         // The library struct keeps no time of the mutation's own here.
         action_timestamp: None,
         from_full_sync: update.from_full_sync,
@@ -32,8 +32,8 @@ pub fn link_previews_update_of(update: &DisableLinkPreviewsUpdate) -> pb::Accoun
 /// the listed users as jids.
 pub fn status_privacy_update_of(update: &StatusPrivacyUpdate) -> pb::AccountSettingUpdate {
     pb::AccountSettingUpdate {
-        timestamp: update.timestamp.timestamp_millis(),
-        action_timestamp: update.action_timestamp.map(|at| at.timestamp_millis()),
+        timestamp: update.timestamp.as_millis(),
+        action_timestamp: update.action_timestamp.map(|at| at.as_millis()),
         from_full_sync: update.from_full_sync,
         setting: Some(Setting::StatusPrivacy(status_privacy_of(&update.action))),
     }
@@ -111,7 +111,7 @@ fn status_audience_mode_of(mode: StatusDistributionMode) -> pb::StatusAudienceMo
 /// The "keep chats archived" setting (#215), the library's flag as sent.
 pub fn unarchive_chats_update_of(update: &UnarchiveChatsSettingUpdate) -> pb::AccountSettingUpdate {
     pb::AccountSettingUpdate {
-        timestamp: update.timestamp.timestamp_millis(),
+        timestamp: update.timestamp.as_millis(),
         // The library struct keeps no time of the mutation's own here.
         action_timestamp: None,
         from_full_sync: update.from_full_sync,

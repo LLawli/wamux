@@ -22,7 +22,7 @@ pub fn picture_notice_of(update: &PictureUpdate) -> pb::ContactNotice {
     notice(pb::contact_notice::Notice::Picture(pb::PictureChange {
         jid: relay_lib_jid(&update.jid),
         author: relay_optional_lib_jid(update.author.as_ref()),
-        timestamp: update.timestamp.timestamp_millis(),
+        timestamp: update.timestamp.as_millis(),
         removed: update.removed,
         picture_id: update.picture_id.clone(),
     }))
@@ -32,7 +32,7 @@ pub fn about_notice_of(update: &UserAboutUpdate) -> pb::ContactNotice {
     notice(pb::contact_notice::Notice::About(pb::AboutChange {
         jid: relay_lib_jid(&update.jid),
         about: update.status.clone(),
-        timestamp: update.timestamp.timestamp_millis(),
+        timestamp: update.timestamp.as_millis(),
     }))
 }
 
@@ -40,7 +40,7 @@ pub fn profile_notice_of(update: &ContactUpdated) -> pb::ContactNotice {
     notice(pb::contact_notice::Notice::Profile(
         pb::ContactProfileChange {
             jid: relay_lib_jid(&update.jid),
-            timestamp: update.timestamp.timestamp_millis(),
+            timestamp: update.timestamp.as_millis(),
         },
     ))
 }
@@ -51,15 +51,15 @@ pub fn number_notice_of(change: &ContactNumberChanged) -> pb::ContactNotice {
         new_pn: relay_lib_jid(&change.new_jid),
         old_lid: relay_optional_lib_jid(change.old_lid.as_ref()),
         new_lid: relay_optional_lib_jid(change.new_lid.as_ref()),
-        timestamp: change.timestamp.timestamp_millis(),
+        timestamp: change.timestamp.as_millis(),
     }))
 }
 
 pub fn sync_requested_notice_of(request: &ContactSyncRequested) -> pb::ContactNotice {
     notice(pb::contact_notice::Notice::SyncRequested(
         pb::ContactSyncRequest {
-            after: request.after.map(|after| after.timestamp_millis()),
-            timestamp: request.timestamp.timestamp_millis(),
+            after: request.after.map(|after| after.as_millis()),
+            timestamp: request.timestamp.as_millis(),
         },
     ))
 }
@@ -69,7 +69,7 @@ pub fn disappearing_mode_notice_of(change: &DisappearingModeChanged) -> pb::Cont
         pb::DisappearingModeChange {
             jid: relay_lib_jid(&change.from),
             duration_seconds: change.duration,
-            setting_timestamp: change.setting_timestamp.timestamp_millis(),
+            setting_timestamp: change.setting_timestamp.as_millis(),
         },
     ))
 }
@@ -79,7 +79,7 @@ pub fn business_notice_of(update: &BusinessStatusUpdate) -> pb::ContactNotice {
         pb::BusinessStatusChange {
             jid: relay_lib_jid(&update.jid),
             update_type: business_update_type_of(update.update_type) as i32,
-            timestamp: update.timestamp.timestamp_millis(),
+            timestamp: update.timestamp.as_millis(),
             target: relay_optional_lib_jid(update.target_jid.as_ref()),
             hash: update.hash.clone(),
             verified_name: update.verified_name.clone(),

@@ -110,7 +110,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
         Event::Presence(p) => one(Pb::Presence(pb::PresenceUpdate {
             jid: relay_lib_jid(&p.from),
             online: Some(!matches!(p.status, PresenceStatus::Unavailable)),
-            last_seen: p.last_seen.map(|t| t.timestamp()).unwrap_or(0),
+            last_seen: p.last_seen.map(|t| t.as_secs()).unwrap_or(0),
             chat_state: pb::ChatState::Unspecified as i32,
             // Unset, not empty: a real presence has no chat (#122).
             chat: None,
@@ -206,7 +206,7 @@ pub fn map_event(event: &Event) -> Vec<pb::event_envelope::Event> {
             id: a.id.clone(),
             class: a.class.clone().unwrap_or_default(),
             from: relay_optional_lib_jid(a.from.as_ref()),
-            timestamp: a.timestamp.map(|t| t.timestamp_millis()).unwrap_or(0),
+            timestamp: a.timestamp.map(|t| t.as_millis()).unwrap_or(0),
             error: a.error.clone().unwrap_or_default(),
         })),
 
@@ -311,7 +311,7 @@ fn favorites_changed(update: &wacore::types::events::FavoritesUpdate) -> pb::Fav
             .iter()
             .filter_map(|f| f.id.clone().and_then(relay_jid))
             .collect(),
-        timestamp: update.timestamp.timestamp_millis(),
+        timestamp: update.timestamp.as_millis(),
         from_full_sync: update.from_full_sync,
         raw: update.action.encode_to_vec(),
     }
@@ -397,7 +397,7 @@ fn temporary_ban(ban: &TemporaryBan) -> pb::event_envelope::Event {
     let info = pb::TemporaryBanInfo {
         reason: reason as i32,
         reason_code,
-        expire_seconds: ban.expire.num_seconds(),
+        expire_seconds: i64::try_from(ban.expire.as_secs()).unwrap_or(i64::MAX),
         message: ban.message.clone().unwrap_or_default(),
         url: ban.url.clone().unwrap_or_default(),
         stanza: ban.raw.as_ref().map(stanza_node_of),
@@ -413,7 +413,7 @@ fn receipt_event(r: &Receipt) -> pb::ReceiptEvent {
         message_ids: r.message_ids.iter().map(|m| m.to_string()).collect(),
         r#type: receipt_type as i32,
         type_raw,
-        timestamp: r.timestamp.timestamp_millis(),
+        timestamp: r.timestamp.as_millis(),
     }
 }
 
@@ -436,7 +436,7 @@ fn map_message(msg: &Arc<wa::Message>, info: &Arc<MessageInfo>) -> pb::InboundMe
         key: Some(key),
         chat: relay_jid(chat.clone()),
         sender: relay_jid(sender),
-        timestamp: info.timestamp.timestamp_millis(),
+        timestamp: info.timestamp.as_millis(),
         // The library's `push_name` is a `CompactString` (#30); the wire
         // contract wants an owned `String`.
         push_name: info.push_name.to_string(),

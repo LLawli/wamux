@@ -17,7 +17,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends musl-tools \
  && rm -rf /var/lib/apt/lists/*
 
-# The pinned nightly (the one upstream whatsapp-rust builds on, #30) is
+# The pinned toolchain (the one upstream whatsapp-rust builds on, #30) is
 # installed from rust-toolchain.toml alone, so this layer only rebuilds when
 # the pin changes - not on every source edit.
 COPY rust-toolchain.toml ./

@@ -65,8 +65,8 @@ pub fn archive_update_of(update: &ArchiveUpdate) -> pb::AppStateUpdate {
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -78,8 +78,8 @@ pub fn pin_update_of(update: &PinUpdate) -> pb::AppStateUpdate {
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -97,8 +97,8 @@ pub fn mute_update_of(update: &MuteUpdate) -> pb::AppStateUpdate {
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -113,8 +113,8 @@ pub fn star_update_of(update: &StarUpdate) -> pb::AppStateUpdate {
     });
     app_state_of(
         &update.chat_jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -127,8 +127,8 @@ pub fn mark_read_update_of(update: &MarkChatAsReadUpdate) -> pb::AppStateUpdate 
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -141,8 +141,8 @@ pub fn delete_chat_update_of(update: &DeleteChatUpdate) -> pb::AppStateUpdate {
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -155,8 +155,8 @@ pub fn lock_chat_update_of(update: &LockChatUpdate) -> pb::AppStateUpdate {
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -171,8 +171,8 @@ pub fn clear_chat_update_of(update: &ClearChatUpdate) -> pb::AppStateUpdate {
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -193,8 +193,8 @@ pub fn delete_message_for_me_update_of(update: &DeleteMessageForMeUpdate) -> pb:
     });
     app_state_of(
         &update.chat_jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )
@@ -208,8 +208,8 @@ pub fn user_status_mute_update_of(update: &UserStatusMuteUpdate) -> pb::AppState
     });
     app_state_of(
         &update.jid,
-        update.timestamp.timestamp_millis(),
-        update.action_timestamp.map(|at| at.timestamp_millis()),
+        update.timestamp.as_millis(),
+        update.action_timestamp.map(|at| at.as_millis()),
         update.from_full_sync,
         action,
     )

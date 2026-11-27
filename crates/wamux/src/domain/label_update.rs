@@ -17,7 +17,7 @@ use crate::proto::v1::label_update::Action;
 pub fn label_edit_update_of(update: &LabelEditUpdate) -> pb::LabelUpdate {
     label_update_of(
         &update.label_id,
-        update.timestamp.timestamp_millis(),
+        update.timestamp.as_millis(),
         update.from_full_sync,
         Action::Edit(label_edit_of(&update.action)),
     )
@@ -31,7 +31,7 @@ pub fn label_association_update_of(update: &LabelAssociationUpdate) -> pb::Label
     };
     label_update_of(
         &update.label_id,
-        update.timestamp.timestamp_millis(),
+        update.timestamp.as_millis(),
         update.from_full_sync,
         Action::Chat(association),
     )
@@ -48,7 +48,7 @@ pub fn message_label_association_update_of(
     };
     label_update_of(
         &update.label_id,
-        update.timestamp.timestamp_millis(),
+        update.timestamp.as_millis(),
         update.from_full_sync,
         Action::Message(association),
     )
