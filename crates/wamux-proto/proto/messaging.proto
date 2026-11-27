@@ -108,12 +108,26 @@ message SendMediaHeader {
   // looks nothing up. Bytes with no `quote.quoted` are InvalidArgument, and so
   // are bytes that are not a `wa.Message`.
   bytes quoted_message = 17;
+  // A sound sticker (issue #278): only with media_type STICKER, anything else
+  // is InvalidArgument before the first byte. The clip's bytes follow as
+  // `sticker_audio` parts, in any order with the image's `chunk` parts; a
+  // header with this set and no clip bytes is InvalidArgument. The core does
+  // not transcode: the edge supplies Ogg/Opus. Unset sends a plain sticker.
+  StickerAudio sticker_audio = 18;
+}
+
+// The clip of a sound sticker, relayed as the sticker's AudioMessage. Each
+// field relays verbatim; proto3 defaults are the absent field.
+message StickerAudio {
+  string mime_type = 1;  // e.g. "audio/ogg; codecs=opus"
+  uint32 seconds = 2;
 }
 
 message SendMediaChunk {
   oneof part {
     SendMediaHeader header = 1;
-    bytes chunk = 2;
+    bytes chunk = 2;          // the media itself (the sticker image, for a sound sticker)
+    bytes sticker_audio = 3;  // the clip; only after a header with sticker_audio
   }
 }
 

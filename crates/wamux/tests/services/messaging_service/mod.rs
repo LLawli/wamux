@@ -29,6 +29,7 @@ mod refusals;
 mod replay;
 mod rich;
 mod sends;
+mod sound_sticker;
 mod spool;
 mod status;
 mod status_audience;

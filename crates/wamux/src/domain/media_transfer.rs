@@ -8,6 +8,7 @@ use whatsapp_rust::upload::UploadResponse;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::{
     AudioMessage, DocumentMessage, ImageMessage, StickerMessage, VideoMessage,
+    sticker_message::Audio,
 };
 use whatsapp_rust::{Client, SendResult};
 
@@ -16,23 +17,54 @@ use crate::domain::wire_defaults::{nonempty_bytes, nonempty_string, nonzero_u32}
 use crate::error::{WamuxError, client_err};
 use crate::spool::{MediaSpool, SpooledDownload, StagedUpload};
 
+/// What a SendMedia stream staged: the file, and a sound sticker's clip
+/// (#278). Both reservations stay held until their upload ends.
+pub struct StagedMedia {
+    pub media: StagedUpload,
+    pub sticker_audio: Option<StagedUpload>,
+}
+
 pub async fn send_media(
     client: &Client,
     to: Jid,
     media: &OutgoingMedia,
-    staged: StagedUpload,
+    staged: StagedMedia,
 ) -> Result<SendResult, WamuxError> {
     // Validated before the upload: a malformed quoted_message must refuse the
     // send before the CDN sees a byte (#230). The context is rebuilt inside
     // `build_media_message`; building it twice is cheap, and one builder keeps
     // a single decode.
     outgoing_context(&media.context)?;
-    let upload = upload_staged(client, staged, media.kind.media_type()).await?;
-    let message = build_media_message(media, upload.into())?;
+    let message = upload_and_build(client, media, staged).await?;
     client
         .send_message(to.into_lib(), message)
         .await
         .map_err(client_err)
+}
+
+/// Upload the staged file, then a sound sticker's clip (#278), and build the
+/// message. A header that promised a clip with none staged is refused here
+/// too, so a sound sticker can never go out as a plain one.
+async fn upload_and_build(
+    client: &Client,
+    media: &OutgoingMedia,
+    staged: StagedMedia,
+) -> Result<wa::Message, WamuxError> {
+    let StagedMedia {
+        media: staged_media,
+        sticker_audio,
+    } = staged;
+    if media.sticker_audio.is_some() && sticker_audio.is_none() {
+        return Err(WamuxError::InvalidArgument(
+            "sticker_audio in the header but no clip bytes in the stream".to_string(),
+        ));
+    }
+    let upload = upload_staged(client, staged_media, media.kind.media_type()).await?;
+    let Some(staged_clip) = sticker_audio else {
+        return build_media_message(media, upload.into());
+    };
+    let clip = upload_staged(client, staged_clip, MediaType::Audio).await?;
+    build_sound_sticker_message(media, upload.into(), clip.into())
 }
 
 /// Upload the spooled ciphertext (#79). The reservation is held until the
@@ -151,6 +183,29 @@ pub(crate) fn build_media_message(
     Ok(message)
 }
 
+/// A sound sticker (#278): the sticker, carrying its clip as an AudioMessage,
+/// inside the `audioStickerMessage` wrapper (field 134), which is how the
+/// library classifies it as `mediatype="sticker"`. The ContextInfo rides on the
+/// sticker, the message a reply or a mention is about.
+pub(crate) fn build_sound_sticker_message(
+    header: &OutgoingMedia,
+    sticker: MediaUpload,
+    clip: MediaUpload,
+) -> Result<wa::Message, WamuxError> {
+    let context = outgoing_context(&header.context)?;
+    let mut sticker = sticker_submessage(header, sticker, context);
+    sticker.audio = Some(Audio::AudioMessage(Box::new(clip_submessage(
+        header, clip,
+    )?)));
+    let mut inner = wa::Message::default();
+    inner.sticker_message = buffa::MessageField::some(sticker);
+    let mut wrapper = wa::message::FutureProofMessage::default();
+    wrapper.message = buffa::MessageField::some(inner);
+    let mut message = wa::Message::default();
+    message.audio_sticker_message = buffa::MessageField::some(wrapper);
+    Ok(message)
+}
+
 /// The five wa media sub-messages duplicate the exact same upload/mime/context
 /// field names, but the protobuf generator (buffa since 0.7) emits no shared
 /// trait to abstract over them, so this macro expands the shared field
@@ -244,6 +299,26 @@ fn sticker_submessage(
     submessage_with_upload!(StickerMessage {}, header, up, context)
 }
 
+/// The clip's AudioMessage: its own mime and length from `sticker_audio`, no
+/// ContextInfo (the sticker carries it) and no `ptt` (it is not a voice note).
+fn clip_submessage(header: &OutgoingMedia, clip: MediaUpload) -> Result<AudioMessage, WamuxError> {
+    let described = header.sticker_audio.as_ref().ok_or_else(|| {
+        WamuxError::InvalidArgument("sticker_audio is missing from a sound sticker".to_string())
+    })?;
+    let sidecar = clip.streaming_sidecar.clone();
+    let mut clip_header = header.clone();
+    clip_header.mime_type = described.mime_type.clone();
+    Ok(submessage_with_upload!(
+        AudioMessage {
+            seconds: nonzero_u32(described.seconds),
+            streaming_sidecar: sidecar,
+        },
+        clip_header,
+        clip,
+        buffa::MessageField::none()
+    ))
+}
+
 fn image_submessage(
     header: &OutgoingMedia,
     up: MediaUpload,
@@ -335,3 +410,7 @@ fn download_params(descriptor: &DownloadableMedia) -> Result<DownloadParams, Wam
 #[cfg(test)]
 #[path = "media_transfer_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "media_transfer_sound_sticker_tests.rs"]
+mod sound_sticker_tests;

@@ -2,7 +2,9 @@
 
 use wamux_proto::v1 as pb;
 
-use crate::{DownloadableMedia, Jid, MediaKind, OutgoingMedia, WamuxError};
+use crate::{
+    DownloadableMedia, Jid, MediaKind, OutgoingMedia, StickerAudio, WamuxError, sticker_audio_of,
+};
 
 fn invalid_argument<T: std::fmt::Debug>(result: Result<T, WamuxError>) -> String {
     match result {
@@ -54,6 +56,7 @@ fn outgoing_media_parses_its_kind_and_context() {
         ephemeral_seconds: 90,
         quoted_message: Vec::new(),
         ptv: true,
+        sticker_audio: None,
     })
     .unwrap();
     assert_eq!(media.kind, MediaKind::Audio);
@@ -152,4 +155,73 @@ fn downloadable_media_refuses_an_unknown_kind() {
 MEDIA_TYPE_DOCUMENT|MEDIA_TYPE_STICKER|MEDIA_TYPE_STICKER_PACK|\
 MEDIA_TYPE_STICKER_PACK_THUMBNAIL, got MEDIA_TYPE_UNSPECIFIED"
     );
+}
+
+/// A STICKER header carrying the clip's description (#278).
+fn sound_sticker_header(media_type: pb::MediaType) -> pb::SendMediaHeader {
+    pb::SendMediaHeader {
+        media_type: media_type as i32,
+        mime_type: "image/webp".to_string(),
+        sticker_audio: Some(pb::StickerAudio {
+            mime_type: "audio/ogg; codecs=opus".to_string(),
+            seconds: 3,
+        }),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn sticker_audio_is_read_off_a_sticker_header() {
+    let expected = StickerAudio {
+        mime_type: "audio/ogg; codecs=opus".to_string(),
+        seconds: 3,
+    };
+    let header = sound_sticker_header(pb::MediaType::Sticker);
+    assert_eq!(
+        sticker_audio_of(MediaKind::Sticker, &header).unwrap(),
+        Some(expected.clone())
+    );
+    let media = OutgoingMedia::try_from(header).unwrap();
+    assert_eq!(media.kind, MediaKind::Sticker);
+    assert_eq!(
+        media.mime_type, "image/webp",
+        "the sticker keeps its own mime"
+    );
+    assert_eq!(media.sticker_audio, Some(expected));
+}
+
+/// Only a sticker has a clip: on any other kind the field is refused, naming
+/// the field, the kind it needs and the kind it got.
+#[test]
+fn sticker_audio_on_an_image_is_invalid_argument() {
+    for kind in [
+        pb::MediaType::Image,
+        pb::MediaType::Audio,
+        pb::MediaType::Video,
+    ] {
+        let header = sound_sticker_header(kind);
+        let parsed = MediaKind::parse_sendable(header.media_type).unwrap();
+        let message = invalid_argument(sticker_audio_of(parsed, &header));
+        assert!(message.contains("sticker_audio"), "{message}");
+        assert!(message.contains("MEDIA_TYPE_STICKER"), "{message}");
+        assert!(message.contains(kind.as_str_name()), "{message}");
+        let converted = invalid_argument(OutgoingMedia::try_from(header));
+        assert_eq!(converted, message, "the conversion refuses it the same way");
+    }
+}
+
+#[test]
+fn a_header_without_sticker_audio_has_none() {
+    let header = pb::SendMediaHeader {
+        sticker_audio: None,
+        ..sound_sticker_header(pb::MediaType::Sticker)
+    };
+    assert_eq!(sticker_audio_of(MediaKind::Sticker, &header).unwrap(), None);
+    let image = header_with(pb::MediaType::Image);
+    assert_eq!(sticker_audio_of(MediaKind::Image, &image).unwrap(), None);
+    assert_eq!(OutgoingMedia::try_from(image).unwrap().sticker_audio, None);
+}
+
+fn header_with(media_type: pb::MediaType) -> pb::SendMediaHeader {
+    header(media_type as i32)
 }

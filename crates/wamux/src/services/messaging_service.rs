@@ -8,7 +8,7 @@ use tonic::{Request, Response, Status, Streaming};
 use wamux_types::{
     ContactCard, InteractiveReply, Jid, MediaKind, MessageId, MessageTarget, NewPoll,
     OutgoingMedia, OutgoingText, PollVoteCast, PollVotesToTally, PresenceState, StatusMedia,
-    StatusRevoke, StatusText,
+    StatusRevoke, StatusText, sticker_audio_of,
 };
 use whatsapp_rust::SendResult;
 
@@ -145,10 +145,18 @@ impl MessagingService for MessagingSvc {
         // first byte (#79). The rest of the header converts after the bytes:
         // the order of those errors is part of the contract.
         let kind = MediaKind::parse_sendable(header.media_type)?;
+        // Refused before the first byte too (#278): it also says whether the
+        // stream may carry a clip.
+        let promised_clip = sticker_audio_of(kind, &header)?.is_some();
         // Media always streams inline; the core never fetches URLs (that fetch
         // policy + SSRF surface is the edge's job).
         let staged = chunks
-            .stage_upload(&self.spool, kind.media_type(), self.media_max_bytes)
+            .stage_media(
+                &self.spool,
+                kind.media_type(),
+                self.media_max_bytes,
+                promised_clip,
+            )
             .await?;
         let media = OutgoingMedia::try_from(header)?;
         let result = media_transfer::send_media(&client, to, &media, staged).await?;

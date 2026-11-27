@@ -15,7 +15,7 @@ pub mod status;
 pub mod text;
 
 pub use key::{MessageTarget, OutgoingContext, QuotedRef};
-pub use media::{DownloadableMedia, OutgoingMedia};
+pub use media::{DownloadableMedia, OutgoingMedia, StickerAudio, sticker_audio_of};
 pub use polls::{EncryptedVote, NewPoll, POLL_SECRET_LEN, PollVoteCast, PollVotesToTally};
 pub use rich::{ContactCard, InteractiveReply, ReplyChoice};
 pub use status::{StatusMedia, StatusRevoke, StatusText};

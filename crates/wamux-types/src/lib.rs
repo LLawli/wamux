@@ -29,7 +29,8 @@ pub use message_id::MessageId;
 pub use messaging::{
     ContactCard, DownloadableMedia, EncryptedVote, InteractiveReply, LinkPreview, MessageTarget,
     NewPoll, OutgoingContext, OutgoingMedia, OutgoingText, POLL_SECRET_LEN, PollVoteCast,
-    PollVotesToTally, QuotedRef, ReplyChoice, StatusMedia, StatusRevoke, StatusText,
+    PollVotesToTally, QuotedRef, ReplyChoice, StatusMedia, StatusRevoke, StatusText, StickerAudio,
+    sticker_audio_of,
 };
 pub use newsletter::{
     MAX_NEWSLETTER_VOTE_OPTIONS, NewsletterAddOnsQuery, NewsletterHistoryQuery, NewsletterPollVote,
