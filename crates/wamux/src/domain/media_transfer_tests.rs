@@ -30,6 +30,7 @@ fn media(kind: MediaKind) -> OutgoingMedia {
         waveform: Vec::new(),
         ptv: false,
         context: OutgoingContext::default(),
+        sticker_audio: None,
     }
 }
 

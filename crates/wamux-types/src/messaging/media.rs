@@ -20,6 +20,38 @@ pub struct OutgoingMedia {
     pub waveform: Vec<u8>,
     pub ptv: bool,
     pub context: OutgoingContext,
+    /// The clip of a sound sticker (#278); `Some` only on a STICKER.
+    pub sticker_audio: Option<StickerAudio>,
+}
+
+/// The clip a sound sticker carries (#278), relayed verbatim as the sticker's
+/// AudioMessage. The bytes stream separately; this is what describes them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StickerAudio {
+    pub mime_type: String,
+    pub seconds: u32,
+}
+
+/// The header's `sticker_audio`, refused on any kind but a sticker (#278). It
+/// reads the header alone, so the service can refuse before the first byte,
+/// and the conversion below reads it the same way.
+pub fn sticker_audio_of(
+    kind: MediaKind,
+    header: &pb::SendMediaHeader,
+) -> Result<Option<StickerAudio>, WamuxError> {
+    let Some(clip) = header.sticker_audio.as_ref() else {
+        return Ok(None);
+    };
+    if kind != MediaKind::Sticker {
+        return Err(WamuxError::InvalidArgument(format!(
+            "sticker_audio needs media_type MEDIA_TYPE_STICKER, got {}",
+            kind.to_wire().as_str_name()
+        )));
+    }
+    Ok(Some(StickerAudio {
+        mime_type: clip.mime_type.clone(),
+        seconds: clip.seconds,
+    }))
 }
 
 /// Where a received message's media lives, and how to open it. Empty
@@ -35,12 +67,14 @@ pub struct DownloadableMedia {
     pub mime_type: String,
 }
 
-/// The kind first (`MediaKind::parse_sendable`), then the context.
+/// The kind first (`MediaKind::parse_sendable`), then `sticker_audio`, then the
+/// context.
 impl TryFrom<pb::SendMediaHeader> for OutgoingMedia {
     type Error = WamuxError;
 
     fn try_from(header: pb::SendMediaHeader) -> Result<Self, WamuxError> {
         let kind = MediaKind::parse_sendable(header.media_type)?;
+        let sticker_audio = sticker_audio_of(kind, &header)?;
         Ok(Self {
             kind,
             context: OutgoingContext::from_proto(
@@ -57,6 +91,7 @@ impl TryFrom<pb::SendMediaHeader> for OutgoingMedia {
             seconds: header.seconds,
             waveform: header.waveform,
             ptv: header.ptv,
+            sticker_audio,
         })
     }
 }

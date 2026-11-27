@@ -514,6 +514,8 @@ pub(crate) fn project_content(out: &mut pb::InboundMessage, msg: &wa::Message, c
         out.quote = quote_of(ci, chat);
     }
 
+    out.sticker_audio = sticker_audio_descriptor(base);
+
     if let Some(reaction) = base.reaction_message.as_option() {
         out.reaction = reaction.text.clone().unwrap_or_default();
         out.reaction_target = reaction.key.as_option().map(wa_key_to_proto);
@@ -657,6 +659,17 @@ macro_rules! media_descriptor {
     };
 }
 
+/// The clip a sound sticker carries (#278), as an AUDIO descriptor. `media`
+/// stays the sticker, so a client that ignores the clip still gets the image.
+fn sticker_audio_descriptor(base: &wa::Message) -> Option<pb::MediaDescriptor> {
+    let sticker = base.sticker_message.as_option()?;
+    let Some(wa::message::sticker_message::Audio::AudioMessage(clip)) = sticker.audio.as_ref()
+    else {
+        return None;
+    };
+    Some(media_descriptor!(clip, MediaKind::Audio))
+}
+
 /// Build a `MediaDescriptor` from whichever media sub-message is present.
 fn extract_media(msg: &wa::Message) -> Option<(pb::MediaDescriptor, String)> {
     let caption_of = |caption: &Option<String>| -> String { caption.clone().unwrap_or_default() };
@@ -735,3 +748,7 @@ mod tests;
 #[cfg(test)]
 #[path = "event_mapping_wrapper_tests.rs"]
 mod wrapper_tests;
+
+#[cfg(test)]
+#[path = "event_mapping_sound_sticker_tests.rs"]
+mod sound_sticker_tests;

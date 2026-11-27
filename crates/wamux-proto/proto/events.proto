@@ -135,6 +135,11 @@ message InboundMessage {
   // carries the thumbnail's own descriptor.
   StickerPackInfo sticker_pack = 18;
   bytes raw_message = 20;           // serialized wa.Message for advanced consumers
+  // The clip of a sound sticker (issue #278), set only when the sticker carries
+  // one; `media` stays the sticker image. MEDIA_TYPE_AUDIO, so DownloadMedia
+  // fetches it like any audio. The format is whatever the sender uploaded
+  // (Ogg/Opus from the official apps); the core does not inspect it.
+  MediaDescriptor sticker_audio = 25;
 }
 
 // A received sticker pack, as its StickerPackMessage states it. The pack is ONE

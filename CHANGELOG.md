@@ -14,6 +14,25 @@ has to follow them.
 
 ### Added
 
+- **Sound stickers** (issue #278): a sticker with a short audio clip that
+  plays when tapped (`audioStickerMessage`).
+  - Sending: a `SendMedia` header with `media_type` STICKER and the new
+    `sticker_audio` (`StickerAudio { mime_type, seconds }`) takes the clip's
+    bytes as `sticker_audio` parts, in any order with the image's `chunk`
+    parts. The core uploads both files and sends the sticker inside
+    `audioStickerMessage`, carrying the clip as its `AudioMessage` (with the
+    streaming sidecar). `media_max_bytes` applies to each file. The core does
+    not transcode: the edge supplies Ogg/Opus.
+  - Refusals, all `INVALID_ARGUMENT` and before anything is sent:
+    `sticker_audio` on a media type other than STICKER (before the first
+    byte), a `sticker_audio` part without `sticker_audio` in the header, and a
+    header with `sticker_audio` but no clip bytes.
+  - Receiving: `InboundMessage.sticker_audio` describes the clip
+    (`MEDIA_TYPE_AUDIO`, so `DownloadMedia` fetches it like any audio) when a
+    sticker carries one; `media` stays the sticker image. The echo of a sent
+    sound sticker carries it too.
+  - Additive: a client that never sets or reads the new fields sees exactly
+    the previous behavior.
 - **`ContactService.UnsubscribePresence`** (issue #271): releases a
   `SubscribePresence`, taking the same `SubscribePresenceRequest`. It relays
   the library's unsubscribe, which sends `<presence type="unsubscribe">` and
@@ -52,8 +71,8 @@ has to follow them.
   reads text, reaction, media, caption, sticker pack and the edit or revoke
   from the same unwrapped message the mentions and quote come from.
   `raw_message` still carries the payload whole, wrappers included. An audio
-  sticker arrives as the plain sticker underneath; its sound is #278. No proto
-  change.
+  sticker's `media` is the sticker underneath, and its clip is
+  `sticker_audio` (#278). No proto change.
 - **The offline drain dispatches up to 8 stanzas at a time** (issue #281, the
   library default). `monotonic_seq` still follows dispatch order, but after a
   reconnect that order holds only within each chat, not across chats. The
