@@ -8,6 +8,7 @@ use wamux_types::{
     Jid, LinkPreview, MessageTarget, OutgoingContext, OutgoingText, PresenceState, relay_lib_jid,
 };
 use whatsapp_rust::buffa::{Enumeration, MessageField};
+use whatsapp_rust::wacore_binary::JidExt;
 use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::extended_text_message::PreviewType;
 use whatsapp_rust::{
@@ -151,6 +152,32 @@ pub fn refuse_status_revoke(target: &MessageTarget, for_everyone: bool) -> Resul
     )))
 }
 
+/// Which revoke a DeleteMessage for everyone is, read off the target key
+/// (#276): the key's own `from_me` and `participant` are what the protocol
+/// key of the revoke carries.
+pub fn revoke_type_of(target: &MessageTarget) -> Result<RevokeType, WamuxError> {
+    if target.from_me {
+        return Ok(RevokeType::Sender);
+    }
+    if !target.chat.as_lib().is_group() {
+        return Err(WamuxError::InvalidArgument(format!(
+            "message {} is not the account's own and its chat is not a group; only a group admin can revoke another's message",
+            target.id
+        )));
+    }
+    // Verbatim, with no LID/PN conversion: the revoke's protocol key must
+    // equal the original message's key.
+    match &target.participant {
+        Some(author) => Ok(RevokeType::Admin {
+            original_sender: author.clone().into_lib(),
+        }),
+        None => Err(WamuxError::InvalidArgument(format!(
+            "message {} is another member's: the key needs its participant to build an admin revoke",
+            target.id
+        ))),
+    }
+}
+
 pub async fn delete_message(
     client: &Client,
     target: &MessageTarget,
@@ -158,10 +185,11 @@ pub async fn delete_message(
 ) -> Result<Option<SendResult>, WamuxError> {
     let to = target.chat.clone().into_lib();
     if for_everyone {
+        let kind = revoke_type_of(target)?;
         // A revoke is a message the library builds and sends, so it comes back
         // to be echoed like an edit (#38).
         let result = client
-            .revoke_message_raw(to, target.id.to_string(), RevokeType::Sender)
+            .revoke_message_raw(to, target.id.to_string(), kind)
             .await
             .map_err(client_err)?;
         return Ok(Some(result));

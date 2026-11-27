@@ -21,6 +21,23 @@ has to follow them.
   only after the stanza is sent, so an error leaves the subscription in place:
   retry to release it. Additive: no existing field or RPC changes; an edge
   calling it on an older daemon gets `UNIMPLEMENTED`.
+- **`DeleteMessage` revokes another member's group message as an admin**
+  (issue #276). With `for_everyone`, a target key with `from_me = false` and a
+  `participant` in a group now goes out as an admin revoke (`edit="8"`, the
+  protocol key naming the author exactly as given, LID or phone number). A key
+  with `from_me = true` is still a sender revoke. The RPC answers once the
+  stanza is sent; when the account is not an admin the server refuses it with
+  a `ServerAckEvent` whose `error` is `"403"`, for the id the revoke's echo
+  carries in `key.id`. No proto change.
+
+### Changed
+
+- **`DeleteMessage` for everyone refuses a key no revoke can be built from**
+  (issue #276): `from_me = false` outside a group, or in a group without a
+  `participant`, answers `INVALID_ARGUMENT` before the account is looked up,
+  and nothing is sent. Such a key used to go out as a sender revoke with
+  `fromMe = true`, which named a different message (the account's own with
+  that id), so it never deleted the one asked for.
 
 ### Fixed
 

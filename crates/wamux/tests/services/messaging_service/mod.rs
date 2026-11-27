@@ -11,6 +11,7 @@
 //! runs it on both engines; `scripts/check-service-coverage.py` fails CI if an
 //! RPC of the service stops being called here.
 
+mod admin_revoke;
 mod captured;
 mod channel_polls;
 mod chat_actions;
