@@ -191,3 +191,57 @@ async fn new_rpcs_answer_failed_precondition_when_not_connected() {
         .expect("delete the idle account");
     f.cleanup().await;
 }
+
+/// The namespaces the contact RPCs put their IQs in.
+const CONTACT_IQ_NAMESPACES: [&str; 5] =
+    ["usync", "w:profile:picture", "status", "w:biz", "blocklist"];
+
+/// The RPCs whose answer is the server's, so a refusal must reach the edge as
+/// itself. GetProfilePicture is not one: the library reads a refused picture
+/// as no picture.
+const SERVER_ANSWERED: [&str; 9] = [
+    "CheckOnWhatsApp",
+    "SetProfilePicture",
+    "RemoveProfilePicture",
+    "GetAbout",
+    "GetBusinessProfile",
+    "SetAbout",
+    "BlockContact",
+    "UnblockContact",
+    "GetBlocklist",
+];
+
+/// #281: `client_err` finds the server's code by walking the library error's
+/// cause chain, so a library that stops chaining its causes turns every
+/// refusal into an opaque Unavailable, which the edge would retry. Each RPC
+/// that asks the server must answer PermissionDenied with the raw code and
+/// text as trailers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_iq_rpc_relays_a_server_refusal_as_permission_denied() {
+    let mut f = fixture("every_iq_rpc_relays_a_server_refusal_as_permission_denied").await;
+    f.seed_contact_mapping().await;
+    for namespace in CONTACT_IQ_NAMESPACES {
+        f.mock
+            .answer_iq_error(namespace, "*", "*", 403, "forbidden");
+    }
+    let account = f.account.clone();
+    let mut outcomes = call_older_rpcs(&mut f.contacts, &account).await;
+    outcomes.extend(call_new_rpcs(&mut f.contacts, &account).await);
+    let refused: Vec<Outcome> = outcomes
+        .into_iter()
+        .filter(|(rpc, _)| SERVER_ANSWERED.contains(rpc))
+        .collect();
+    assert_eq!(
+        refused.len(),
+        SERVER_ANSWERED.len(),
+        "every listed RPC was called"
+    );
+    for (rpc, outcome) in refused {
+        let status = outcome.expect_err(rpc);
+        assert_eq!(status.code(), Code::PermissionDenied, "{rpc}: {status:?}");
+        let trailer = |key| status.metadata().get(key).and_then(|v| v.to_str().ok());
+        assert_eq!(trailer("wa-code"), Some("403"), "{rpc}");
+        assert_eq!(trailer("wa-text"), Some("forbidden"), "{rpc}");
+    }
+    f.cleanup().await;
+}
