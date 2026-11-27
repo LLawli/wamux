@@ -26,13 +26,15 @@ use crate::error::WamuxError;
 use crate::proto::v1 as pb;
 use crate::state::{AccountHandle, AccountRegistry};
 
-/// Project a handle into the proto `Account` (jid filled separately when needed).
-pub(crate) fn account_to_proto(handle: &AccountHandle) -> pb::Account {
+/// Project a handle into the proto `Account`. The jid lives in the device
+/// store, not on the handle, so the caller loads it (or passes `None` for an
+/// account just created, which has never paired).
+pub(crate) fn account_to_proto(handle: &AccountHandle, jid: Option<pb::Jid>) -> pb::Account {
     pb::Account {
         uuid: handle.uuid.to_string(),
         external_ref: handle.external_ref.clone().unwrap_or_default(),
         state: handle.current_state() as i32,
-        jid: None,
+        jid,
         push_name: handle.push_name.clone().unwrap_or_default(),
     }
 }

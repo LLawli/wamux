@@ -144,18 +144,21 @@ impl AccountService for AccountSvc {
             .registry
             .create_account(req.external_ref.as_deref())
             .await?;
-        Ok(Response::new(account_to_proto(&handle)))
+        // A new account has never been paired, so there is no device to read.
+        Ok(Response::new(account_to_proto(&handle, None)))
     }
 
     async fn list_accounts(
         &self,
         _request: Request<pb::ListAccountsRequest>,
     ) -> Result<Response<pb::ListAccountsResponse>, Status> {
-        let accounts = self
-            .registry
-            .list()
+        let handles = self.registry.list();
+        // Concurrent store reads (one per account); `join_all` keeps list order.
+        let jids = futures::future::join_all(handles.iter().map(|h| load_jid(&self.registry, h)));
+        let accounts = handles
             .iter()
-            .map(|h| account_to_proto(h))
+            .zip(jids.await)
+            .map(|(handle, jid)| account_to_proto(handle, jid))
             .collect();
         Ok(Response::new(pb::ListAccountsResponse { accounts }))
     }

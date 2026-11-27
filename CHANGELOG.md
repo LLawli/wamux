@@ -83,6 +83,13 @@ has to follow them.
 
 ### Fixed
 
+- **`ListAccounts` carries each account's `jid`** (issue #274). It answered
+  every account with `jid` unset, even a paired, connected one, so a client
+  had to call `GetAccountStatus` per account to learn its own number. The
+  listing now reads it the way `GetAccountStatus` does: the paired device's
+  phone number (or LID) from the store, so a stopped account keeps it, and
+  unset while the account has never paired. `CreateAccount` still answers
+  without one, since a new account is never paired. No proto change.
 - **The streaming sidecar of a sent video or audio matches the one the WhatsApp
   apps build** (issue #281, upstream #1922). Each 64 KiB window now opens with
   the 16 bytes before it (the IV for the first), which is the CBC block a

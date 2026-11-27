@@ -16,6 +16,10 @@ message Account {
   reserved 3; // was ConnectionPolicy policy (removed: connect is edge-driven)
   reserved "policy";
   ConnectionState state = 4;
+  // The account's own jid (issue #274): the paired device's phone number, or
+  // its LID when the store has no number, read from the store like
+  // GetAccountStatus does, so a stopped account still has it. Unset while the
+  // account has never paired, which is always the case for CreateAccount.
   Jid jid = 5;
   string push_name = 6;
 }
