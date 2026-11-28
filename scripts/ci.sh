@@ -193,6 +193,24 @@ scripts/check-wire-json.py
 stage "tests (wamux-types)"
 must_run_pkg_tests wamux-types
 
+# #280: the client snippet page (site/, published to GitHub Pages) is generated
+# from site/schema.json, which proto_schema exports from the .proto files. A
+# contract change that does not regenerate it fails here, and so does one the
+# page's generators cannot render. Needs cargo and node, not the database.
+stage "snippet page in step with the protos"
+must_run_pkg_tests wamux-tools --test proto_schema
+schema_now="$(mktemp)"
+cargo run --quiet -p wamux-tools --bin proto_schema >"$schema_now"
+if ! cmp -s "$schema_now" site/schema.json; then
+  diff -u site/schema.json "$schema_now" | head -n 40 || true
+  rm -f "$schema_now"
+  echo "ERROR: site/schema.json is behind the protos. Regenerate it with:" >&2
+  echo "  cargo run -p wamux-tools --bin proto_schema > site/schema.json" >&2
+  exit 1
+fi
+rm -f "$schema_now"
+node scripts/check-snippet-page.js
+
 # #67: a sleep in a test is a synchronization bug unless it says why it is not
 # one. Pure text check over the sources, so both modes run it.
 stage "test sleeps are marked"

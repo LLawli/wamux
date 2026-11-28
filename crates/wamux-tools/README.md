@@ -129,6 +129,13 @@ of nothing, proved nothing and exits non-zero.
 - **Proves:** issue #13: the poll and this account's two votes are delivered, and the tally of the phone's vote has `undecryptable=0` and names the expected option.
 - **Writes to WhatsApp:** to `WAMUX_LIVE_DEST` one poll and two poll votes.
 
+### proto_schema
+
+- **Needs:** nothing: no daemon, no database, no account. It reads the descriptor compiled into the binary.
+- **Env:** none. No arguments; the schema goes to stdout.
+- **Proves:** nothing; it is a generator (#280). It prints the `wamux.v1` contract (services, methods with their streaming flags, messages, enums and the proto comments) as the JSON the client snippet page under `site/` reads. `scripts/ci.sh` fails when `site/schema.json` differs from its output; regenerate with `cargo run -p wamux-tools --bin proto_schema > site/schema.json`.
+- **Writes to WhatsApp:** nothing.
+
 ### read_receipt_live
 
 - **Needs:** the daemon, `WAMUX_REF` paired, and a person on the destination phone who replies.
