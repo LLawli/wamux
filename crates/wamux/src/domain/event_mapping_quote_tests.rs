@@ -6,7 +6,10 @@
 
 #![allow(clippy::field_reassign_with_default)] // waproto structs are built by assignment
 
+use std::sync::Arc;
+use wacore::types::message::MessageInfo;
 use whatsapp_rust::buffa::MessageField;
+use whatsapp_rust::waproto::whatsapp as wa;
 
 use super::*;
 use wacore::types::message::MessageSource;

@@ -184,7 +184,7 @@ impl AccountHandle {
 mod tests {
     use super::*;
 
-    fn handle() -> AccountHandle {
+    fn fresh_account_handle() -> AccountHandle {
         let row = AccountRow {
             uuid: Uuid::new_v4(),
             external_ref: None,
@@ -197,7 +197,7 @@ mod tests {
 
     #[tokio::test]
     async fn on_bot_exited_makes_state_disconnected() {
-        let h = handle();
+        let h = fresh_account_handle();
         let _ = h.state_tx.send(ConnectionState::Connected);
         h.on_bot_exited().await;
         assert_eq!(h.current_state(), ConnectionState::Disconnected);
@@ -206,7 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn on_bot_exited_preserves_terminal_state() {
-        let h = handle();
+        let h = fresh_account_handle();
         let _ = h.state_tx.send(ConnectionState::LoggedOut);
         h.on_bot_exited().await;
         // A terminal state set by an event must survive the run-loop teardown.

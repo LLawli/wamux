@@ -38,7 +38,7 @@ pub fn test_store_key() -> Option<wamux::storage::StoreKey> {
     encrypted_tests().then(|| wamux::storage::StoreKey::parse_hex(&"ab".repeat(32)).expect("hex"))
 }
 
-/// The dockerized test database (CLAUDE.md's wamux-pg on :5433) unless the
+/// The dockerized test database (CONTRIBUTING.md's wamux-pg on :5433) unless the
 /// environment points elsewhere — the single home of the default DSN.
 pub fn database_url() -> String {
     std::env::var("DATABASE_URL")

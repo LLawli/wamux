@@ -7,8 +7,9 @@ Three kinds of pointer are checked:
 - its `#anchor`, against the GitHub slugs of the target file's headings (or of
   the same file for a bare `#anchor`);
 - a mention of `docs/<...>.md` (relative to the repo root) in code, scripts and
-  Markdown text. CHANGELOG.md and docs/BREAKING-CHANGES-*.md are history: they
-  name files as they were, so their mentions are not checked (their links are).
+  Markdown text. CHANGELOG.md and docs/archive/ are history: they name files
+  as they were, so their mentions are not checked (their links are). The
+  upgrade guides in docs/upgrading/ are maintained, so theirs are.
 
 Run: python3 -m unittest discover -s scripts/tests -v
 Needs nothing but the checkout; no cargo, no database.
@@ -162,15 +163,20 @@ class CheckDocLinks(unittest.TestCase):
             "docs/BACKLOG.md",
         )
 
-    def test_mention_in_changelog_and_breaking_changes_is_history(self):
+    def test_mention_in_changelog_and_archive_is_history(self):
         history = {
             "CHANGELOG.md": "# Changelog\n\n- Removed `docs/STATUS.md`.\n",
-            "docs/BREAKING-CHANGES-2026-01-01.md": "# Old\n\nSee docs/OLD.md.\n",
+            "docs/archive/old-notes.md": "# Old\n\nSee docs/OLD.md.\n",
         }
         self.assert_passes(self.check_tree(history))
         linked = {"CHANGELOG.md": "# Changelog\n\n- See [old](docs/OLD.md).\n"}
         result = self.check_tree(linked)
         self.assert_reported_failure(result, "CHANGELOG.md:3", "docs/OLD.md")
+
+    def test_mention_in_upgrade_guide_is_checked(self):
+        guide = {"docs/upgrading/0.1-to-0.2.md": "# Guide\n\nSee docs/GONE.md.\n"}
+        result = self.check_tree(guide)
+        self.assert_reported_failure(result, "docs/upgrading/0.1-to-0.2.md:3", "docs/GONE.md")
 
     def test_hidden_target_and_script_fixture_dirs_are_skipped(self):
         skipped = {

@@ -349,6 +349,10 @@ fn absent_fields_stay_unset() {
 
 /// The six library events reach the socket through these functions.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a table of the six library app-state events, each beside the case it maps to"
+)]
 fn every_app_state_event_maps_to_its_case() {
     use wacore::types::events::Event;
     let at = || at_ms!(1_791_398_525_501);

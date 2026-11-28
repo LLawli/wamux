@@ -35,6 +35,10 @@ struct Anchor {
 }
 
 #[tokio::main]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a live probe: one scripted scenario against a real account, read top to bottom"
+)]
 async fn main() -> anyhow::Result<ExitCode> {
     let external_ref: String = account_ref_from(&process_env)?;
     let socket: String = socket_path_from(&process_env)?;

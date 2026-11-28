@@ -115,6 +115,10 @@ async fn assert_only_the_probe_was_sent(f: &mut Fixture, newsletter_iqs: usize, 
 }
 
 /// The eight RPCs that name a channel, all with `jid` as the channel.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per channel-scoped RPC (8), a flat list so a missing RPC shows as a missing entry"
+)]
 async fn channel_scoped_statuses(f: &mut Fixture, jid: &str) -> Vec<(&'static str, tonic::Status)> {
     let request = f.jid_request(jid);
     let history = f.history(jid, 5, 0);

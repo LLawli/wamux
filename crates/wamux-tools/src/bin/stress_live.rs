@@ -53,6 +53,10 @@ const PROBE_WINDOW: Duration = Duration::from_secs(30);
 type ReceiptMap = Arc<Mutex<HashMap<String, Instant>>>;
 
 #[tokio::main]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a live probe: one scripted scenario against a real account, read top to bottom"
+)]
 async fn main() -> anyhow::Result<ExitCode> {
     // The whole config first: nothing is opened until every variable is valid.
     let external_ref: String = account_ref_from(&process_env)?;
@@ -250,7 +254,7 @@ async fn wait_for_handshakes(mock: &MockWaServer, n: usize) {
 
 /// Background task: record the first delivery-receipt arrival time per message
 /// id. Only `delivered`/`read`/`played` count; a `sender` or `retry` receipt
-/// is not a delivery (CLAUDE.md).
+/// is not a delivery (CONTRIBUTING.md).
 fn spawn_receipt_collector(
     mut events: tokio::sync::broadcast::Receiver<pb::EventEnvelope>,
     receipts: ReceiptMap,

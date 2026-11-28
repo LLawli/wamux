@@ -7,12 +7,16 @@ pub mod v1 {
     // Generated oneof enums (EventEnvelope, SendMediaChunk) have naturally
     // unequal variant sizes; we can't restructure generated code.
     #![allow(clippy::large_enum_variant)]
+    // Generated codecs and service stubs are as long as the contract is wide.
+    #![allow(clippy::too_many_lines)]
     tonic::include_proto!("wamux.v1");
 }
 
 /// Package `wamux.store`: the on-disk blob format (#31). Messages only, and not
 /// part of the socket's contract, so it is absent from `FILE_DESCRIPTOR_SET`.
 pub mod store {
+    // Generated code, like `v1`: its length follows the proto, not a choice.
+    #![allow(clippy::too_many_lines)]
     tonic::include_proto!("wamux.store");
 }
 

@@ -11,8 +11,9 @@ when a file was deleted or a heading renamed. Three kinds of pointer are checked
 - its `#anchor`, against the GitHub slugs of the target's headings (a bare
   `#anchor` is checked against the same file);
 - a root-relative mention of a `docs/` Markdown file in Rust, proto, scripts and
-  Markdown text. CHANGELOG.md and docs/BREAKING-CHANGES-*.md are history: they
-  name files as they were, so only their links are checked.
+  Markdown text. CHANGELOG.md and docs/archive/ are history: they name files
+  as they were, so only their links are checked. The upgrade guides in
+  docs/upgrading/ are maintained, so their mentions are checked too.
 
 Links with a scheme (https:, mailto:) are not ours to check. Hidden directories
 and `target` are pruned and never followed: `target` is a symlink to another
@@ -37,7 +38,7 @@ HEADING = re.compile(r"^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 MENTION = re.compile(r"(?<![\w./-])docs/[\w./-]*\.md(?![\w-])")
 HISTORY_FILES = ("CHANGELOG.md",)
-HISTORY_PREFIX = "docs/BREAKING-CHANGES-"
+HISTORY_PREFIX = "docs/archive/"
 MENTION_SUFFIXES = (".rs", ".proto", ".sh", ".py", ".md")
 
 

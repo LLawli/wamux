@@ -43,6 +43,10 @@ pub fn group_update_of(update: &GroupUpdate) -> pb::GroupUpdate {
 /// fallback arm; a variant added upstream compiles into it.
 /// `scripts/check-group-actions.py` fails CI until such a variant gets its own
 /// arm. Long on purpose, each arm only delegates or names a case.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per library GroupNotificationAction variant, each only delegating or naming a case; check-group-actions.py reads the match whole"
+)]
 fn action_of(action: &Lib) -> Action {
     match action {
         Lib::Add {
@@ -236,3 +240,7 @@ mod tests;
 #[cfg(test)]
 #[path = "group_update_stanza_tests.rs"]
 mod stanza_tests;
+
+#[cfg(test)]
+#[path = "group_update_action_tests.rs"]
+mod action_tests;

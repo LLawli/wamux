@@ -35,7 +35,7 @@ REPO = Path(__file__).resolve().parent.parent
 SCANNED = ("crates/wamux/src/domain", "crates/wamux/src/state")
 MIN_SCANNED = 20
 PENDING = {
-    "crates/wamux/src/domain/event_mapping.rs": "#74 (event construction: map_sent's wire key, chat and sender)",
+    "crates/wamux/src/domain/event_mapping/message_projection.rs": "#74 (event construction: map_sent's wire key, chat and sender)",
 }
 INPUT = re.compile(
     r":\s*(?:(?:Option|Vec)<|&|\[|mut\s+)*pb::[A-Za-z0-9_:]*?"

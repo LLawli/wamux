@@ -60,6 +60,10 @@ async fn call_new_rpcs(
 }
 
 /// The eleven RPCs that predate #197, with arguments valid in shape.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per older ContactService RPC, a flat list so a missing RPC shows as a missing entry"
+)]
 async fn call_older_rpcs(
     contacts: &mut ContactServiceClient<Channel>,
     account: &pb::AccountRef,

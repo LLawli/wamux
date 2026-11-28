@@ -48,6 +48,10 @@ async fn a_quote_and_a_mention_reach_the_peer_from_jid_fields() {
 // Decided 2026-10-05: unset and empty are the same mistake, and both answer
 // the message `to` and `chat` already answered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one request per required jid field, unset and empty, all asserted against the same wire count"
+)]
 async fn an_unset_or_empty_required_jid_answers_missing_jid() {
     let mut f = fixture("an_unset_or_empty_required_jid_answers_missing_jid").await;
     let before = wire_count(&f);

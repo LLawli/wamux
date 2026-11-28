@@ -91,6 +91,10 @@ pub fn participant_jids(operation: &Node) -> Vec<String> {
 /// Every one of the 25 RPCs, called with arguments that are valid in shape,
 /// for the tests that check a status common to all of them. The name is the
 /// proto RPC, so a failure says which one.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per GroupService RPC (25), a flat list so a missing RPC shows as a missing entry"
+)]
 pub async fn call_every_rpc(
     groups: &mut GroupServiceClient<Channel>,
     account: &pb::AccountRef,

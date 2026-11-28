@@ -84,6 +84,10 @@ fn member_with_details_on_the_wire() -> pb::GroupParticipant {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "every GroupMetadata field set away from its default, one field per line"
+)]
 fn every_field() -> GroupMetadata {
     let mut metadata = GroupMetadata::new(lib(GROUP));
     metadata.subject = Some("subject".to_string());
@@ -150,6 +154,10 @@ fn every_field() -> GroupMetadata {
     metadata
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the wire form of every GroupMetadata field, one struct literal mirroring every_field"
+)]
 fn every_field_on_the_wire() -> pb::GroupMetadata {
     pb::GroupMetadata {
         id: wire(GROUP),

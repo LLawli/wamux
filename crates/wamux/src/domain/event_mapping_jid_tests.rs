@@ -1,11 +1,11 @@
 //! #122: every jid an event carries is the `Jid` message, relayed verbatim,
-//! and one the core does not have is an unset field. Its own file because
-//! `event_mapping_tests.rs` is already past the 500-line rule.
+//! and one the core does not have is an unset field.
 
 use super::*;
 use wacore::stanza::groups::GroupNotificationAction;
 use wacore::types::events::{ContactUpdate, GroupUpdate};
 use whatsapp_rust::Jid;
+use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::proto::v1::event_envelope::Event as PbEvent;
 

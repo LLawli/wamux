@@ -171,6 +171,10 @@ fn inbound(row: &pb::NewsletterMessage) -> &pb::InboundMessage {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "asserts the captured page row by row, each field against the capture"
+)]
 async fn core_reads_the_captured_page() {
     let mock = MockWaServer::start().await.expect("start mock");
     let prefix = common::test_prefix("stress_newsletter_history", "core_reads_the_captured_page");

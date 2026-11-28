@@ -1,0 +1,10 @@
+# Blank issues stay on: the repository has no Discussions, so a question or a
+# docs gap that fits neither form still needs somewhere to go.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/LLawli/wamux/security/advisories/new
+    about: Privately, never as a public issue. See SECURITY.md.
+  - name: HTTP API and web panel (wamux-http)
+    url: https://github.com/LLawli/wamux-http/issues
+    about: Auth, webhooks, the HTTP routes and the panel live in the edge.

@@ -13,6 +13,7 @@ pub mod logout_check;
 pub mod media_kit;
 pub mod post_pairing;
 pub mod profile;
+pub mod proto_schema;
 pub mod qr;
 pub mod report;
 pub mod socket_client;

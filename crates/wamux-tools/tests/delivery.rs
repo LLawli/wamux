@@ -1,4 +1,4 @@
-//! #64: a send passes on delivery, never on the ack (CLAUDE.md, #47).
+//! #64: a send passes on delivery, never on the ack (CONTRIBUTING.md, #47).
 
 use std::time::Duration;
 

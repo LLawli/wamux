@@ -82,28 +82,21 @@ impl MockWaServer {
         let client_messages: SharedClientMessages = Arc::default();
         let client_iqs: SharedClientIqs = Arc::default();
 
-        let answers = iq_answers.clone();
-        let messages = client_messages.clone();
-        let iqs = client_iqs.clone();
-        let shared_world = world.clone();
-        let hs = handshakes.clone();
-        let plf = post_login_frames.clone();
-        let pn = parsed_nodes.clone();
-        let kap = keepalive_pings.clone();
+        let shared = ConnCounters {
+            handshakes: handshakes.clone(),
+            post_login_frames: post_login_frames.clone(),
+            parsed_nodes: parsed_nodes.clone(),
+            keepalive_pings: keepalive_pings.clone(),
+            iq_answers: iq_answers.clone(),
+            client_messages: client_messages.clone(),
+            client_iqs: client_iqs.clone(),
+            world: world.clone(),
+        };
         let accept_task = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _peer)) => {
-                        let counters = ConnCounters {
-                            handshakes: hs.clone(),
-                            post_login_frames: plf.clone(),
-                            parsed_nodes: pn.clone(),
-                            keepalive_pings: kap.clone(),
-                            iq_answers: answers.clone(),
-                            client_messages: messages.clone(),
-                            client_iqs: iqs.clone(),
-                            world: shared_world.clone(),
-                        };
+                        let counters = shared.clone();
                         tokio::spawn(async move {
                             if let Err(e) = serve_connection(stream, counters).await {
                                 tracing::debug!(error = %e, "mock connection ended");
@@ -269,6 +262,10 @@ fn now_secs() -> u64 {
 
 /// One client connection: WS upgrade, the XX responder handshake, then the
 /// post-handshake `<success>` + read loop over the encrypted transport.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the mock's side of one connection in protocol order (WS upgrade, XX handshake, success, read loop), read top to bottom"
+)]
 async fn serve_connection(stream: TcpStream, counters: ConnCounters) -> anyhow::Result<()> {
     let counter = counters.handshakes.clone();
     let world = counters.world.clone();

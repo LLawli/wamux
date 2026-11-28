@@ -19,7 +19,7 @@ broadcast_capacity`, promoted from hardcode to config in Sprint 3).
   the follower's per-item work (HashSet lookup + `tokio::spawn`) is orders of
   magnitude faster than the store INSERT that each create does (Postgres,
   SQLite or Turso), so a bulk import alone does not trigger the gap.
-- CLAUDE.md's DI rule covers "socket paths, modes, endpoints, feature
+- CONTRIBUTING.md's DI rule covers "socket paths, modes, endpoints, feature
   flags", not channel capacities; other channels in the repo also have a
   fixed capacity (mpsc 256 for the event stream, mpsc 16 for account_service's
   pairing stream, mpsc 2 for media_service's download stream). "Every

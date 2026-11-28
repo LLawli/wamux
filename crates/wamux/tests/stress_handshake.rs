@@ -243,6 +243,10 @@ async fn connection_survives_keepalive_window() {
 /// `cargo test --features stress -- --ignored connect_many`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "scale/stress: provisions and connects ~199 real clients"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scale scenario end to end (provision, connect, wait, assert, clean up), read in order"
+)]
 async fn connect_many_clients_against_mock() {
     init_tracing();
 

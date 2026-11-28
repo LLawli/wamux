@@ -16,6 +16,8 @@ use super::peer_answers::{PeerWorld, offline_over};
 use super::wire_frames::{next_frame, send_node};
 
 /// The per-connection counters handed to each spawned `serve_connection`.
+/// Every field is a shared handle, so a clone counts into the same totals.
+#[derive(Clone)]
 pub(super) struct ConnCounters {
     pub(super) handshakes: Arc<AtomicUsize>,
     pub(super) post_login_frames: Arc<AtomicUsize>,

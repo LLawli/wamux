@@ -1,320 +1,141 @@
-# CLAUDE.md: wamux — WhatsApp multiplexer core (gRPC over Unix socket)
+# CLAUDE.md: wamux, the WhatsApp multiplexer core (gRPC over a Unix socket)
 
-`wamux` is the **core daemon** of an unofficial WhatsApp system (Evolution-API-style)
-built on the Rust crate `whatsapp-rust` (no Baileys, no JS runtime). It exposes a gRPC
-API over a **Unix domain socket only** (no TCP, no TLS): the socket is local, so
-transport security is the filesystem's job (0660 + owning group), not the wire's.
-Fully async on tokio. Agents are the primary reader: optimize for grep, small files,
-explicit types.
+This is the agent layer. The project's rules are in `CONTRIBUTING.md`, imported
+below so Claude Code loads them with this file. `AGENTS.md` is a symlink to this
+file; an agent that does not follow `@` imports must read `CONTRIBUTING.md`
+itself before changing anything.
 
-**What the core is.** A *pure, functional* relay that multiplexes **many WhatsApp
-accounts** in one process. It has **no auth of its own**: anyone who can open the
-socket sees everything. Auth, permissions, per-user filtering, and any HTTP API live
-in a **separate edge project (out of scope here)**. A socket client picks which
-account(s)' events to receive (one / all / none = send-only).
+@CONTRIBUTING.md
 
-**Relay-pure.** The core persists ONLY whatsapp-rust's Signal/session/device state
-(Postgres or SQLite, or Turso behind the `turso` cargo feature), never business message
-history. See `docs/PRD.md` and `docs/SPEC.md` for the product/spec, and `docs/crate-notes/`
-for the verbatim whatsapp-rust API map.
+## What wamux is
 
-**Toolchain.** Pinned **stable** release (`rust-toolchain.toml`), aligned with the one upstream
-`whatsapp-rust` builds on. The lib itself is pinned to a git `rev` on main, not a crates.io
-release (#30): re-align both on every bump, and move every crate of the family together.
+The **core daemon** of an unofficial WhatsApp system (Evolution-API-style), built
+on the Rust crate `whatsapp-rust` (no Baileys, no JS runtime), fully async on
+tokio. It multiplexes many WhatsApp accounts in one process and exposes them
+over gRPC on a **Unix domain socket only** (no TCP, no TLS). A socket client picks
+which accounts' events it receives (one, all, or none for send-only).
 
-> Convention note: `AGENTS.md` is the canonical cross-tool file; keep this as
-> `CLAUDE.md` and symlink `AGENTS.md -> CLAUDE.md` if you add other agents.
+- **No auth of its own:** anyone who can open the socket sees everything. Auth,
+  permissions, per-user filtering and any HTTP API live in a separate edge
+  project, out of scope here.
+- **Relay-pure:** the core persists only whatsapp-rust's Signal/session/device
+  state (Postgres, SQLite, or Turso behind the `turso` cargo feature), never
+  business message history.
+- Product and spec: `docs/PRD.md`, `docs/SPEC.md`. `docs/archive/crate-notes/`
+  is a historical snapshot of the whatsapp-rust 0.6.0 API: check the pinned
+  revision's source before relying on it.
 
-## Core purity (the prime directive)
-The core is a **pure relay**: it exposes raw WhatsApp *mechanisms* and nothing else.
-Every stateful, opinionated, or "smart" behavior belongs in the **edge** (the separate
-auth/HTTP project), not here. When in doubt, **the core does LESS**. This rule overrides
-feature convenience — prefer cutting a feature from the core over baking policy into it.
+## The prime directive, for an agent
 
-**Belongs in the edge, never the core:** retries, timeouts, fallbacks, recipient/JID
-rewriting or normalization ("guessing" identity), per-user filtering, auth/permissions,
-webhooks, and any "if X didn't happen in N seconds, do Y" logic. The core hands back the
-primitives the edge needs (e.g. `SendResult.message_id`, `Receipt` events) and lets the
-edge compose the policy.
+The core is a pure relay (`CONTRIBUTING.md`, "The rule that overrides the
+others"). In practice, when you work here:
 
-**Worked example (Sprint 1, 2026-06-09): DM routing was removed entirely.** The core does
-**not** rewrite a recipient JID, ever. The edge sends the recipient it wants and the core
-relays to it verbatim. There is no `dm_routing` knob anywhere, and that is still the rule.
+- Before adding anything, run the litmus test: could the edge do this with the
+  primitives the core already exposes? If yes, stop and propose it for the edge.
+  A task that asks for a retry, a timeout, a fallback, a JID rewrite or any "if X
+  did not happen in N seconds" logic is edge work, even when it would be easy here.
+- Never rewrite, normalize or special-case a recipient JID, and never write a
+  JID-spelling routing recipe into a doc, a comment or advice to the edge.
+- When you verify a send (a live run, a tool, a test), judge it by `delivered`
+  and `recipient_fanout`, never by `SendResult` or the server ack. A note to self
+  cannot be verified that way: say so and leave it to a human.
+- When in doubt, the core does less. Cutting a feature beats baking policy in.
 
-**What this example is NOT (updated 2026-08-31, issue #4).** It used to record a specific
-routing recipe — send `<number>@c.us` to dodge the library's PN→LID upgrade — and called
-it safe because `resolve_encryption_jid` leaves a legacy JID untouched. Both halves aged
-badly, and the second one was the trap:
+## Navigating the repo
 
-- The upgrade *was* undeliverable on companion accounts, on whatsapp-rust **0.6.0**. That
-  was upstream [#941](https://github.com/oxidezap/whatsapp-rust/issues/941), fixed
-  2026-07-02 and first released in **0.7.0**. The reason to dodge it stopped existing the
-  day we ported.
-- "Passes through untouched" was never a safety property. It is the defect. `@c.us` parses
-  as `Server::Legacy`, so `is_pn()` is false and the send path stops treating the recipient
-  as a phone user at all: it skips the self-chat check and the LID resolution, and it
-  matches the pre-key IQ response by whole-JID equality including the server field, so a
-  bundle the server *did* return reads as absent. No session is built, `send::encrypt`
-  skips the device, and the stanza ships carrying nothing for the recipient's handset.
-  Fixed upstream in [#1362](https://github.com/oxidezap/whatsapp-rust/pull/1362).
-- On the current pin (`6f07e3ab`) the library's own parse collapses `@c.us` into the
-  phone namespace (`Server::Pn`) for text, wire and serde alike, so past the boundary
-  the legacy spelling no longer exists: `wamux_types::Jid` holds `@s.whatsapp.net`. The
-  defect above is the 0.7.0 behavior. Code that tries to refuse or special-case `@c.us`
-  after parsing cannot see it (#197 learned this the hard way).
+Names are the navigation API: grep for the specific name first, then read the
+file. `docs/SPEC.md` has the long map; this one is enough to predict a path.
 
-Measured on 2026-08-31 against the two production accounts on 0.7.0: the modern spelling
-delivers (`delivered` receipts, no library warnings), and it is the legacy spelling that
-does not. **Do not reintroduce a `@c.us` recipe here or recommend one to the edge.**
+```
+Cargo.toml              # virtual workspace: members, shared deps, lints, the whatsapp-rust rev
+crates/
+  wamux-proto/          # generated gRPC types; depends on no wamux crate
+    proto/              # .proto contracts (source of truth); proto/store/ = stored blob formats
+    build.rs            # tonic-prost-build: regenerates Rust from proto/ on every build
+  wamux-types/          # domain types (Jid, MediaKind, closed enums, messaging/) and
+                        #   WamuxError with its tonic::Status mapping (error.rs)
+  wamux/                # the daemon: lib + `wamux` bin
+    migrations/         # Postgres schema   } same number and name per change
+    migrations_sqlite/  # SQLite schema     } (CONTRIBUTING.md, Migrations)
+    src/
+      main.rs           # entry point: config, umask, store, registry, bind, serve
+      cli.rs            # `wamux` (serve), `wamux store decrypt|rotate-key`
+      daemon_runtime.rs # the hand-built tokio runtime, with a bounded exit
+      config.rs         # Config: wamux.toml + WAMUX_* env, loaded once
+      server.rs         # build_router: services, the two tower layers, reflection
+      observe.rs        # tower layer: one log line + Prometheus metrics per request
+      error.rs          # re-exports WamuxError; client_err() from whatsapp-rust errors
+      services/         # one thin gRPC service impl per file
+      domain/           # transport-agnostic logic (event mapping, sends, groups...)
+      state/            # account registry, per-account handles, event bridge and ring
+      storage/          # StorageEngine: sql (Postgres/SQLite via sqlx), turso, encryption
+      spool/            # media spool: unlinked temp files under a global byte budget
+      transport/        # UDS bind/mode/group, SO_PEERCRED allowlist layer, shutdown
+      stress/           # mock WhatsApp server for scale tests (`stress` feature only)
+    tests/              # over-the-wire suites: services/, storage/, daemon/, ...
+  wamux-tools/          # development binaries (src/bin/) and their shared lib; not shipped
+scripts/                # ci.sh and the check-* gates it runs; their tests in scripts/tests/
+docs/                   # PRD, SPEC, DEPLOYMENT, TERMUX, upgrading/ (breaking-change guides)
+```
 
-The durable lesson is the one the example was written for, and it survived: keeping
-recipient choice out of the core is what let the edge fix this on its own timetable
-without a core release. What did not survive is writing down a *specific* routing recipe,
-which is edge policy pinned to a library version, in the file that teaches the rule.
-Record the constraint, not the workaround.
+Unit tests sit next to their file as `<name>_tests.rs`. New code goes where this
+map says it goes, so the next reader can predict its path; a change that adds a
+top-level module updates the map in the same commit.
 
-**Judge a send by `delivered`, never by the ack.** `SendResult` means the library accepted
-the message; `ServerAckEvent` means the server accepted the stanza. Neither means anyone
-received it — a stanza that encrypted for nobody who matters gets both. For a DM to
-someone else, `SendResult.recipient_fanout` (#47, upstream
-[#1362](https://github.com/oxidezap/whatsapp-rust/pull/1362)) says at send time how many
-of the recipient's devices got an `<enc>` and whether the phone was among the misses.
-There is no `delivered` receipt for a note to self, and the fan-out does not cover it
-either: a self-chat has no recipient half, so it reports all zeros (verified in
-`wacore/src/send/dm.rs`). That case still needs a human.
+## Commands (run these unattended)
 
-**Worked example (Sprint 3, 2026-06-09): reconnection is not the core's job.** The
-`whatsapp-rust` run loop already reconnects transient drops with Fibonacci backoff;
-the core must **not** add its own backoff (it would fight the lib). The per-account
-**supervisor** only awaits the run loop's *terminal* exit (the lib gave up: 401/409/
-logout) and then makes state truthful (clears `running`, marks `Disconnected`, frees
-the connection-budget slot) and lets the event flow through. Any reconnect *after* a
-terminal exit is **edge** policy, composed from the connection-state events + status.
-The core also exposes a soft `max_connected_accounts` budget (fd self-protection,
-`ResourceExhausted` past it) — a resource guard, not connection policy.
+- Build (also regenerates proto): `cargo build` (vendored `protoc`, no host install)
+- Run the server: `cargo run` (reads `wamux.toml` + `WAMUX_*` env)
+- Format: `cargo fmt`
+- Lint (zero tolerance): `cargo clippy --workspace --all-targets -- -D warnings`
+- Tests: `DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux cargo test -p wamux`
+- Postgres for tests and dev: the `docker run ... wamux-pg` line in
+  `CONTRIBUTING.md`, "Getting the gates green".
+- Poke the socket by hand: `grpcurl -unix -plaintext /run/wamux.sock list`
+  (needs `grpcurl`; reflection is on by default, `enable_reflection`).
+- All gates, one command: `scripts/ci.sh` (`--full` adds the `#[ignore]` scale
+  tests). Run it before declaring work done.
 
-**Litmus test before adding anything to the core:** "Could the edge do this with the
-primitives the core already exposes?" If yes, it does not belong in the core.
+Notes that only apply to one machine (build caps, local wrappers) live in
+`CLAUDE.local.md`, which is gitignored; follow it when it is present.
 
 ## Diagnosing a library bug (the first fit is a hypothesis, not a cause)
-An explanation that accounts for the log is where the investigation starts, not where
-it ends. Of the three bugs this project has filed upstream, two came back corrected —
-one in its cause, one in its proposed remedy — by the same mistake both times: reading
-until the symptom was explained, then stopping.
+
+An explanation that accounts for the log is where the investigation starts, not
+where it ends. Two of this project's upstream reports came back corrected, one in
+its cause and one in its proposed remedy, by the same mistake: reading until the
+symptom was explained, then stopping.
 
 **Two searches before you write the report, the workaround, or the mitigation:**
 1. **Does the abstraction already exist?** Grep the crate for the concept before
-   concluding the fix would be invasive. The answer is often in the file the evidence
-   came from.
-2. **Read the path you are accusing, end to end.** A mechanism that *could* produce the
-   symptom is not the mechanism that *did*. Confirm the failure mode in the code rather
-   than inferring it backwards from the log.
+   concluding the fix would be invasive. The answer is often in the file the
+   evidence came from.
+2. **Read the path you are accusing, end to end.** A mechanism that *could*
+   produce the symptom is not the mechanism that *did*. Confirm the failure mode
+   in the code rather than inferring it backwards from the log.
 
-Then **say which half is which**: what you verified in the code, and what you inferred
-from behaviour. A report that marks its inferred half survives being wrong; one that
-states both as fact has to be retracted.
+Then **say which half is which**: what you verified in the code, and what you
+inferred from behaviour. A report that marks its inferred half survives being
+wrong; one that states both as fact has to be retracted.
 
-**Worked example (upstream [#1376](https://github.com/oxidezap/whatsapp-rust/issues/1376),
-2026-08).** Reported the keepalive watchdog measuring in-process elapsed time on the wall
-clock — correct — and argued a local fix might be invasive. It was not: `wacore::time`
-already shipped `MonotonicProvider`, `Instant` and `set_monotonic_provider`, in the same
-file the `now_millis` evidence was quoted from, with the module doc describing this exact
-failure mode in its opening lines. It was also three bugs, not one; the two unreported
-ones were worse for this relay than the reported one.
+**Worked example (upstream
+[#1376](https://github.com/oxidezap/whatsapp-rust/issues/1376)).** The report said
+the keepalive watchdog measured in-process elapsed time on the wall clock
+(correct) and argued a local fix might be invasive. It was not: `wacore::time`
+already shipped `MonotonicProvider`, `Instant` and `set_monotonic_provider`, in
+the same file the `now_millis` evidence was quoted from, with a module doc that
+described this exact failure mode. It was also three bugs, not one, and the two
+unreported ones were worse for this relay.
 
-**Worked example (upstream [#1377](https://github.com/oxidezap/whatsapp-rust/issues/1377)
-→ [#1380](https://github.com/oxidezap/whatsapp-rust/pull/1380), 2026-09).** Reported an
-offline resume as *abandoned*, needing a re-arm. Re-arming already worked:
-`OfflineBatchCoordinator::reset()` ran in both connection-state resets and `is_armed_for`
-is generation-gated. The real gap was that the old resume never announced its end. Worse,
-the assumed RISK never existed — an interrupted drain acks nothing, so the server
-redelivers all of it — and a mitigation was recommended to the edge on the strength of
-that wrong model.
+**Worked example (upstream
+[#1377](https://github.com/oxidezap/whatsapp-rust/issues/1377), fixed in
+[#1380](https://github.com/oxidezap/whatsapp-rust/pull/1380)).** The report called
+an offline resume *abandoned*, needing a re-arm. Re-arming already worked:
+`OfflineBatchCoordinator::reset()` ran in both connection-state resets and
+`is_armed_for` is generation-gated. The real gap was that the old resume never
+announced its end. The assumed risk never existed either (an interrupted drain
+acks nothing, so the server redelivers all of it), yet a mitigation had been
+recommended to the edge on the strength of that wrong model.
 
-**The tell in both:** the fix was proposed before the accused code had been read whole.
-Ten more minutes of grep would have caught each one.
-
-## Stack
-- `tonic` for the gRPC server and client. This is the only RPC layer; never hand-roll
-  framing over the socket.
-- `prost` for protobuf messages (generated). `prost-types` only if you actually need
-  well-known types like `Timestamp`.
-- `tonic-prost-build` runs in `crates/wamux-proto/build.rs` and regenerates Rust from
-  `crates/wamux-proto/proto/` on every build.
-  The `.proto` files are the source of truth; never edit generated code.
-- `tokio` (multi-thread runtime) for async.
-- `tokio-stream` for `UnixListenerStream`, which feeds accepted connections into
-  `serve_with_incoming`.
-- `tower` for middleware (layers/interceptors): auth, logging, timeouts.
-- `tonic-reflection` (dev only) so `grpcurl` can list and describe services.
-- `thiserror` for typed domain errors; `anyhow` only at the top of `main`.
-- `tracing` plus `tracing-subscriber` for structured logs.
-
-## Commands (the agent must be able to run these unattended)
-- Build (also regenerates proto):  `cargo build` (proto via vendored `protoc`, no host install)
-- Run the server:                  `cargo run` (reads `wamux.toml` + `WAMUX_*` env)
-- Format:                          `cargo fmt`
-- Lint (zero tolerance):           `cargo clippy --workspace --all-targets -- -D warnings`
-- Tests:                           `DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux cargo test -p wamux`
-- Postgres for tests/dev (docker): `docker run -d --name wamux-pg -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux -e POSTGRES_DB=wamux -p 5433:5432 postgres:16`
-- Poke the socket by hand:         `grpcurl -unix -plaintext /run/wamux.sock list`
-  (needs `grpcurl` installed; reflection is on by default in dev)
-- CI (all gates, one command):     `scripts/ci.sh` (add `--full` for the #[ignore] scale tests).
-  Run it before declaring work done. Hosted CI (`.github/workflows/ci.yml`) also runs on every
-  PR and every push to main: `scripts/ci.sh (postgres)` (without `--full`, so the scale tests are
-  still yours to run locally), `fmt + clippy + tests (sqlite)` and `cargo audit`. Merge only after
-  those checks pass. Right after `gh pr create`, `gh pr checks` can print "no checks reported":
-  the runs are not registered yet, so wait until they appear, then `--watch`.
-
-### Capped builds on the maintainer's laptop
-Every heavy compile (`cargo build`/`test`/`clippy`, `scripts/ci.sh`, a loop `gate.sh`) runs
-through `.claude/loop/bin/lim` (local, gitignored with the rest of `.claude/`):
-`.claude/loop/bin/lim scripts/ci.sh --full`. It puts the command in its own systemd user scope
-(4 GiB `MemoryHigh`, 5 GiB `MemoryMax`, 2 GiB swap, 6 CPUs, `CARGO_BUILD_JOBS=4`, `nice`), so a
-memory spike hits the build alone. Without it, on 2026-10-26 `systemd-oomd` killed the whole
-terminal scope (664 processes, herdr and the other sessions with it) during a workspace build.
-- Override with `LIM_MEM` (`MemoryHigh`), `LIM_MEM_MAX_MB`, `LIM_CPU`, `LIM_JOBS`. Never run two
-  builds at the same time.
-- A subagent gets the same instruction in its prompt.
-- Container builds run in dockerd, outside the scope: `docker run --memory=4g --cpus=6`, and
-  for `docker build` a capped buildx builder
-  (`docker buildx create --name lim --driver docker-container --driver-opt memory=5g,memory-swap=7g,cpuset-cpus=0-5`,
-  then `docker buildx build --builder lim --load ...`).
-
-## Code style
-- Functions: 4-20 lines. Split if longer.
-- Files: under 500 lines. One service or one cohesive unit per file.
-- Names: specific and unique. Prefer names that return under 5 grep hits. This is the
-  agent's navigation API, so `handle`, `process`, `data`, `util`, `manager` are banned.
-- Types: explicit at every boundary. Annotate public function signatures and the
-  request/response types crossing a module edge. Don't lean on inference for anything
-  another module touches.
-- No code duplication. Early returns over nested ifs. Max 2 indent levels.
-- No `.unwrap()` / `.expect()` on anything reachable from an incoming request. Map the
-  error to a `tonic::Status` and return it. `unwrap` is allowed only on invariants that
-  hold at startup (a parsed const, a path you just created), and only with a comment.
-- Error values carry context: the offending value and the expected shape. Use
-  `thiserror` for typed errors; `anyhow` only in `main` where you're about to exit.
-
-## gRPC services (tonic)
-- The `.proto` files in `crates/wamux-proto/proto/` define the contract. Change the proto, rebuild, then
-  fix the Rust. Never the other way around.
-- One service `impl` per file in `services/`. File name = snake_case of the service
-  (`order_service.rs` -> `OrderService`).
-- RPC method bodies stay thin: validate the request, call a `domain/` function, map the
-  result to a response or a `Status`. Business logic does not live in the trait impl.
-- Map errors explicitly. A `domain` error becomes a specific `Status` code
-  (`NotFound`, `InvalidArgument`, `FailedPrecondition`, and so on). Never `unwrap` into
-  a panic and never leak an internal error string to the client.
-- Streaming RPCs are typed and backpressure-aware: yield from a `Stream`, don't buffer
-  the whole result into a `Vec` first.
-
-## Unix socket transport
-- Bind with `tokio::net::UnixListener`, wrap in `UnixListenerStream`, serve via
-  `Server::builder().add_service(...).serve_with_incoming(stream)`.
-- On startup: remove a stale socket file if one exists, bind, then `chmod` the socket to
-  the intended mode (for example `0660`) before announcing readiness. Document the
-  chosen mode and the owning group.
-- Authn/authz is local: read peer credentials (`SO_PEERCRED`: uid/gid/pid) from the
-  `UnixStream` if you need to gate access. There is no token on the wire by default.
-- No TCP listener and no TLS in this binary. If you ever need network exposure, that is
-  a separate front (a reverse proxy or a second binary), not a flag flipped here.
-- Graceful shutdown: drive `serve_with_incoming_shutdown` with a `tokio::signal` future
-  (SIGTERM/SIGINT). Unlink the socket on the way out.
-
-## State and concurrency
-- Shared state is injected as an `Arc<T>` into the service struct at construction. No
-  globals, no `lazy_static`/`OnceCell` singletons for things that vary by deployment.
-- Prefer message passing (`tokio::sync::mpsc`) when an owner-task pattern reads clearer
-  than a shared lock. Reach for `Mutex`/`RwLock` only for genuinely shared mutable state.
-- Never hold a `std::sync` lock across an `.await` (clippy will catch it). If a lock must
-  span async work, it's a `tokio::sync` lock, and the critical section is as short as
-  you can make it.
-- One pool (DB, cache, whatever), created once, cloned into each service that needs it.
-  Pools are cheap to clone and own their own synchronization.
-- Keep state granularity tight: one type per independently-changing concern, not one
-  god-struct behind a single lock that serializes unrelated work.
-
-## Dependency injection
-- Constructor injection. A service struct takes its dependencies (pool, clients, config)
-  as fields; `main`/`server.rs` wires them together. This is the whole DI mechanism.
-- Wrap shared dependencies in named newtypes (`struct Db(PgPool)`,
-  `struct UpstreamClient(...)`) so a field's purpose is obvious and greppable, never a
-  bare `String` or bare `Arc<RwLock<...>>` passed around.
-- No hardcoded socket paths, modes, endpoints, or feature flags inside services. Load
-  config once at startup into a `Config` struct and inject it.
-- Cross-cutting concerns (auth check, request logging, timeout) are `tower` layers added
-  in `server.rs`, not copy-pasted into every RPC method.
-
-## Comments
-- A comment states an invariant, a constraint or a reason: why the code is this way, what
-  would break if it changed, what was measured on the wire. Write WHY, not WHAT.
-- Keep the reason on refactor. Don't strip a comment that still explains the code.
-- An issue number is a pointer ("see #56"), not the explanation: the reason is still
-  written out next to it. Reference one for any line driven by a bug, a protocol quirk,
-  or a tokio/tonic constraint.
-- History goes to the commit message and the CHANGELOG, not the code: what the code used
-  to do, which version changed what, which part of which issue added it, who reviewed it.
-  `scripts/check-comment-provenance.py` fails CI on review provenance in the sources.
-- A comment that describes code that no longer exists is a bug, and is reviewed like one.
-- The subtle stuff is what earns a one-line note: why a lock is `tokio::sync` not `std`,
-  why an error maps to *this* `Status` code, why the socket mode is what it is, why a
-  stream yields instead of collecting.
-
-## Tests
-- Pure logic (no socket, no async I/O): plain `cargo test` unit tests next to the code
-  in `domain/`.
-- Service behavior: bind the server on a throwaway socket inside a `tempdir`, connect a
-  real tonic client over that socket, and assert over the wire. This exercises the same
-  path production uses and needs no human setup.
-- Every non-trivial function gets a test. Every fixed bug gets a regression test that
-  fails before the fix.
-- F.I.R.S.T: fast, independent, repeatable, self-validating, timely.
-
-## Migrations (two engines, one numbering)
-- `crates/wamux/migrations/` (Postgres) and `crates/wamux/migrations_sqlite/` take the
-  **same number and the same name** for the same change, from 0005 on. The next migration
-  is `0005_<name>.sql` in both directories, so SQLite skips 0004.
-- A change that only one engine needs still gets a file on the other: same number, same
-  name, a no-op whose comment says why. That keeps the numbers aligned for good.
-- Never renumber or edit an applied migration. sqlx stores each one's version and
-  checksum, and a changed file breaks every existing store.
-- The one exception is history, pinned by name: Postgres 0002 (`drop_connection_policy`)
-  has no SQLite counterpart, so Postgres 0003/0004 are SQLite 0002/0003.
-- `tests/migration_alignment` enforces all of this on every `cargo test` (#66).
-
-## Formatting & lint
-- `cargo fmt` is law. Don't discuss style.
-- `cargo clippy --workspace --all-targets -- -D warnings` must pass clean. Fix the lint, don't
-  `#[allow(...)]` it unless the allow has a comment and a reason.
-
-## Directory structure
-```
-Cargo.toml           # virtual workspace: members, shared deps, lints, the whatsapp-rust rev
-crates/
-  wamux-proto/       # generated gRPC types (bottom of the graph, depends on no wamux crate)
-    proto/           # .proto contracts (the source of truth)
-    build.rs         # tonic-prost-build: regenerates Rust from proto/
-    src/lib.rs       # pub mod v1, pub mod store, FILE_DESCRIPTOR_SET
-  wamux-tools/       # development binaries (src/bin/), not shipped
-  wamux/             # the daemon (lib + `wamux` bin), tests/, migrations*/
-    src/
-      main.rs            # load config, bind socket, run server, handle signals
-      server.rs          # assemble Server: register services + tower layers
-      services/          # one gRPC service impl per file (thin RPC handlers)
-      domain/            # business logic, transport-agnostic, unit-tested
-      state/             # shared state, pools, context newtypes
-      transport/         # UDS listener, socket lifecycle, peer-cred checks
-      config.rs          # Config struct + load-at-startup
-      error.rs           # typed errors (thiserror) + mapping to tonic::Status
-      # (no proto.rs: lib.rs re-exports wamux-proto as `proto`)
-``` 
-- Mirror this layout so the agent can predict paths without listing directories.
-
-## Observability
-- `tracing` everywhere; init a `tracing-subscriber` in `main`. Structured fields, not
-  string interpolation.
-- A `tower` layer opens a span per request with method name, peer uid, latency, and the
-  final `Status` code. One log line per request, at the edge.
-- On error: log the internal cause at the boundary (with context), then return a clean
-  `Status` to the client. The client never sees an internal error string or a stack.
+**The tell in both:** the fix was proposed before the accused code had been read
+whole. Ten more minutes of grep would have caught each one.

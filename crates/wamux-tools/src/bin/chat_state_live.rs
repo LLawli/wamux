@@ -56,6 +56,10 @@ const GROUP_SUBJECT: &str = "wamux #24 chat-state";
 const CONNECT_WITHIN: Duration = Duration::from_secs(30);
 
 #[tokio::main]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a live probe: one scripted scenario against real accounts, read top to bottom"
+)]
 async fn main() -> anyhow::Result<ExitCode> {
     // The whole config first: nothing is opened until every variable is valid.
     let typist_ref: String = account_ref_from(&process_env)?;

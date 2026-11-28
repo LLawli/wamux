@@ -180,6 +180,10 @@ fn fields(e: &LidPnMappingEntry) -> (String, String, i64, i64, String) {
     )
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one parity scenario: lid mappings written in order, then every read that must pick the newest"
+)]
 async fn lid_mappings_round_trip_and_pick_most_recent_pn(h: Harness) {
     const PHONE: &str = "5511987654321";
     let t = h.two_accounts("lid-mappings").await;

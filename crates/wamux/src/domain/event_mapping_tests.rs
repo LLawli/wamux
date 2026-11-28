@@ -1,52 +1,45 @@
 use super::*;
-use std::time::Duration;
+use std::sync::Arc;
+use wacore::types::message::MessageInfo;
+use whatsapp_rust::waproto::whatsapp as wa;
 
-use bytes::Bytes;
-use wacore::types::call::{CallAction, IncomingCall};
-use wacore::types::events::{
-    BatchOrigin, ChatPresenceUpdate, ConnectFailureReason, Connected, DecryptFailMode,
-    Disconnected, InboundMessage, LazyHistorySync, LoggedOut, MessageBatch, OfflineSyncCompleted,
-    OfflineSyncInterrupted, OfflineSyncPreview, PairError, PairSuccess, PairingCode, PairingQrCode,
-    PresenceUpdate, QrScannedWithoutMultidevice, Receipt, ServerAck, TempBanReason, TemporaryBan,
-    UnavailableType, UndecryptableMessage,
-};
+use wacore::types::events::{BatchOrigin, InboundMessage, MessageBatch};
 use wacore::types::message::MessageSource;
-use wacore::types::presence::{ChatActivity, PresenceStatus, ReceiptType};
+use whatsapp_rust::Jid;
 use whatsapp_rust::buffa::MessageField;
-use whatsapp_rust::{Jid, OwnedNodeRef};
 
 use crate::proto::v1::event_envelope::Event as PbEvent;
 
-const CHAT_JID: &str = "120363041234567890@g.us";
+pub(super) const CHAT_JID: &str = "120363041234567890@g.us";
 
 /// A jid as the core relays it out (#120): the value verbatim.
-fn wire(value: &str) -> Option<pb::Jid> {
+pub(super) fn wire(value: &str) -> Option<pb::Jid> {
     Some(pb::Jid {
         value: value.to_string(),
     })
 }
-const SENDER_JID: &str = "5511999000111@s.whatsapp.net";
-const LID_JID: &str = "169815004184633@lid";
+pub(super) const SENDER_JID: &str = "5511999000111@s.whatsapp.net";
+pub(super) const LID_JID: &str = "169815004184633@lid";
 
 /// Minimal valid WABinary node `<iq/>`: LIST_8 list of size 1, then the tag
 /// as a BINARY_8 string. Hand-rolled because whatsapp-rust's marshal helpers
 /// are `#[cfg(test)]`-gated and wacore-binary is not a default wamux dep.
-const RAW_IQ_NODE: &[u8] = &[0xF8, 0x01, 0xFC, 0x02, b'i', b'q'];
+pub(super) const RAW_IQ_NODE: &[u8] = &[0xF8, 0x01, 0xFC, 0x02, b'i', b'q'];
 
 /// zlib-compress a history-sync payload the way the server does, so the lazy
 /// handle can inflate it back. `flate2` is already in the tree (via the lib).
-fn zlib_compress(raw: &[u8]) -> Vec<u8> {
+pub(super) fn zlib_compress(raw: &[u8]) -> Vec<u8> {
     use std::io::Write;
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(raw).expect("in-memory write cannot fail");
     encoder.finish().expect("in-memory finish cannot fail")
 }
 
-fn jid_of(value: &str) -> Jid {
+pub(super) fn jid_of(value: &str) -> Jid {
     value.parse().unwrap()
 }
 
-fn sample_source() -> MessageSource {
+pub(super) fn sample_source() -> MessageSource {
     MessageSource {
         chat: jid_of(CHAT_JID),
         sender: jid_of(SENDER_JID),
@@ -55,7 +48,7 @@ fn sample_source() -> MessageSource {
     }
 }
 
-fn sample_info() -> MessageInfo {
+pub(super) fn sample_info() -> MessageInfo {
     MessageInfo {
         source: sample_source(),
         // A CompactString in the library (#30).
@@ -71,7 +64,7 @@ fn sample_info() -> MessageInfo {
 /// The library delivers inbound messages in batches, so `map_event` returns a list.
 /// Every event these tests build maps to exactly one payload; asserting that
 /// here keeps each test's own assertion about the payload, not about arity.
-fn map_one(event: &Event) -> Option<PbEvent> {
+pub(super) fn map_one(event: &Event) -> Option<PbEvent> {
     let mut mapped = map_event(event);
     assert!(
         mapped.len() <= 1,
@@ -83,7 +76,7 @@ fn map_one(event: &Event) -> Option<PbEvent> {
 
 /// One inbound message wrapped in the batch-of-one the lib dispatches for live
 /// traffic. Both payload structs are `#[non_exhaustive]`, hence the builders.
-fn message_event(msg: wa::Message, info: MessageInfo) -> Event {
+pub(super) fn message_event(msg: wa::Message, info: MessageInfo) -> Event {
     Event::Messages(
         MessageBatch::builder()
             .messages(Arc::from(vec![
@@ -104,8 +97,7 @@ pub(super) fn mapped_inbound(msg: wa::Message) -> pb::InboundMessage {
     }
 }
 
-/// pub(super): the media-descriptor suite lives in a sibling test file
-/// (event_mapping_media_tests.rs), split out because this file is past the 500-line rule.
+/// pub(super): the media-descriptor suite (event_mapping_media_tests.rs) uses it.
 pub(super) fn mapped_media(msg: wa::Message) -> (pb::MediaDescriptor, String) {
     let out = mapped_inbound(msg);
     let media = out
@@ -114,214 +106,7 @@ pub(super) fn mapped_media(msg: wa::Message) -> (pb::MediaDescriptor, String) {
     (media, out.caption)
 }
 
-/// Issue #22: the echo of a message this relay sent must come out of the SAME
-/// projection an inbound message does, or an edge ends up with two shapes for
-/// one concept.
-#[test]
-fn a_sent_text_echoes_with_the_inbound_shape() {
-    let msg = {
-        let mut proto = wa::Message::default();
-        proto.conversation = Some("oi".to_string());
-        proto
-    };
-    let out = crate::domain::event_mapping::map_sent(
-        pb::MessageKey {
-            chat: wire("5511999999999@s.whatsapp.net"),
-            id: "3EB0SENT".to_string(),
-            from_me: true,
-            participant: None,
-        },
-        "5511999999999@s.whatsapp.net",
-        "5511888888888@s.whatsapp.net",
-        1_756_800_000_000,
-        &msg,
-    );
-    let key = out.key.expect("key must be set");
-    assert!(key.from_me, "an echo is always from_me");
-    assert_eq!(key.id, "3EB0SENT");
-    // #122: both ends are Jids, verbatim.
-    assert_eq!(out.chat, wire("5511999999999@s.whatsapp.net"));
-    assert_eq!(out.sender, wire("5511888888888@s.whatsapp.net"));
-    assert_eq!(out.text, "oi");
-    assert_eq!(out.timestamp, 1_756_800_000_000);
-}
-
-/// The bytes that went out, not a reconstruction: an edge that decodes
-/// raw_message (polls, stickers) must get the real payload.
-#[test]
-fn an_echo_carries_the_bytes_that_went_out() {
-    let msg = {
-        let mut proto = wa::Message::default();
-        proto.conversation = Some("oi".to_string());
-        proto
-    };
-    let out = crate::domain::event_mapping::map_sent(
-        pb::MessageKey::default(),
-        "5511999999999@s.whatsapp.net",
-        "5511888888888@s.whatsapp.net",
-        0,
-        &msg,
-    );
-    assert_eq!(out.raw_message, msg.encode_to_vec());
-}
-
-/// Media echoes through the same descriptor extraction, so the edge downloads
-/// its own send exactly like anyone else's.
-#[test]
-fn a_sent_image_echoes_its_descriptor_and_caption() {
-    let msg = {
-        let mut proto = wa::Message::default();
-        proto.image_message = whatsapp_rust::buffa::MessageField::some({
-            let mut proto = wa::message::ImageMessage::default();
-            proto.mimetype = Some("image/jpeg".to_string());
-            proto.direct_path = Some("/v/t62.sent".to_string());
-            proto.file_length = Some(4096);
-            proto.caption = Some("a cat".to_string());
-            proto
-        });
-        proto
-    };
-    let out = crate::domain::event_mapping::map_sent(
-        pb::MessageKey::default(),
-        "5511999999999@s.whatsapp.net",
-        "5511888888888@s.whatsapp.net",
-        0,
-        &msg,
-    );
-    let media = out.media.expect("a sent image must carry its descriptor");
-    assert_eq!(media.media_type(), pb::MediaType::Image);
-    assert_eq!(media.direct_path, "/v/t62.sent");
-    assert_eq!(out.caption, "a cat");
-}
-
-/// Issue #38: an edit is built inside the library (upstream `build_edit_message`,
-/// a top-level MESSAGE_EDIT protocol message) and handed back on
-/// `SendResult::message`. Its echo must read as an edit of the target, with the
-/// new text, exactly like the edit another device of the account would see.
-#[test]
-fn a_sent_edit_echoes_as_an_edit_of_its_target() {
-    use wa::message::protocol_message::Type;
-    let chat = "5511999999999@s.whatsapp.net";
-    let msg = {
-        let mut proto = wa::Message::default();
-        proto.protocol_message = MessageField::some({
-            let mut proto = wa::message::ProtocolMessage::default();
-            proto.key = MessageField::some({
-                let mut proto = wa::MessageKey::default();
-                proto.remote_jid = Some(chat.to_string());
-                proto.from_me = Some(true);
-                proto.id = Some("3EB0ORIGINAL".to_string());
-                proto.participant = None;
-                proto
-            });
-            proto.r#type = Some(Type::MESSAGE_EDIT);
-            proto.edited_message = MessageField::some({
-                let mut proto = wa::Message::default();
-                proto.conversation = Some("fixed typo".to_string());
-                proto
-            });
-            proto.timestamp_ms = Some(1_756_800_000_000);
-            proto
-        });
-        proto
-    };
-    let out = crate::domain::event_mapping::map_sent(
-        sent_key(chat, "3EB0EDITSTANZA"),
-        chat,
-        "5511888888888@s.whatsapp.net",
-        0,
-        &msg,
-    );
-    assert!(out.is_edit);
-    assert_eq!(out.text, "fixed typo");
-    let target = out.protocol_target.expect("an edit names its target");
-    assert_eq!(target.id, "3EB0ORIGINAL");
-    // #120: the wa key's absent participant (a DM) and its chat relay as they
-    // are: an unset Jid, never `Jid { value: "" }`, and the chat verbatim.
-    assert_eq!(target.chat, wire(chat));
-    assert_eq!(target.participant, None);
-    // The echo's own key is the edit stanza, never the message it edits.
-    assert_eq!(out.key.expect("key").id, "3EB0EDITSTANZA");
-}
-
-/// Issue #38: same for a revoke (upstream `build_revoke_message`).
-#[test]
-fn a_sent_revoke_echoes_as_a_delete_of_its_target() {
-    use wa::message::protocol_message::Type;
-    let chat = "120363041234567890@g.us";
-    let msg = {
-        let mut proto = wa::Message::default();
-        proto.protocol_message = MessageField::some({
-            let mut proto = wa::message::ProtocolMessage::default();
-            proto.key = MessageField::some({
-                let mut proto = wa::MessageKey::default();
-                proto.remote_jid = Some(chat.to_string());
-                proto.from_me = Some(true);
-                proto.id = Some("3EB0GONE".to_string());
-                proto.participant = None;
-                proto
-            });
-            proto.r#type = Some(Type::REVOKE);
-            proto
-        });
-        proto
-    };
-    let out = crate::domain::event_mapping::map_sent(
-        sent_key(chat, "3EB0REVOKESTANZA"),
-        chat,
-        "5511888888888@s.whatsapp.net",
-        0,
-        &msg,
-    );
-    assert!(out.is_delete);
-    assert!(!out.is_edit);
-    assert_eq!(out.protocol_target.expect("target").id, "3EB0GONE");
-    assert_eq!(out.key.expect("key").id, "3EB0REVOKESTANZA");
-}
-
-/// Issue #41: a status revoke is the library's `status().revoke`, a REVOKE
-/// protocol message keyed on `status@broadcast`. It echoes as a delete of the
-/// status, in the status chat, like the chat revoke above.
-#[test]
-fn a_sent_status_revoke_echoes_as_a_delete_of_the_status() {
-    use wa::message::protocol_message::Type;
-    let chat = "status@broadcast";
-    let msg = {
-        let mut proto = wa::Message::default();
-        proto.protocol_message = MessageField::some({
-            let mut proto = wa::message::ProtocolMessage::default();
-            proto.key = MessageField::some({
-                let mut proto = wa::MessageKey::default();
-                proto.remote_jid = Some(chat.to_string());
-                proto.from_me = Some(true);
-                proto.id = Some("3EB0STATUS".to_string());
-                proto.participant = None;
-                proto
-            });
-            proto.r#type = Some(Type::REVOKE);
-            proto
-        });
-        proto
-    };
-    let out = crate::domain::event_mapping::map_sent(
-        sent_key(chat, "3EB0STATUSREVOKE"),
-        chat,
-        "5511888888888@s.whatsapp.net",
-        0,
-        &msg,
-    );
-    assert!(out.is_delete);
-    let target = out
-        .protocol_target
-        .expect("a status revoke names the status");
-    assert_eq!(target.id, "3EB0STATUS");
-    assert_eq!(target.chat, wire(chat));
-    let key = out.key.expect("key");
-    assert_eq!(key.id, "3EB0STATUSREVOKE");
-    assert_eq!(key.chat, wire(chat));
-}
-
-fn sent_key(chat: &str, id: &str) -> pb::MessageKey {
+pub(super) fn sent_key(chat: &str, id: &str) -> pb::MessageKey {
     pb::MessageKey {
         chat: wire(chat),
         id: id.to_string(),
@@ -330,14 +115,14 @@ fn sent_key(chat: &str, id: &str) -> pb::MessageKey {
     }
 }
 
-fn mapped_connection(event: &Event) -> pb::ConnectionStateChanged {
+pub(super) fn mapped_connection(event: &Event) -> pb::ConnectionStateChanged {
     match map_one(event) {
         Some(PbEvent::Connection(c)) => c,
         other => panic!("expected connection event, got {other:?}"),
     }
 }
 
-fn mapped_presence(event: &Event) -> pb::PresenceUpdate {
+pub(super) fn mapped_presence(event: &Event) -> pb::PresenceUpdate {
     match map_one(event) {
         Some(PbEvent::Presence(p)) => p,
         other => panic!("expected presence, got {other:?}"),
@@ -597,533 +382,3 @@ fn maps_wrapped_inbound_edit_to_is_edit_with_new_text_and_target() {
 }
 
 // The five media-descriptor tests live in event_mapping_media_tests.rs.
-
-#[test]
-fn maps_receipt_with_ids_type_and_millis() {
-    // Event payloads are #[non_exhaustive] with a bon builder, so the fixtures
-    // below build instead of struct-literal.
-    let event = Event::Receipt(
-        Receipt::builder()
-            .source(sample_source())
-            .message_ids(vec!["AAA111".into(), "BBB222".into()])
-            .timestamp(wacore::time::from_secs(1_717_932_111).unwrap())
-            .r#type(ReceiptType::Read)
-            // True only for receipts drained from the offline queue. A live
-            // receipt is what this test is about.
-            .offline(false)
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::Receipt(r)) => {
-            assert_eq!(r.chat, wire(CHAT_JID));
-            assert_eq!(r.sender, wire(SENDER_JID));
-            assert_eq!(r.message_ids, ["AAA111", "BBB222"]);
-            // #126: an enum, never Debug casing or a free token; no raw when named.
-            assert_eq!(r.r#type(), pb::ReceiptType::Read);
-            assert_eq!(r.type_raw, "");
-            assert_eq!(r.timestamp, 1_717_932_111_000);
-        }
-        other => panic!("expected receipt, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_undecryptable_message_with_reason() {
-    let event = Event::UndecryptableMessage(
-        UndecryptableMessage::builder()
-            .info(Arc::new(sample_info()))
-            .is_unavailable(true)
-            .unavailable_type(UnavailableType::ViewOnce)
-            .decrypt_fail_mode(DecryptFailMode::Hide)
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::Undecryptable(u)) => {
-            assert_eq!(u.chat, wire(CHAT_JID));
-            assert_eq!(u.sender, wire(SENDER_JID));
-            // #126: an enum, not the `Debug` string "ViewOnce".
-            assert_eq!(u.reason(), pb::UnavailableReason::ViewOnce);
-        }
-        other => panic!("expected undecryptable, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_presence_offline_with_last_seen_seconds() {
-    let p = mapped_presence(&Event::Presence(
-        PresenceUpdate::builder()
-            .from(jid_of(SENDER_JID))
-            .status(PresenceStatus::Unavailable)
-            .last_seen(wacore::time::from_secs(1_717_932_000).unwrap())
-            .build(),
-    ));
-    assert_eq!(p.jid, wire(SENDER_JID));
-    // "unavailable" on the wire means offline for the edge: the flag inverts.
-    assert_eq!(p.online, Some(false));
-    assert_eq!(p.last_seen, 1_717_932_000);
-    // #126: no chat state on real presence is UNSPECIFIED, not a token.
-    assert_eq!(p.chat_state(), pb::ChatState::Unspecified);
-    // Real presence is not scoped to a conversation (issue #24): unset (#122).
-    assert_eq!(p.chat, None);
-}
-
-#[test]
-fn maps_presence_online_without_last_seen() {
-    let p = mapped_presence(&Event::Presence(
-        PresenceUpdate::builder()
-            .from(jid_of(SENDER_JID))
-            .status(PresenceStatus::Available)
-            .build(),
-    ));
-    assert_eq!(p.online, Some(true));
-    assert_eq!(p.last_seen, 0);
-}
-
-#[test]
-fn maps_chat_presence_to_composing_state() {
-    let p = mapped_presence(&Event::ChatPresence(
-        ChatPresenceUpdate::builder()
-            .source(sample_source())
-            .state(ChatActivity::Typing)
-            .build(),
-    ));
-    assert_eq!(p.jid, wire(SENDER_JID));
-    // A chat state measures no presence: a hardcoded true would light an
-    // "online" dot off a literal (issue #24).
-    assert_eq!(p.online, None);
-    // #126: the ChatState enum (not the token "composing").
-    assert_eq!(p.chat_state(), pb::ChatState::Composing);
-}
-
-// Regression (issue #24): the conversation a chat state happened in must be
-// named, or typing in a group and typing in the DM with the same person arrive
-// as identical bytes and the edge draws the indicator on the DM.
-#[test]
-fn chat_presence_in_a_group_names_the_group_not_only_the_sender() {
-    let p = mapped_presence(&Event::ChatPresence(
-        ChatPresenceUpdate::builder()
-            .source(sample_source())
-            .state(ChatActivity::Typing)
-            .build(),
-    ));
-    assert_eq!(p.jid, wire(SENDER_JID));
-    assert_eq!(p.chat, wire(CHAT_JID));
-}
-
-#[test]
-fn chat_presence_in_a_direct_chat_names_the_contact_as_the_conversation() {
-    let source = MessageSource {
-        chat: jid_of(SENDER_JID),
-        sender: jid_of(SENDER_JID),
-        ..Default::default()
-    };
-    let p = mapped_presence(&Event::ChatPresence(
-        ChatPresenceUpdate::builder()
-            .source(source)
-            .state(ChatActivity::Idle)
-            .build(),
-    ));
-    assert_eq!(p.chat, wire(SENDER_JID));
-    assert_eq!(p.chat_state(), pb::ChatState::Paused);
-}
-
-// The lib models recording as `ChatActivity::RecordingAudio` (Composing with
-// media=Audio on the wire). The wire contract flattens it back to "recording".
-#[test]
-fn maps_chat_presence_audio_to_recording_state() {
-    let p = mapped_presence(&Event::ChatPresence(
-        ChatPresenceUpdate::builder()
-            .source(sample_source())
-            .state(ChatActivity::RecordingAudio)
-            .build(),
-    ));
-    assert_eq!(p.chat_state(), pb::ChatState::Recording);
-}
-
-// No `maps_push_name_update`: the library retired `Event::PushNameUpdate`
-// (#30, upstream #1310) as a dead event. `pb::PushNameUpdate` stays in the
-// proto so the contract does not break; nothing emits it.
-
-#[test]
-fn maps_history_sync_with_raw_passthrough() {
-    let sync_type = wa::history_sync::HistorySyncType::RECENT;
-    let proto = {
-        let mut proto = wa::HistorySync::default();
-        proto.sync_type = sync_type;
-        proto.conversations = vec![{
-            let mut proto = wa::Conversation::default();
-            proto.id = CHAT_JID.to_string();
-            proto
-        }];
-        proto
-    };
-    let raw = proto.encode_to_vec();
-    // The library keeps the chunk zlib-compressed behind the lazy handle, so
-    // the fixture has to compress it (and declare the inflated size, which
-    // doubles as the inflate cap) the way the real producer does.
-    let compressed = zlib_compress(&raw);
-    let lazy = LazyHistorySync::new(
-        Bytes::from(compressed),
-        raw.len(),
-        sync_type as i32,
-        Some(3),
-        Some(75),
-    )
-    .with_peer_data_request_session_id(Some("sess-1".to_string()));
-    match map_one(&Event::HistorySync(Box::new(lazy))) {
-        Some(PbEvent::HistorySync(h)) => {
-            assert_eq!(h.sync_type, sync_type as i32);
-            assert_eq!(h.chunk_order, Some(3));
-            assert_eq!(h.progress, Some(75));
-            assert_eq!(h.session_id.as_deref(), Some("sess-1"));
-            // Verbatim relay: the edge must be able to decode `raw` itself.
-            assert_eq!(h.raw, raw);
-            let decoded = wa::HistorySync::decode_from_slice(h.raw.as_slice()).unwrap();
-            assert_eq!(decoded.sync_type, sync_type);
-            assert_eq!(decoded.conversations[0].id, CHAT_JID);
-        }
-        other => panic!("expected history sync, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_connected_and_disconnected_states() {
-    let connected = mapped_connection(&Event::Connected(Connected::builder().build()));
-    assert_eq!(connected.state, pb::ConnectionState::Connected as i32);
-    // #126: neither typed info outside its own state.
-    assert_eq!((connected.logged_out, connected.ban), (None, None));
-
-    // Disconnected carries why the socket closed. The mapping ignores it (the
-    // proto has one Disconnected state), so any reason exercises the same arm.
-    let disconnected = mapped_connection(&Event::Disconnected(
-        Disconnected::builder()
-            .reason(wacore::net::DisconnectReason::StreamEnded)
-            .build(),
-    ));
-    assert_eq!(disconnected.state, pb::ConnectionState::Disconnected as i32);
-    assert_eq!((disconnected.logged_out, disconnected.ban), (None, None));
-}
-
-// #126: the reason is a typed LoggedOutInfo, not `Debug` inside `detail`.
-#[test]
-fn maps_logged_out_with_a_typed_reason() {
-    // Any real `ConnectFailureReason` variant serves.
-    // `LoggedOut` is boxed in the library (#30, upstream #1417).
-    let c = mapped_connection(&Event::LoggedOut(Box::new(
-        LoggedOut::builder()
-            .on_connect(false)
-            .reason(ConnectFailureReason::LoggedOut)
-            .build(),
-    )));
-    assert_eq!(c.state, pb::ConnectionState::LoggedOut as i32);
-    let info = c.logged_out.expect("LOGGED_OUT carries its info");
-    assert_eq!(info.reason(), pb::LogoutReason::LoggedOut);
-    assert_eq!(info.reason_code, 0, "a named reason carries no code");
-    assert_eq!(c.ban, None);
-}
-
-#[test]
-fn maps_temporary_ban_to_banned_state() {
-    let c = mapped_connection(&Event::TemporaryBan(Box::new(
-        TemporaryBan::builder()
-            .code(TempBanReason::BlockedByUsers)
-            .expire(std::time::Duration::from_secs(3_600))
-            .build(),
-    )));
-    assert_eq!(c.state, pb::ConnectionState::Banned as i32);
-    // #126: typed fields, not the whole TemporaryBan as `Debug` inside `detail`.
-    let ban = c.ban.expect("BANNED carries its info");
-    assert_eq!(ban.reason(), pb::BanReason::BlockedByUsers);
-    assert_eq!(ban.reason_code, 0);
-    assert_eq!(ban.expire_seconds, 3_600);
-    assert_eq!(c.logged_out, None);
-}
-
-#[test]
-fn maps_pair_success_to_paired_info() {
-    let event = Event::PairSuccess(
-        PairSuccess::builder()
-            .id(jid_of(SENDER_JID))
-            .lid(jid_of("204255232763170@lid"))
-            .business_name("ACME Corp".to_string())
-            .platform("smba".to_string())
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::Pairing(update)) => match update.event {
-            Some(pb::pairing_update::Event::Paired(info)) => {
-                assert_eq!(info.jid.expect("paired jid must be set").value, SENDER_JID);
-                // business_name relays as itself; PairSuccess has no push name.
-                assert_eq!(info.business_name, "ACME Corp");
-                assert_eq!(
-                    info.lid.expect("lid must be set").value,
-                    "204255232763170@lid"
-                );
-                assert_eq!(info.platform, "smba");
-            }
-            other => panic!("expected paired info, got {other:?}"),
-        },
-        other => panic!("expected pairing, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_pair_error_with_message() {
-    let event = Event::PairError(
-        PairError::builder()
-            .id(jid_of(SENDER_JID))
-            .lid(jid_of("204255232763170@lid"))
-            .business_name(String::new())
-            .platform(String::new())
-            .error("pair-device-timeout".to_string())
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::Pairing(update)) => {
-            assert_eq!(
-                update.event,
-                Some(pb::pairing_update::Event::Error(pb::PairingError {
-                    message: "pair-device-timeout".to_string(),
-                }))
-            );
-        }
-        other => panic!("expected pairing error, got {other:?}"),
-    }
-}
-
-#[test]
-fn drops_notification_and_raw_node_events() {
-    let node = Arc::new(OwnedNodeRef::new(RAW_IQ_NODE.to_vec()).expect("valid wire node"));
-    assert!(map_event(&Event::Notification(node.clone())).is_empty());
-    assert!(map_event(&Event::RawNode(node)).is_empty());
-}
-
-#[test]
-fn catch_all_maps_unmatched_variant_to_raw_event() {
-    // QrScannedWithoutMultidevice has no explicit arm: it must land in Raw, not
-    // vanish. One of the events kept in the catch-all on purpose (#141 triage).
-    let event = Event::QrScannedWithoutMultidevice(QrScannedWithoutMultidevice::builder().build());
-    match map_one(&event) {
-        Some(PbEvent::Raw(raw)) => {
-            assert_eq!(raw.kind, "QrScannedWithoutMultidevice");
-            assert_eq!(raw.payload, serde_json::to_vec(&event).unwrap());
-            let json: serde_json::Value = serde_json::from_slice(&raw.payload).unwrap();
-            assert!(json["QrScannedWithoutMultidevice"].is_object());
-            assert!(raw.note.is_empty());
-        }
-        other => panic!("expected raw event, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_pairing_qr_code() {
-    let event = Event::PairingQrCode(
-        PairingQrCode::builder()
-            .code("QR-DATA".to_string())
-            .timeout(Duration::from_secs(60))
-            .build(),
-    );
-    match map_one(&event) {
-        Some(pb::event_envelope::Event::Pairing(update)) => {
-            assert_eq!(
-                update.event,
-                Some(pb::pairing_update::Event::QrCode("QR-DATA".into()))
-            );
-        }
-        other => panic!("expected pairing qr, got {other:?}"),
-    }
-}
-
-// REGRESSION (issue #4): a send whose device fan-out comes out empty answers
-// with a real key and never reaches the server, which is indistinguishable from
-// success on the SendResult alone. The ack is the only authority that can settle
-// it, so it has to reach the edge as a typed event, not as the Raw catch-all.
-#[test]
-fn maps_server_ack_so_a_send_can_be_confirmed_against_the_server() {
-    let event = Event::ServerAck(
-        ServerAck::builder()
-            .id("3EB0ABCDEF".to_string())
-            .class("message".to_string())
-            .from(jid_of(SENDER_JID))
-            .timestamp(wacore::time::from_secs(1_717_932_222).unwrap())
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::ServerAck(a)) => {
-            // Correlates with SendResult.key.id; that pairing is the whole point.
-            assert_eq!(a.id, "3EB0ABCDEF");
-            assert_eq!(a.class, "message");
-            assert_eq!(a.from, wire(SENDER_JID));
-            assert_eq!(a.timestamp, 1_717_932_222_000);
-            // A plain ack is not a nack: the error field stays empty.
-            assert!(a.error.is_empty());
-        }
-        other => panic!("expected server ack, got {other:?}"),
-    }
-}
-
-// A nack is otherwise only a library log line. Relaying the code is what
-// lets the edge tell "the server refused this" from "no ack yet".
-#[test]
-fn server_nack_relays_its_error_code() {
-    let event = Event::ServerAck(
-        ServerAck::builder()
-            .id("3EB0FAILED".to_string())
-            .class("message".to_string())
-            .error("479".to_string())
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::ServerAck(a)) => {
-            assert_eq!(a.error, "479");
-            // Absent server attrs stay proto3 defaults, never a fake value; an
-            // absent jid is an unset field (#122).
-            assert_eq!(a.from, None);
-            assert_eq!(a.timestamp, 0);
-        }
-        other => panic!("expected server ack, got {other:?}"),
-    }
-}
-
-// REGRESSION (issue #11): a reconnect can arm a resume for hundreds of events
-// and then be torn down mid-drain, leaving the backlog on the server. The two
-// numbers that make that visible have to be typed, not buried in Raw.
-#[test]
-fn maps_offline_sync_preview_with_the_server_count() {
-    let event = Event::OfflineSyncPreview(
-        OfflineSyncPreview::builder()
-            .total(711)
-            .messages(600)
-            .notifications(100)
-            .receipts(11)
-            .calls(0)
-            .statuses(0)
-            .app_data_changes(0)
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::OfflineSyncPreview(p)) => {
-            assert_eq!(p.total, 711);
-            assert_eq!(p.messages, 600);
-            assert_eq!(p.notifications, 100);
-            assert_eq!(p.receipts, 11);
-        }
-        other => panic!("expected offline sync preview, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_offline_sync_completed_with_what_was_delivered() {
-    let event = Event::OfflineSyncCompleted(OfflineSyncCompleted::builder().count(5).build());
-    match map_one(&event) {
-        Some(PbEvent::OfflineSyncCompleted(c)) => assert_eq!(c.count, 5),
-        other => panic!("expected offline sync completed, got {other:?}"),
-    }
-}
-
-// Issue #38 (upstream #1380): the interrupted resume is typed like its two
-// siblings, and never folded into OfflineSyncCompleted: "not caught up" is a
-// different statement from "done".
-#[test]
-fn maps_offline_sync_interrupted_with_both_counts() {
-    let event = Event::OfflineSyncInterrupted(
-        OfflineSyncInterrupted::builder()
-            .total(711)
-            .delivered(300)
-            .build(),
-    );
-    match map_one(&event) {
-        Some(PbEvent::OfflineSyncInterrupted(i)) => {
-            assert_eq!(i.total, 711);
-            assert_eq!(i.delivered, 300);
-        }
-        other => panic!("expected offline sync interrupted, got {other:?}"),
-    }
-}
-
-// The app-state updates are tested in `app_state_update_tests.rs` (#134), and
-// every field of a call in `call_event_tests.rs` (#135).
-
-#[test]
-fn maps_incoming_call_offer_to_typed_call_event() {
-    let event = Event::IncomingCall(Box::new(
-        IncomingCall::builder()
-            .from(jid_of(SENDER_JID))
-            .stanza_id("STANZA-CALL-1".to_string())
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .offline(false)
-            .action(CallAction::Offer {
-                call_id: "CALL-ID-1".to_string(),
-                call_creator: jid_of(SENDER_JID),
-                caller_pn: None,
-                caller_country_code: None,
-                device_class: None,
-                joinable: true,
-                is_video: false,
-                audio: vec![],
-                group_jid: None,
-            })
-            .build(),
-    ));
-    match map_one(&event) {
-        Some(PbEvent::Call(c)) => {
-            assert_eq!(c.from, wire(SENDER_JID));
-            // call_id is the CallAction id, NOT the stanza id.
-            assert_eq!(c.call_id, "CALL-ID-1");
-            // #135: the stanza id is its own field, not a key of a JSON blob.
-            assert_eq!(c.stanza_id, "STANZA-CALL-1");
-            assert!(matches!(c.action, Some(pb::call_event::Action::Offer(_))));
-        }
-        other => panic!("expected call event, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_incoming_call_terminate_action_token() {
-    let event = Event::IncomingCall(Box::new(
-        IncomingCall::builder()
-            .from(jid_of(SENDER_JID))
-            .stanza_id("STANZA-CALL-2".to_string())
-            .timestamp(wacore::time::from_secs(1_717_932_000).unwrap())
-            .offline(false)
-            .action(CallAction::Terminate {
-                call_id: "CALL-ID-2".to_string(),
-                call_creator: jid_of(SENDER_JID),
-                // Why the peer hung up. Absent = a plain missed call.
-                reason: None,
-                duration: Some(42),
-                audio_duration: None,
-            })
-            .build(),
-    ));
-    match map_one(&event) {
-        Some(PbEvent::Call(c)) => {
-            assert_eq!(c.call_id, "CALL-ID-2");
-            // #135: the oneof case names the action.
-            assert!(matches!(
-                c.action,
-                Some(pb::call_event::Action::Terminate(_))
-            ));
-        }
-        other => panic!("expected call event, got {other:?}"),
-    }
-}
-
-#[test]
-fn maps_pairing_code() {
-    let event = Event::PairingCode(
-        PairingCode::builder()
-            .code("12345678".to_string())
-            .timeout(Duration::from_secs(180))
-            .build(),
-    );
-    match map_one(&event) {
-        Some(pb::event_envelope::Event::Pairing(update)) => {
-            assert_eq!(
-                update.event,
-                Some(pb::pairing_update::Event::PairCode("12345678".into()))
-            );
-        }
-        other => panic!("expected pairing code, got {other:?}"),
-    }
-}

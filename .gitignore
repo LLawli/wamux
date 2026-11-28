@@ -10,3 +10,5 @@
 /dist
 # Bytecode from scripts/tests importing scripts/gen-third-party.py (#83).
 __pycache__/
+# Notes for one machine (build caps, local wrappers); never committed.
+/CLAUDE.local.md
