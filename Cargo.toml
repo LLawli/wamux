@@ -46,7 +46,7 @@ bytes = "1"
 # #77: resolves `socket_group` by name through NSS (`Group::from_name`), which
 # std does not offer. No default features: only `user` and `fs` (the daemon's own
 # umask, and the tests') are compiled.
-nix = { version = "0.31", default-features = false }
+nix = { version = "0.32", default-features = false }
 # The global allocator of the musl build (#218): musl's own malloc measured
 # slower than glibc's in steady-state message load; the numbers are in main.rs.
 mimalloc = "0.1"
@@ -68,7 +68,7 @@ sqlx = { version = "0.9", default-features = false, features = [
 # pin: pre-1.0 and fast-moving, and its `$N` binding (by appearance, not by
 # number) is pinned by a test. No default features: they pull tantivy (fts) and
 # mimalloc, and tantivy brings an unsound `lru` (RUSTSEC-2026-0253).
-turso = { version = "=0.8.1", default-features = false }
+turso = { version = "=0.8.4", default-features = false }
 
 # whatsapp-rust stack (Postgres backend => drop the default `sqlite-storage`).
 #
