@@ -59,6 +59,18 @@ jobs:
       - name: binary is static
         run: scripts/check-static-binary.py dist/bin/wamux
 
+      # The Debian package carries the file checked above, never a rebuild of it
+      # (#277): build-deb.py only packages, and check-deb.sh compares the bytes,
+      # then installs the package on the runner and runs the installed binary.
+      - name: build deb
+        run: scripts/build-deb.py debian "${GITHUB_REF_NAME#v}" dist/bin/wamux dist
+
+      - name: check deb
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/check-deb.sh "dist/wamux_${version}_amd64.deb" debian dist/bin/wamux
+          ( cd dist && sha256sum "wamux_${version}_amd64.deb" > "wamux_${version}_amd64.deb.sha256" )
+
       # The image job takes this exact file instead of compiling its own.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -66,11 +78,13 @@ jobs:
           path: dist/bin/wamux
           if-no-files-found: error
 
-      # Provenance for the tarball (#78). After the build, before the upload:
-      # the release job publishes only files that were attested.
+      # Provenance for the tarball and the .deb (#78). After the build, before
+      # the upload: the release job publishes only files that were attested.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.tar.gz
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.deb
 
       # What the release job publishes. Attestations bind to the file's digest,
       # so the copy it downloads verifies against the one attested here.
@@ -80,6 +94,69 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+            dist/*.deb
+            dist/*.deb.sha256
+          if-no-files-found: error
+
+  # The Android build (#277): one bionic binary, packaged as a tarball and as a
+  # Termux .deb. The linux job already ran the gates on this commit, so this one
+  # only builds and checks what it ships.
+  android:
+    name: tarball + deb (android termux)
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Keeps the runner image's stable out of the cache key, see the `quick` job in ci.yml (#237).
+      - name: drop the runner's toolchains
+        run: rustup toolchain list --quiet | while read -r name; do rustup toolchain uninstall "$name"; done
+
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+        with:
+          cache: true
+
+      # The NDK comes with the runner image (ANDROID_NDK_LATEST_HOME), which
+      # scripts/android-env.sh reads; only the rust target is added by hand.
+      - name: android target
+        run: rustup target add aarch64-linux-android
+
+      # Same script and same feature set as the CI job, so the release builds
+      # what a pull request already built.
+      - name: build tarball
+        run: scripts/release-tarball.sh "${GITHUB_REF_NAME#v}" dist aarch64-linux-android
+
+      # Android starts only a bionic aarch64 binary: a static musl one cannot
+      # resolve names there.
+      - name: binary runs on android
+        run: scripts/check-android-binary.py dist/bin/aarch64-linux-android/wamux
+
+      - name: build deb
+        run: scripts/build-deb.py termux "${GITHUB_REF_NAME#v}" dist/bin/aarch64-linux-android/wamux dist
+
+      - name: check deb
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/check-deb.sh "dist/wamux_${version}_aarch64.deb" termux dist/bin/aarch64-linux-android/wamux
+          ( cd dist && sha256sum "wamux_${version}_aarch64.deb" > "wamux_${version}_aarch64.deb.sha256" )
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.deb
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wamux-release-android
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/*.deb
+            dist/*.deb.sha256
           if-no-files-found: error
 
   macos:
@@ -140,7 +217,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [linux, macos]
+    needs: [linux, macos, android]
     runs-on: ubuntu-26.04
     # Publishing only: the builds above already hold the attestation scopes.
     permissions:
@@ -164,15 +241,40 @@ jobs:
       # it appears minutes after the release itself.
       - name: verification instructions
         run: |
-          tarball=$(cd dist && echo *.tar.gz)
+          linux_tarball=$(cd dist && echo *-x86_64-unknown-linux-musl.tar.gz)
+          android_tarball=$(cd dist && echo *-aarch64-linux-android.tar.gz)
+          debian_deb=$(cd dist && echo *_amd64.deb)
+          termux_deb=$(cd dist && echo *_aarch64.deb)
           pkg=$(cd dist && echo *.pkg)
           {
             printf '\n## Verify\n\n'
-            printf 'The tarball is a static musl binary and the PKG is a universal macOS installer. All three artifacts carry a build provenance attestation. The container image is published by a job that starts only after this release succeeds, so it can appear a few minutes later.\n\n'
+            printf 'The Linux tarball and the Debian package carry a static musl binary, the Android tarball and the Termux package a bionic one, and the PKG is a universal macOS installer. Every artifact carries a build provenance attestation. The container image is published by a job that starts only after this release succeeds, so it can appear a few minutes later.\n\n'
             printf '```\n'
-            printf 'gh attestation verify %s -R %s\n' "$tarball" "$GITHUB_REPOSITORY"
-            printf 'gh attestation verify %s -R %s\n' "$pkg" "$GITHUB_REPOSITORY"
+            for artifact in "$linux_tarball" "$debian_deb" "$android_tarball" "$termux_deb" "$pkg"; do
+              printf 'gh attestation verify %s -R %s\n' "$artifact" "$GITHUB_REPOSITORY"
+            done
             printf 'gh attestation verify oci://ghcr.io/%s:%s -R %s\n' "${GITHUB_REPOSITORY,,}" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY"
+            printf '```\n'
+          } >> dist/notes.md
+
+      - name: Debian and Termux install instructions
+        run: |
+          debian_deb=$(cd dist && echo *_amd64.deb)
+          termux_deb=$(cd dist && echo *_aarch64.deb)
+          {
+            printf '\n## Install on Debian/Ubuntu\n\n'
+            printf 'The package (amd64) installs /usr/bin/wamux and a systemd user unit, and starts nothing:\n\n'
+            printf '```\n'
+            printf 'curl -LO https://github.com/%s/releases/download/%s/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$debian_deb"
+            printf 'sudo apt install ./%s\n' "$debian_deb"
+            printf 'systemctl --user enable --now wamux\n'
+            printf '```\n'
+            printf '\n## Install in Termux\n\n'
+            printf 'The package (aarch64, Android 7 or newer) installs wamux and a termux-services service, disabled until you enable it. The defaults put the socket, spool and SQLite store under the Termux prefix. See docs/TERMUX.md for what keeps it alive on Android:\n\n'
+            printf '```\n'
+            printf 'curl -LO https://github.com/%s/releases/download/%s/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$termux_deb"
+            printf 'apt install ./%s\n' "$termux_deb"
+            printf 'pkg install termux-services && sv-enable wamux\n'
             printf '```\n'
           } >> dist/notes.md
 
@@ -198,7 +300,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "wamux ${GITHUB_REF_NAME#v}" \
             --notes-file dist/notes.md \
-            dist/*.tar.gz dist/*.pkg dist/*.sha256
+            dist/*.tar.gz dist/*.deb dist/*.pkg dist/*.sha256
 
   image:
     name: ghcr image

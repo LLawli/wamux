@@ -1,0 +1,9 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# termux-services (runit) service for wamux. The defaults of the Termux build
+# (socket, spool and SQLite store under the Termux prefix) need no environment,
+# so none is set here. runit does not pass on a login shell's exports and starts
+# this from the service directory, so overrides go in
+# $PREFIX/var/service/wamux/wamux.toml (the daemon reads ./wamux.toml), which an
+# upgrade of the package leaves alone, unlike this file. stderr joins stdout so
+# the log service sees both.
+exec wamux 2>&1
