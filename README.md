@@ -311,14 +311,14 @@ writes to WhatsApp is in
   Docker, container-to-container), who may open it (mode, group, peer
   allowlist), the media spool, the storage engines, encryption at rest and
   verifying a release.
-- `docs/BREAKING-CHANGES-*.md`: what each breaking change asks of an edge or an
+- `docs/upgrading/`: what each breaking change asks of an edge or an
   operator, and how to migrate. With the comments in the `.proto` files, they
   are where the core's promises to an edge are written down.
 - [docs/PRD.md](docs/PRD.md): product requirements and the relay-pure rationale.
 - [docs/SPEC.md](docs/SPEC.md): the technical spec.
 - [docs/store-trait-defaults.md](docs/store-trait-defaults.md): which default
   bodies of the `wacore` store traits the engines keep, and why.
-- `docs/crate-notes/`: a snapshot of the `whatsapp-rust` 0.6.0 API taken during
+- `docs/archive/crate-notes/`: a snapshot of the `whatsapp-rust` 0.6.0 API taken during
   the port; historical, so check the pinned revision's source before relying
   on it.
 - `CLAUDE.md` / `AGENTS.md`: contributor conventions (also consumed by coding

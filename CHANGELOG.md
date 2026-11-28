@@ -6,2119 +6,389 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 While the version is `0.x`, the gRPC contract in `crates/wamux-proto/proto/`
-may change in a minor release. Breaking wire changes are called out under
-**Changed** with the migration note, since the edge that consumes this socket
-has to follow them.
+may change in a minor release. Breaking changes are marked **Breaking** under
+**Changed**, and what to do about each is in the upgrade guides,
+[docs/upgrading/](docs/upgrading/README.md), one per version step.
 
 ## [Unreleased]
 
 ### Added
 
-- **Android (Termux) and Debian packages** (issue #277). Each release now ships:
-  - `wamux-<version>-aarch64-linux-android.tar.gz` and
-    `wamux_<version>_aarch64.deb`: one aarch64 binary built for Android's own C
-    library (a static musl binary cannot resolve names on Android), checked by
-    `scripts/check-android-binary.py`. The `.deb` is for Termux and installs a
-    `termux-services` service, disabled until `sv-enable wamux`. See
-    `docs/TERMUX.md`, which also lists what Android does to a background process
-    and how to turn it off.
-  - `wamux_<version>_amd64.deb`: the static musl binary, a systemd user unit and
-    the docs, for Debian and Ubuntu (`docs/DEPLOYMENT.md`, "Debian package").
-  - A `termux` cargo feature: the socket, the media spool and the SQLite store
-    default to paths under Termux's install prefix, so the daemon starts there
-    with no `WAMUX_*` variable. A plain Android build (an app that embeds the
-    daemon) has no defaults for them and refuses to start until `socket_path`,
-    `media_spool_dir` and `database_url` are set, naming each unset variable.
-  - `scripts/release-tarball.sh` takes the target as its third argument, and CI
-    builds, checks and packages the Android artifacts on every pull request.
-
-- **Sound stickers** (issue #278): a sticker with a short audio clip that
-  plays when tapped (`audioStickerMessage`).
-  - Sending: a `SendMedia` header with `media_type` STICKER and the new
-    `sticker_audio` (`StickerAudio { mime_type, seconds }`) takes the clip's
-    bytes as `sticker_audio` parts, in any order with the image's `chunk`
-    parts. The core uploads both files and sends the sticker inside
-    `audioStickerMessage`, carrying the clip as its `AudioMessage` (with the
-    streaming sidecar). `media_max_bytes` applies to each file. The core does
-    not transcode: the edge supplies Ogg/Opus.
-  - Refusals, all `INVALID_ARGUMENT` and before anything is sent:
-    `sticker_audio` on a media type other than STICKER (before the first
-    byte), a `sticker_audio` part without `sticker_audio` in the header, and a
-    header with `sticker_audio` but no clip bytes.
-  - Receiving: `InboundMessage.sticker_audio` describes the clip
-    (`MEDIA_TYPE_AUDIO`, so `DownloadMedia` fetches it like any audio) when a
-    sticker carries one; `media` stays the sticker image. The echo of a sent
-    sound sticker carries it too.
-  - Additive: a client that never sets or reads the new fields sees exactly
-    the previous behavior.
-- **`ContactService.UnsubscribePresence`** (issue #271): releases a
-  `SubscribePresence`, taking the same `SubscribePresenceRequest`. It relays
-  the library's unsubscribe, which sends `<presence type="unsubscribe">` and
-  stops renewing the subscription on reconnect. The library forgets the jid
-  only after the stanza is sent, so an error leaves the subscription in place:
-  retry to release it. Additive: no existing field or RPC changes; an edge
-  calling it on an older daemon gets `UNIMPLEMENTED`.
-- **`DeleteMessage` revokes another member's group message as an admin**
-  (issue #276). With `for_everyone`, a target key with `from_me = false` and a
-  `participant` in a group now goes out as an admin revoke (`edit="8"`, the
-  protocol key naming the author exactly as given, LID or phone number). A key
-  with `from_me = true` is still a sender revoke. The RPC answers once the
-  stanza is sent; when the account is not an admin the server refuses it with
-  a `ServerAckEvent` whose `error` is `"403"`, for the id the revoke's echo
-  carries in `key.id`. No proto change.
+- **Android (Termux) and Debian packages** (#277). Each release ships
+  `wamux-<version>-aarch64-linux-android.tar.gz` and `wamux_<version>_aarch64.deb`
+  (for Termux, with a `termux-services` service, disabled until
+  `sv-enable wamux`), and `wamux_<version>_amd64.deb` (static binary, systemd
+  user unit and docs, for Debian and Ubuntu). See `docs/TERMUX.md` and
+  `docs/DEPLOYMENT.md`, "Debian package".
+- **A `termux` cargo feature** (#277): the socket, the media spool and the SQLite
+  store default to paths under Termux's prefix. A plain Android build has no
+  defaults and refuses to start until `socket_path`, `media_spool_dir` and
+  `database_url` are set.
+- **Sound stickers** (#278). `SendMedia` with `media_type` STICKER and the new
+  `sticker_audio` header field takes the clip as `sticker_audio` parts (Ogg/Opus,
+  not transcoded); `media_max_bytes` applies to each file. On receive,
+  `InboundMessage.sticker_audio` describes the clip, downloadable like any audio.
+  Misuse is `INVALID_ARGUMENT` before anything is sent. Additive.
+- **`ContactService.UnsubscribePresence`** (#271) releases a `SubscribePresence`.
+  On error the subscription stays in place.
+- **`DeleteMessage` revokes another member's group message as an admin** (#276):
+  `for_everyone` with `from_me = false` and a `participant` in a group. A non-admin
+  gets a `ServerAckEvent` with `error` `"403"`. No proto change.
 
 ### Changed
 
-- **SQLite creates the store's directory** (issue #277). Opening a `sqlite://`
-  database whose directory does not exist now creates it, mode `0700` (the
-  store holds every account's keys), instead of failing with "No such file or
-  directory". A directory that already exists is not touched.
-
-- **`DeleteMessage` for everyone refuses a key no revoke can be built from**
-  (issue #276): `from_me = false` outside a group, or in a group without a
-  `participant`, answers `INVALID_ARGUMENT` before the account is looked up,
-  and nothing is sent. Such a key used to go out as a sender revoke with
-  `fromMe = true`, which named a different message (the account's own with
-  that id), so it never deleted the one asked for.
-- **whatsapp-rust moves from `66eb7331` to `c03cb783`, and the toolchain from
-  `nightly-2026-06-16` to stable `1.100.0`** (issue #281), the release
-  upstream builds on. A source build needs no nightly any more, and
-  `.cargo/config.toml` (which only held the nightly `-Zthreads` flag) is gone.
-  The store format is unchanged: no migration, and the previous binary opens a
-  store the new one wrote (verified on a live account).
-- **Text and media inside a wrapper are projected** (issue #281). An inbound or
-  echoed message wrapped in a spoiler, a group mention, view-once, ephemeral,
-  an audio sticker, an edit or a `device_sent` envelope used to reach the edge
-  with its mentions and quote but no `text`, `media` or `caption`, and a revoke
-  inside an ephemeral wrapper was not seen as a delete. `InboundMessage` now
-  reads text, reaction, media, caption, sticker pack and the edit or revoke
-  from the same unwrapped message the mentions and quote come from.
-  `raw_message` still carries the payload whole, wrappers included. An audio
-  sticker's `media` is the sticker underneath, and its clip is
-  `sticker_audio` (#278). No proto change.
-- **The offline drain dispatches up to 8 stanzas at a time** (issue #281, the
-  library default). `monotonic_seq` still follows dispatch order, but after a
-  reconnect that order holds only within each chat, not across chats. The
-  `events.proto` comment says so.
-- **`RecipientFanout.addressed` counts hosted devices** (issue #281): a DM to a
-  WhatsApp Business account on Coexistence now also encrypts to its hosted
-  devices, so `addressed` can be higher than before for those recipients.
+- **SQLite creates the store's directory** (#277), mode `0700`, when it does not
+  exist. An existing directory is not touched.
+- **Breaking: `DeleteMessage` for everyone refuses a key no revoke can be built
+  from** (#276): `from_me = false` outside a group, or in a group without
+  `participant`, is `INVALID_ARGUMENT` and sends nothing. It used to send a
+  revoke of a different message. See
+  [0.2.4 to next](docs/upgrading/0.2.4-to-next.md).
+- **whatsapp-rust `c03cb783` and stable Rust `1.100.0`** (#281): a source build
+  needs no nightly. The store format is unchanged, and the previous binary opens
+  a store the new one wrote.
+- **Text and media inside a wrapper are projected** (#281): a message wrapped in
+  a spoiler, mention, view-once, ephemeral, audio sticker, edit or `device_sent`
+  envelope now carries `text`, `media` and `caption`, and a revoke inside an
+  ephemeral wrapper is seen as a delete. No proto change.
+- **The offline drain dispatches up to 8 stanzas at a time** (#281): after a
+  reconnect, `monotonic_seq` order holds within each chat, not across chats.
+- **`RecipientFanout.addressed` counts hosted devices** (#281), so it can be
+  higher for a WhatsApp Business account on Coexistence.
 
 ### Fixed
 
-- **`ListAccounts` carries each account's `jid`** (issue #274). It answered
-  every account with `jid` unset, even a paired, connected one, so a client
-  had to call `GetAccountStatus` per account to learn its own number. The
-  listing now reads it the way `GetAccountStatus` does: the paired device's
-  phone number (or LID) from the store, so a stopped account keeps it, and
-  unset while the account has never paired. `CreateAccount` still answers
-  without one, since a new account is never paired. No proto change.
-- **The streaming sidecar of a sent video or audio matches the one the WhatsApp
-  apps build** (issue #281, upstream #1922). Each 64 KiB window now opens with
-  the 16 bytes before it (the IV for the first), which is the CBC block a
-  reader that seeks to that window needs; the old windows were laid out
-  differently, so their HMACs did not match what the apps compute.
-
-- **`CreateAccount` with a taken `external_ref` answers `ALREADY_EXISTS`**
-  (issue #269), with the message `account with external_ref '<ref>' already
-  exists`. It answered `INTERNAL`: no store engine told the UNIQUE violation
-  apart from any other database error. Postgres, SQLite and Turso now report
-  it the same way, so an edge that adopts an existing account by creating it
-  and reading `ALREADY_EXISTS` works on every engine. No proto change.
+- **`ListAccounts` carries each account's `jid`** (#274), as `GetAccountStatus`
+  does; unset only for an account that never paired.
+- **The streaming sidecar of a sent video or audio matches the WhatsApp apps'**
+  (#281, upstream #1922).
+- **`CreateAccount` with a taken `external_ref` answers `ALREADY_EXISTS`** (#269)
+  on every engine; it answered `INTERNAL`.
 
 ### Security
 
-- **`url` moves from 2.5.8 to 2.5.9** (RUSTSEC-2026-0592): `Url::origin()`
-  recursed once per nested `blob:` prefix and could overflow the stack. It
-  comes in through sqlx. Lockfile only, with `form_urlencoded` 1.2.3.
+- **`url` 2.5.9** (RUSTSEC-2026-0592): `Url::origin()` could overflow the stack
+  on nested `blob:` prefixes. Lockfile only.
 
 ## [0.2.4] - 2026-11-10
 
 ### Added
 
-- **`SendText`, `SendMedia` and `SendContact` take `quoted_message`** (issue
-  #230): the quoted message's serialized `wa.Message`, relayed as
-  `ContextInfo.quotedMessage`, so receivers that do not hold the original
-  still show the quote instead of an empty one. It is the same field
-  `SendInteractiveReply` already had. Bytes sent without a quote
-  (`quote.quoted`), or that are not a `wa.Message`, are `InvalidArgument`;
-  `SendMedia` refuses them before uploading. The core looks nothing up.
-- **Config key `blocking_shutdown_timeout_ms`** (issue #239, env
-  `WAMUX_BLOCKING_SHUTDOWN_TIMEOUT_MS`, default 5000): after the accounts
-  stop, how long the runtime waits for its blocking tasks before the process
-  exits without them. With the defaults the worst case after SIGTERM is
-  10 s (`shutdown_grace_ms`) + 3 s (`graceful_stop_timeout_ms`) + 5 s, well
-  under systemd's 90 s.
-- **`store_decode_audit`** (`wamux-tools`): decodes every stored Signal and
-  device blob of a store copy with the pinned library, the way a restart reads
-  them, and prints per-table counts (never a key or an address). Run it before
-  a whatsapp-rust bump ships: a stricter decoder drops the session it rejects,
-  and no test holds production records.
+- **`SendText`, `SendMedia` and `SendContact` take `quoted_message`** (#230), the
+  quoted message's serialized `wa.Message`, so receivers without the original
+  still show the quote. Bytes that are not a `wa.Message` are `InvalidArgument`.
+- **Config key `blocking_shutdown_timeout_ms`** (#239, env
+  `WAMUX_BLOCKING_SHUTDOWN_TIMEOUT_MS`, default 5000): how long shutdown waits for
+  blocking tasks before exiting without them.
 
 ### Changed
 
-- **whatsapp-rust moves from `3870ce5c` to `66eb7331`**, 68 commits, same
-  toolchain (`nightly-2026-06-16`). No proto field changes. What reaches the
-  edge:
-  - the library now verifies a contact's device list against its ADV
-    signature (upstream #1836, #1864, #1866, #1868, #1870). A companion it
-    cannot verify is left out of a group send, a DM to a list without the
-    signature fails, and an inbound message from such a companion arrives as an
-    undecryptable message, with a retry receipt asking the sender to resend;
-  - `Logout` and `stop` log, once, what the library's shutdown left unfinished
-    (a device snapshot that did not flush, message secrets not written, a drain
-    that timed out). The RPCs succeed either way, as before;
-  - a group action this build does not know yet (the library's enum is now
-    `#[non_exhaustive]`) relays as `GroupUnknownAction` with its wire tag.
-    `scripts/check-group-actions.py` fails CI until such an action is mapped,
-    which is what the build used to do;
-  - the text of a WhatsApp error in the logs is the library's redacted form
-    (`other(len=N)` instead of the server's text).
-  Every stored blob of a real two-account store (7,257: device, sessions,
-  sender keys, prekeys, identities) decodes with the new Signal engine
-  (upstream #1842), checked with `store_decode_audit`. Live, on two real
-  numbers paired to a second daemon: DMs both ways `delivered`, the same
-  channel history as `3870ce5c`, and `3870ce5c` started on the store this
-  version wrote connects and delivers too, so a rollback keeps the sessions.
-- **`scripts/ci.sh` is faster** (issue #233). Measured on the maintainer's
-  laptop with `--full`: the pull request scenario went from 1541 s to
-  864 s, a cold run from 2338 s to 1531 s, and `target/debug` from 76.2 to
-  28.7 GiB. Three changes: the dev profile uses `debug = "line-tables-only"`
-  (backtraces and panics keep file:line; a debugger loses variable inspection,
-  `CARGO_PROFILE_DEV_DEBUG=2` brings it back); `.cargo/config.toml` sets
-  `-Zthreads=4` for dev and CI builds; and `ci.sh` compiles the test binaries
-  of each feature set in one `cargo test --no-run` before the filtered runs,
-  instead of one binary at a time. No test was removed or filtered differently.
-- **The release still builds without the dev flag.** `release-tarball.sh` and
-  `release-pkg.sh` run `cargo build` with `RUSTFLAGS=""`, so the attested
-  binaries are compiled as before. `scripts/check-release-pins.py` has a new
-  rule (R16) that fails when a release `cargo build` does not clear
-  `RUSTFLAGS`, or when a `Dockerfile*` copies `.cargo` or the whole context.
-- **The integration tests of `crates/wamux` build as 11 binaries, not 42**
-  (issue #235). The suites live in `tests/storage/`, `tests/daemon/` and
-  `tests/services/` (the `stress` ones), one binary each. A suite that owns
-  process-global state (umask, a global tracing subscriber or metrics recorder,
-  the allocator, a peak-RSS reading, or an ordered `--exact` run) keeps a binary
-  of its own. A new suite goes into its group's `main.rs` as a `mod`.
-  `scripts/ci.sh` picks a suite out of a group with `must_run_matching`
-  (`scripts/lib/test-filter.sh`), which lists the tests, keeps the names a regex
-  matches (suite and engine in one regex) and fails when it matches none. Every
-  test runs the same number of times as before: 2809 passes on `ci.sh --full`
-  and 1144 on `--no-postgres`, checked name by name. Measured on the
-  maintainer's laptop, in the pull request cache state: the clippy and test
-  build stages take 82 s less, and the test executables of one run go from
-  133 (14.5 GiB) to 62 (7.2 GiB). The total wall time dropped by 14 s in one
-  pair of runs and by 166 s in the other: on a machine shared with other
-  builds, that spread is noise, so the stage numbers are the ones to trust.
+- **whatsapp-rust `66eb7331`.** No proto change. The library now verifies device
+  lists against their ADV signature: a companion it cannot verify is left out of
+  a group send, and its messages arrive undecryptable. A group action this build
+  does not know arrives as `GroupUnknownAction`. WhatsApp error text in the logs
+  is redacted (`other(len=N)`). The store stays readable by 0.2.3. See
+  [0.2.3 to 0.2.4](docs/upgrading/0.2.3-to-0.2.4.md).
 
 ### Fixed
 
 - **A contact whose identity changes no longer breaks its device-list
-  resolution.** The new library asks the store for every address a user holds
-  Signal state under, to clean up after a verified identity change; the trait
-  default refuses, and the library propagates that, so the contact's lookup
-  failed (in a group refresh too) and the identity change never reached the
-  edge. All three engines answer it now, from sessions, identities and
-  sender-key devices, matching the user exactly (`_` and `%` are literal, a
-  longer number is another person).
-- **A bot stuck in its handshake no longer outlives `stop`** (issue #252): the
-  library waits on the transport and the noise handshake without watching for
-  shutdown, so on a silent upstream `stop` timed out and detached the
-  supervisor. The bot stayed alive for up to the connect timeout, kept its
-  budget slot, and when the old supervisor finally exited it cleared the slot
-  of a connect made in the meantime, leaving that bot running but
-  uncontrollable. `stop` now aborts the supervisor when
-  `graceful_stop_timeout_ms` runs out and waits for the abort, which drops the
-  bot, and the budget slot is returned by a drop guard so it also comes back
-  on an abort.
-
-- **`GetAccountStatus` reads `LOGGED_OUT` as soon as `Logout` returns** (issue
-  #257). The connection state was applied by the task that drains the event
-  queue, so with a burst queued `Logout` answered first and the account read
-  `DISCONNECTED` until the queue caught up: 10 of 10 rounds with 20,000 events
-  queued. The state now moves when the library dispatches the event, which
-  also covers `BANNED` and a stop. The status can therefore lead the matching
-  `ConnectionStateChanged` by the queue's delay. `Event::Disconnected` no longer
-  overwrites `LOGGED_OUT` or `BANNED`.
-- **`logout_e2e` expects `LOGGED_OUT`** (issue #257): it reported a failure on a
-  logout that worked, because it compared the state with `DISCONNECTED`. Its
-  runbook entry no longer says a logged-out account can pair again.
-- **`PairWithQr` and `PairWithCode` refuse an account that holds a paired
-  identity** (issue #253). Such an account logs in and never asks for a QR or a
-  code, so the call stayed open with no frame and no error. It now returns
-  `FailedPrecondition` at once, before anything connects, whether the account is
-  running, stopped or logged out. Note for the edge: this includes a logged-out
-  account. `Logout` keeps the stored identity, the next connect logs in, and
-  WhatsApp answers 401, so that account never gets a QR. To pair again, call
-  `DeleteAccount` and `CreateAccount`, which gives a new uuid (#255 tracks keeping
-  it). Measured against WhatsApp: `PairWithQr` after `Logout` hung until the
-  client's own 30 s deadline before, and is refused in 0.02 s now.
-- **`PairWithQr` and `PairWithCode` fail when the connect fails** (issue #250). A
-  full connection budget or a bot that could not be built used to leave the call
-  open with no frame and no error, for as long as the client waited. The call now
-  returns the `Status` `ConnectAccount` gives (`ResourceExhausted`, `Unavailable`)
-  before any stream exists, and a failed build puts the account back in the state
-  it had instead of leaving it at `CONNECTING`, so `LOGGED_OUT` and `BANNED`
-  survive it. Measured against WhatsApp with `max_connected_accounts = 1` and one
-  account pairing: a second `PairWithQr` hung until the client's own 8 s deadline
-  before, and returns `ResourceExhausted` in 0.02 s now.
-- **An open `PairWithQr` or `PairWithCode` stream no longer holds the shutdown**
-  (issue #247). These streams wait on a phone and never ended on their own, so
-  every shutdown during a pairing waited the whole `shutdown_grace_ms` and the
-  client saw a torn connection. They now end cleanly when shutdown fires, the
-  way `SubscribeEvents` does. Note for the edge: a pairing stream can now end
-  with no terminal update, which means the daemon is stopping; asking again
-  once it is back is the caller's decision. Measured with a real QR on screen:
-  10.06 s and a transport error before, 0.06 s and a clean end of stream after.
-  The forwarder also ends as soon as its client hangs up, instead of staying
-  parked until the next pairing update.
-- **The daemon exits after SIGTERM even when a blocking task is stuck** (issue
-  #239). A connect whose `web.whatsapp.com/sw.js` read stalls after the TLS
-  handshake leaves a `spawn_blocking` thread in a socket read that nothing
-  cancels, and dropping the tokio runtime waited for it forever: the process
-  logged `wamux stopped`, removed its socket and stayed alive until SIGKILL,
-  so systemd saw a failed stop. The runtime is now built by hand and shut down
-  with `blocking_shutdown_timeout_ms`; past it the daemon logs
-  `blocking tasks still running after 5s; exiting without them` and exits 0.
-  Reproduced against the real host with a relay that stops forwarding after
-  8000 bytes: before, still alive 60 s after SIGTERM; after, exit 0 in 8 s
-  (ConnectAccount) and 18 s (an open PairWithQr stream, which holds the full
-  shutdown grace, #247).
-- **Pairing on the published image no longer fails with `SQLITE_IOERR_GETTEMPPATH`** (#229). The
-  `scratch` image has no `/tmp`, and an UPDATE over more than 64 KiB of pages inside a savepoint
-  (the first prekey upload after pairing) spills to a temp file. The SQLite store now keeps its
-  temporaries in memory (about 3 MB for a 3 MB savepoint, nothing measurable for the prekey batch;
-  store pages never reach a temp file) and the image ships a root-owned `/tmp` (mode 1777).
-- **The group commit no longer wedges every later write after SQLite rolls a batch back on its own**
-  (#229). After an I/O error or a full disk, the failed `ROLLBACK TO` left the batch open and every
-  following job failed the same way. The batch is now discarded, its waiters get an error, and the
-  next job starts a fresh one.
-- **CI jobs keep their Rust cache when the runner image changes** (issue
-  #237). rust-cache hashes every installed toolchain into its key, and the
-  hosted images ship a preinstalled stable whose version differs between images
-  of the same label (1.98.1 and 1.99.1 on `macos-15`), so the same commit
-  restored on one image and built cold on the next: 17 to 25 min on the macOS
-  jobs instead of 7 to 14. Every job that sets up Rust with the cache, in
-  `ci.yml` and `release.yml`, now uninstalls the image's toolchains first (12
-  to 18 s), so only the pinned nightly enters the key, whatever the image.
-  `scripts/check-rust-cache.py`, a new `ci.sh` stage, fails a cached Rust setup
-  that has no such step before it.
-- **The stress suites no longer reach the internet** (issue #234). Every
-  account they log in against the mock also fetched
-  `https://web.whatsapp.com/sw.js`, because the library looks up its client
-  version during `connect` and waits for it. On a loaded machine that fetch
-  pushed logins past the 10 s deadline, offline every login failed, and a
-  stalled read could hang a test binary forever. A `stress` build now pins the
-  library's own version, and its HTTP client refuses any host that is not
-  loopback. Measured on `messaging_service` under a CPU hog in the capped
-  build scope: from 6 failures and a slowest login of 7.8 s to none, with the
-  slowest login at 233 ms. Production builds still fetch the version as
-  before.
-- **pulldown-cmark 0.13.6** for RUSTSEC-2026-0433. Build time only: prost-build
-  renders the proto doc comments with it, and it does not reach the binary.
+  resolution**, in a group refresh too, on all three engines.
+- **A bot stuck in its handshake no longer outlives `stop`** (#252), and its
+  connection-budget slot is always returned.
+- **`GetAccountStatus` reads `LOGGED_OUT` as soon as `Logout` returns** (#257),
+  even with a burst of events queued.
+- **Breaking: `PairWithQr` and `PairWithCode` refuse an account that holds a
+  paired identity** (#253) with `FailedPrecondition`, including a logged-out
+  one, instead of hanging. To pair again, `DeleteAccount` and `CreateAccount`.
+- **`PairWithQr` and `PairWithCode` fail when the connect fails** (#250), with
+  `ResourceExhausted` or `Unavailable`, instead of staying open with no frame.
+- **An open pairing stream no longer holds the shutdown** (#247): it ends cleanly
+  with no terminal update, like `SubscribeEvents`.
+- **The daemon exits after SIGTERM even when a blocking task is stuck** (#239);
+  before, a stalled connect kept it alive until SIGKILL.
+- **Pairing on the published image no longer fails with
+  `SQLITE_IOERR_GETTEMPPATH`** (#229): SQLite keeps temporaries in memory and the
+  image ships a `/tmp`.
+- **The group commit no longer wedges every later write** after SQLite rolls a
+  batch back on its own (I/O error, full disk) (#229).
+- **pulldown-cmark 0.13.6** (RUSTSEC-2026-0433). Build time only.
 
 ### Security
 
-- **RUSTSEC-2026-0459 is ignored, with a trigger** (CVE-2026-119375,
-  published 2026-10-30; issue #260). The SQLite that sqlx bundles, from
-  `libsqlite3-sys` 0.30.1, can return uninitialized page-cache memory when
-  it opens a database with a `-wal` file of a different page size. The fix
-  (`libsqlite3-sys` 0.39) is out of reach: `sqlx-sqlite` 0.9.0 caps it below
-  0.38. The daemon opens only its own store (0600, in a 0700 directory), so
-  the files the attack needs are ones only the daemon's user can write. The
-  entry leaves `.cargo/audit.toml` with the sqlx release that lifts the cap.
+- **RUSTSEC-2026-0459 is ignored, with a trigger** (#260): the bundled SQLite can
+  return uninitialized memory when it opens a database whose `-wal` file has a
+  different page size. The fix is out of reach until sqlx lifts its cap; the
+  daemon opens only its own store (`0600` in a `0700` directory).
 
 ## [0.2.3] - 2026-10-29
 
 ### Added
 
-- **A native macOS build** (issue #231). Each release ships
-  `wamux-<version>-macos-universal.pkg` (Apple silicon and Intel in one
-  binary, joined with `lipo`) and its `.sha256`, with a build provenance
-  attestation. The PKG is not signed or notarized by Apple, so the README
-  documents the Gatekeeper path. It installs `/usr/local/bin/wamux` and starts
-  nothing; the docs, licenses, `wamux.toml.example` and an example LaunchAgent
-  (`contrib/io.github.llawli.wamux.plist`) land in `/usr/local/share/wamux/`.
-- **CI runs on macOS on every pull request.** `scripts/ci.sh --no-postgres` on
-  `macos-15`, and a second job builds the PKG, installs it, runs both slices
-  and starts and stops the installed daemon. The release builds linux and
-  macOS in parallel and publishes only when both passed.
-- `scripts/gen-third-party.py --check-covers` fails when an Apple target links
-  a crate `THIRD-PARTY-LICENSES.md` does not list; `check-third-party.sh` runs
-  it for both Apple targets.
+- **A native macOS build** (#231): `wamux-<version>-macos-universal.pkg` and its
+  `.sha256`, with a build provenance attestation. Not signed or notarized by
+  Apple (the README documents the Gatekeeper path). It installs
+  `/usr/local/bin/wamux` and an example LaunchAgent, and starts nothing.
 
 ### Changed
 
-- **The socket default on macOS is `/var/run/wamux.sock`.** `/run` cannot be
-  created there (the system volume is read-only). Linux keeps `/run/wamux.sock`.
-  Set `socket_path` or `WAMUX_SOCKET_PATH` to override either.
+- **The socket default on macOS is `/var/run/wamux.sock`** (`/run` cannot be
+  created there). Linux keeps `/run/wamux.sock`.
 
 ### Fixed
 
-- **`THIRD-PARTY-LICENSES.md` is the same on Linux and macOS** (issue #231).
-  The generator now reads license file names without regard to case, so a
-  case-insensitive filesystem no longer finds `LICENSE-Apache` (simdutf8) that
-  Linux missed. The file now includes simdutf8's Apache text.
-- **pulldown-cmark 0.13.5** for RUSTSEC-2026-0414. Build time only: prost-build
-  renders the proto doc comments with it, and it does not reach the binary.
+- **`THIRD-PARTY-LICENSES.md` is the same on Linux and macOS** (#231), and now
+  includes simdutf8's Apache text.
+- **pulldown-cmark 0.13.5** (RUSTSEC-2026-0414). Build time only.
 
 ## [0.2.2] - 2026-10-26
 
 ### Added
 
-- **A private reply, and a reply to a status, can be sent** (issue #217). When
-  a send's `quote.quoted.chat` names a chat other than the one the message goes
-  to, the core puts it in the context's `remoteJid`, as WhatsApp's clients do
-  for a private reply to a group message or a reply to a status. A reply in the
-  same chat carries no `remoteJid`, as before. This holds for SendText,
-  SendMedia, SendContact and SendInteractiveReply.
-- **The four events whatsapp-rust eab45737 added are typed** (issue #215). They
-  used to reach the edge as a `RawEvent` carrying the library's JSON, which is
-  not a contract and can change on any bump. Every field the library keeps
-  optional crosses as `optional`, so absent stays apart from false or 0.
-  - The "keep chats archived" setting is a new `AccountSettingUpdate` case,
-    `unarchive_chats` (`UnarchiveChatsSetting`). The flag is the inverse of the
-    phone's switch.
-  - `EventEnvelope.label_sublist = 38` (`LabelSublistUpdate`): one entry of a
-    label's sublist, keyed by `(predefined_id, chat)`, as an upsert of a sublist
-    id or a removal.
-  - `EventEnvelope.call_log_history = 39` (`CallLogHistory`, in `call.proto`): a
-    call-log record from a history sync, with the record fields `CallLogUpdate`
-    carries plus `call_id`, `call_creator`, an optional `from_me`, `sync_type`
-    and `chunk_order`.
-  - `EventEnvelope.reachout_timelock = 40` (`ReachoutTimelockUpdate`): the
-    account's reachout restriction as the server sent it, the deadline included
-    verbatim. The same notification still arrives right after as a
-    `MexNotification`.
+- **A private reply, and a reply to a status, can be sent** (#217): a
+  `quote.quoted.chat` other than the destination goes out as the context's
+  `remoteJid`, on SendText, SendMedia, SendContact and SendInteractiveReply.
+- **Four library events are typed** (#215): `AccountSettingUpdate.unarchive_chats`,
+  `EventEnvelope.label_sublist = 38`, `call_log_history = 39` and
+  `reachout_timelock = 40`. Optional library fields cross as `optional`.
 
 ### Changed
 
-- **The release is one static musl binary** (issue #218). The tarball is now
-  `wamux-<version>-x86_64-unknown-linux-musl.tar.gz` (it was the gnu build), and
-  the GHCR image carries the very same file: the release job builds and checks
-  it is static, the image job compiles nothing and verifies the pushed image
-  holds that binary. Verify with the new tarball name.
-- **The image is built on `scratch`**, with no shell and no libc, so
-  `docker exec ... sh` no longer works. The default `Dockerfile` (used by
-  `docker compose`) builds for musl; `Dockerfile.glibc` keeps the Debian
-  runtime (`docker build -f Dockerfile.glibc .`). The image also creates
-  `/var/cache/wamux`, the default media spool.
-- **The daemon sets its own umask to `077`**, first thing, for every command, so
-  the image needs no shell wrapper. The socket's parent directory, when the
-  daemon creates it, stays `0750` explicitly. systemd's `UMask=0077` remains as
-  a second layer.
-- **mimalloc is the allocator of the musl build.** musl's own allocator costs
-  +33% CPU per message on Postgres and +70% on SQLite in steady-state message
-  load (100 accounts x 100 texts); with mimalloc the gap to glibc is within 2%
-  and 10%. The gnu build is unchanged.
-- **A malformed `quote.quoted.chat` on a send is `InvalidArgument`** (issue
-  #217). The core used to ignore that field. Now it reads it, so a value that
-  is not a jid is refused like a malformed participant. Unset or empty is still
-  no chat.
-- **A `RawEvent` with kind `UnarchiveChatsSettingUpdate`, `LabelSublistUpdate`,
-  `CallLogHistory` or `ReachoutTimelockUpdate` no longer arrives** (issue #215):
-  each now has its typed message (see Added). An edge that read their JSON
-  reads the typed fields instead.
-- **A poll sent to a channel follows WA Web, through the library** (issue #220,
-  see `docs/BREAKING-CHANGES-2026-10-22.md`). whatsapp-rust now publishes a
-  channel poll itself (`Newsletter::send_poll`, upstream #1778), so the core's
-  copy of the poll builder is gone. On the wire, for a `@newsletter` target only:
-  - `selectable_count` is 1 for a single answer or 0 for several, and above 1 is
-    `InvalidArgument`;
-  - `SendPollResult.message_secret` is empty, since a channel poll has no secret;
-  - a blank question or option is `InvalidArgument`.
-  The stanza now carries `contenttype="text"` on its poll `<meta>`, as WA Web's
-  does. Polls to chats and groups are unchanged.
-- **whatsapp-rust moves from `eab45737` to `3870ce5c`** (issue #220), 11
-  commits. Two behavior changes reach the edge:
-  - an app-state lock mutation without a `locked` value is no longer reported as
-    an unlock (`LockChatUpdate`), because WA Web rejects it too (upstream #1781);
-  - media transfers get a 10-second connection budget, split across the
-    resolved addresses, instead of the operating system's connect deadline. A
-    silent first address now falls back to the next one in time (upstream #1776).
+- **Breaking: the release is one static musl binary** (#218). The tarball is
+  `wamux-<version>-x86_64-unknown-linux-musl.tar.gz`, and the GHCR image carries
+  the same file. See [0.2.1 to 0.2.2](docs/upgrading/0.2.1-to-0.2.2.md).
+- **Breaking: the image is built on `scratch`**, with no shell, so
+  `docker exec ... sh` no longer works. `Dockerfile.glibc` keeps a Debian
+  runtime. The image creates `/var/cache/wamux`, the default media spool.
+- **The daemon sets its own umask to `077`**, for every command.
+- **mimalloc is the musl build's allocator**, which keeps its CPU cost per
+  message within 2% (Postgres) and 10% (SQLite) of glibc.
+- **Breaking: a malformed `quote.quoted.chat` on a send is `InvalidArgument`**
+  (#217); the field used to be ignored.
+- **Breaking: the `RawEvent` kinds `UnarchiveChatsSettingUpdate`,
+  `LabelSublistUpdate`, `CallLogHistory` and `ReachoutTimelockUpdate` no longer
+  arrive** (#215): read the typed events above.
+- **Breaking: a poll sent to a channel follows WA Web** (#220): `selectable_count`
+  is 0 or 1, `message_secret` is empty, a blank question or option is refused.
+  Polls to chats and groups are unchanged.
+- **whatsapp-rust `3870ce5c`** (#220): a lock mutation without a `locked` value is
+  no longer reported as an unlock, and media transfers fall back to the next
+  address within a 10-second connect budget.
 
 ### Fixed
 
 - **An inbound quote names the quoted message's chat, and a reply with media
-  keeps its quote** (issue #217). `QuoteContext.quoted.chat` was always the
-  reply's own chat, so a private reply to a group message lost the group, and
-  a reply to a status lost `status@broadcast`: the subscriber looked for the
-  quoted message in the wrong chat. Measured in wamux-omarchy, 7 of 7 private
-  replies to groups arrived naming the direct chat. The chat now comes from the
-  context's `remoteJid` when it names one. The quote and the mentions were also
-  read only from an extended text, so a reply sent as an image, a video, a
-  document, a sticker or a voice note arrived with neither. They are now read
-  from whichever message type carries the context, disappearing and view-once
-  wrappers included. The send echo and channel history follow the same rule.
-- **Events of one account arrive in `monotonic_seq` order, and a replay during
-  a burst no longer loses one** (issue #213). Each event was published from a
-  task of its own, so two events could be stamped in one order and delivered in
-  the other: a subscriber saw seq 32, 31, 30 inside one millisecond during an
-  offline drain, and about 0.8% of a long recording arrived after a higher seq.
-  The replay ring held them out of order too, and the core's own replay dedupe
-  skips every live envelope at or below the highest seq it replayed, so a
-  subscriber that joined with `replay_from_ring` in the middle of a burst could
-  lose an event for good. Every account now publishes through one queue drained
-  by one task, the send echo included, and `SendResult` still returns only once
-  the echo is replayable. The contract now says so on
-  `EventEnvelope.monotonic_seq`: strictly increasing per account, in the order
-  the library dispatched, and back to 0 when the daemon restarts. No field
-  changes. Measured on a 100,000-event burst: no inversion, and 4 to 5 times
-  faster than a task per event.
+  keeps its quote** (#217). `QuoteContext.quoted.chat` was always the reply's
+  chat, and media replies arrived without quote or mentions.
+- **Events of one account arrive in `monotonic_seq` order, and a replay during a
+  burst no longer loses one** (#213). `monotonic_seq` is strictly increasing per
+  account and starts again at 0 when the daemon restarts.
 
 ### Security
 
-- **ctutils 0.4.5** (RUSTSEC-2026-0385, published 2026-10-23). Its mask
-  generation and `u128` comparisons were not constant-time. It reaches the
-  daemon through RustCrypto's `digest`, which the library's hashing uses.
-  Lockfile only; no code or wire change.
+- **ctutils 0.4.5** (RUSTSEC-2026-0385): non-constant-time comparisons, reached
+  through the library's hashing. Lockfile only.
 
 ## [0.2.1] - 2026-10-21
 
 ### Added
 
-- **`CallService`: reject an incoming call** (issue #200). A call reaches the
-  edge only as a `CallEvent`, and nothing let it decline one, so the phone kept
-  ringing. `RejectCall` takes a `RejectCallRequest` (`account`, `call_id`,
-  `peer`, `call_creator`) and answers `Empty`. The three identifiers come from
-  the `CallEvent`: `peer` is its `from`, `call_creator` its `call_creator`. They
-  stay separate because they differ for a companion device. Success means the
-  stanza was sent: the library sends one `<call><reject/></call>` and waits for
-  no answer. An empty `call_id` is `InvalidArgument` and nothing is sent. Placing
-  and answering calls stay out of scope. `scripts/ci.sh` now expects 1
-  CallService RPC covered by the socket suite. Additive: no field or RPC changes
-  for existing clients.
-- **`NewsletterService`: follow, unfollow, mute and create a channel** (issue
-  #199). The service could read channels and vote in their polls but not change
-  which ones the account follows, and the edge cannot compose any of these.
-  `FollowNewsletter` and `UnfollowNewsletter` take a `JidRequest` and answer
-  `Empty`: measured live, the server's answer to a join carries the channel id
-  but not its name, badge or this account's role, so `GetNewsletterMetadata` is
-  the way to read the channel after following it. `MuteNewsletter` takes a
-  `NewsletterMuteRequest` (`jid`, `muted`) and toggles the follower's mute (WA
-  Web's `MUTE_ADMIN_ACTIVITY`). `CreateNewsletter` takes a
-  `CreateNewsletterRequest` (`name`, optional `description`) and answers the new
-  channel's metadata; an empty name is `InvalidArgument` and nothing is sent. A
-  jid that is not a channel is refused by name before the server, as the other
-  channel RPCs do since #99. When the server answers a mutation with nothing
-  (not applied), the status is `Unavailable` today. `scripts/ci.sh` now expects
-  10 NewsletterService RPCs covered by the socket suite. The PRD's "Out of scope"
-  no longer lists creating channels. Additive: no field or RPC changes for
-  existing clients.
-- **`GroupService`: membership approval, who may add members, who may share the
-  invite link and the history** (issue #198). The core already relayed all four
-  as state (`GetGroupMetadata`) and as `GroupUpdate` events, but the edge could
-  not change them. `SetGroupMembershipApproval` takes a `GroupToggleRequest`, like
-  `SetGroupAnnounce` and `SetGroupLocked`. `SetGroupMemberAddMode`,
-  `SetGroupMemberLinkMode` and `SetGroupMemberShareHistoryMode` take the same
-  enum `GetGroupMetadata` reports for that setting; UNSPECIFIED (an omitted
-  field), UNKNOWN or a number outside the enum is `InvalidArgument` with the
-  accepted names, and nothing reaches the server. The link and history modes go
-  out as a MEX mutation: when the server answers it without applying the change,
-  the status is `Unavailable` today. `scripts/ci.sh` now expects 25 GroupService
-  RPCs covered by the socket suite. Additive: no field or RPC changes for
-  existing clients.
-- **`ContactService`: block, unblock, read the blocklist, set the about text**
-  (issue #197). None of these could be composed from the RPCs the core already
-  had, so the edge could not do them at all. `BlockContact` and `UnblockContact`
-  take a `JidRequest` with a phone jid (`@s.whatsapp.net`) or a LID (`@lid`),
-  relayed as given; any other kind is `InvalidArgument` before anything is sent.
-  A block carries both sides of the LID<->PN pair, as modern WhatsApp requires,
-  so it needs the mapping the client already learned: without it the answer is
-  `FailedPrecondition` (learn the pair first, for example with `ResolveLidPn` or
-  `CheckOnWhatsApp`), not `Unavailable`. An unblock by LID needs no mapping.
-  `GetBlocklist` returns each entry the server lists, with its `t` as unix
-  seconds in `timestamp` (unset when the server sent none). `SetAbout` sets the
-  account's own about text, next to `GetAbout`, and relays `""` as is. A new
-  socket suite, `crates/wamux/tests/contact_service/`, calls every one of the 15
-  RPCs, and `scripts/ci.sh` gains a `ContactService RPC coverage` stage, so a
-  new RPC fails CI until a test calls it. Additive: no field or RPC changes for
-  existing clients.
+- **`CallService.RejectCall`** (#200) declines an incoming call, with `call_id`,
+  `peer` and `call_creator` from the `CallEvent`. Placing and answering calls
+  stay out of scope.
+- **`NewsletterService`: `FollowNewsletter`, `UnfollowNewsletter`,
+  `MuteNewsletter` and `CreateNewsletter`** (#199). A mutation the server does not
+  apply answers `Unavailable`.
+- **`GroupService`: `SetGroupMembershipApproval`, `SetGroupMemberAddMode`,
+  `SetGroupMemberLinkMode` and `SetGroupMemberShareHistoryMode`** (#198).
+- **`ContactService`: `BlockContact`, `UnblockContact`, `GetBlocklist` and
+  `SetAbout`** (#197). A block needs the contact's LID-phone mapping; without it
+  the answer is `FailedPrecondition` (learn it with `ResolveLidPn` or
+  `CheckOnWhatsApp` first).
 
 ### Changed
 
-- **whatsapp-rust `eab45737`** (issue #205), from `6f07e3ab`: every crate of the
-  family moves together, and ureq goes to 3.4.2. The nightly toolchain stays
-  `nightly-2026-06-16`, the one upstream builds on. The wire contract does not
-  change: every field, every relayed value and every status code stays as it
-  was, except for the behavior the library itself now imposes, listed here.
-  - **Events keep arriving at a terminal shutdown.** The library's default
-    event delivery became a bounded queue that drops the newest event when full
-    and cancels in-flight callbacks at shutdown, which loses the `LoggedOut` a
-    `Logout` dispatches right before shutting the client down. The core now
-    registers a raw handler that spawns one task per event, as the delivery
-    before the bump did, so nothing is dropped or cancelled.
-  - **After `Logout`, `GetAccountStatus` reports `LOGGED_OUT`**, matching the
-    `LOGGED_OUT` event the subscriber gets. It used to report `DISCONNECTED`:
-    the stop that follows the logout overwrote the terminal state the event had
-    set. A stop now keeps `LOGGED_OUT` and `BANNED`, as the run loop's exit
-    already did.
-  - **`SendPoll` to a channel keeps working.** The library now builds a poll
-    only as an end-to-end creation and refuses a channel. Measured live, the
-    server still takes a channel poll, so for an `@newsletter` destination the
-    core builds the same poll message the library builds (v3 for one choice,
-    v1 otherwise, the same refusals with the same messages) and publishes it
-    as the channel's plaintext. The answer still carries the secret.
-  - **Delete-for-me relays the `participant`.** The core used to drop it, so
-    deleting someone else's message in a group failed. Without a participant,
-    someone else's message in a group or a status is now `InvalidArgument`.
-  - **Star, unstar and delete-for-me address the message the way WA Web does**:
-    the index carries `"0"` as the participant for your own message and in a
-    direct chat, without the device suffix. A channel message, or an empty
-    message id, is `InvalidArgument`.
-  - **`raw_message` is the library's encoding of the new schema**: field 117
-    (`newsletterAdminProfileMessageV2`, gone from the schema) no longer
-    appears, and fields 132 to 134 now can.
-  - **`GetProfilePicture` reports a rate limit**: a `429` the server puts inside
-    `<picture>` is `ResourceExhausted`, where it used to answer OK with an empty
-    URL.
-  - **A malformed media descriptor is `InvalidArgument`**: a media key or a
-    digest that is not 32 bytes is refused before the CDN, where it used to
-    fail as `Unavailable`. A CDN 403, 404 or 410 no longer makes the library
-    refresh `media_conn` and retry: retries are the edge's. A download URL no
-    longer carries the `media_conn` `auth` parameter (the library's choice).
-  - **The library refuses** `SendPoll` to a broadcast list and `SendPollVote` in
-    a channel or a broadcast list, before anything is sent.
-  - **Enum values the build does not name** (the library's protobuf enums are
-    now `#[non_exhaustive]`) cross as the wire enum's UNKNOWN, with the number
-    in `mode_code` for the status audience. None of them is reachable on this
-    schema.
-  - **Four new library events reach the edge as `RawEvent`**:
-    `ReachoutTimelockUpdate`, `CallLogHistory`, `UnarchiveChatsSettingUpdate`
-    and `LabelSublistUpdate`.
-  - Under a heavy inbound burst the library now bounds its incoming queues and
-    recycles the connection rather than grow without limit; the edge sees a
-    `DISCONNECTED` then `CONNECTED` pair. The limits are not configurable.
-
-- **sqlx 0.9** (issue #209), from 0.8. The code change is small: sqlx 0.9
-  refuses SQL built at run time unless it is marked safe, so the conversion
-  statements (built only from the closed `sealed_columns()` table) are wrapped
-  in `AssertSqlSafe`, and the Signal delete helper takes a `&'static str`.
-  SQLite is now `sqlite-bundled` plus `sqlite-unlock-notify` instead of the
-  `sqlite` umbrella; the bundled engine stays libsqlite3-sys 0.30.1 (SQLite
-  3.46.0). `wamux-tools` moves from ureq 2 to ureq 3, the version the daemon
-  already uses. One behavior change from sqlx: a Postgres `.pgpass` file now
-  interprets backslash escapes (sqlx #3993). Nothing changes on the wire or in
-  the config.
+- **whatsapp-rust `eab45737`** (#205). No proto change, but the library imposes
+  new behavior: delete-for-me relays (and for someone else's message requires)
+  `participant`; star and delete-for-me refuse a channel message or an empty id;
+  `GetProfilePicture` reports a rate limit as `ResourceExhausted`; a malformed
+  media descriptor is `InvalidArgument` and a CDN 403/404/410 is no longer
+  retried; `SendPoll` to a broadcast list and `SendPollVote` in a channel are
+  refused; `GetAccountStatus` reads `LOGGED_OUT` after `Logout`; a heavy inbound
+  burst recycles the connection. See [0.2.0 to 0.2.1](docs/upgrading/0.2.0-to-0.2.1.md).
+- **sqlx 0.9** (#209): a Postgres `.pgpass` file now interprets backslash
+  escapes.
 
 ### Fixed
 
 - **`GetGroupMetadata`, `ListGroups` and `GroupCreated` report the three member
-  modes** (issue #205): `member_add_mode`, `member_link_mode` and
-  `member_share_history_mode` were UNSPECIFIED for every group even when the
-  server sent them, because their values are not protocol tokens, cross the
-  binary codec as bytes, and the library read them only as text. The library
-  reads both since upstream #1651, which the bump above brings in.
+  modes** (#205), which were always UNSPECIFIED.
 
 ### Security
 
-- **rustls-webpki 0.103.16 and webpki-roots 1.0.10** (RUSTSEC-2026-0382 and
-  RUSTSEC-2026-0381, CVE-2026-111943, published 2026-10-19 and 2026-10-20).
-  Certificate verification could accept a path through the distrusted emSign
-  intermediates, whose private keys are now public. These crates verify the
-  WhatsApp WebSocket transport, the media CDN client and sqlx's TLS. Lockfile
-  only; no code or wire change.
-- **No more webpki-roots 0.26 shim** (issue #209). sqlx 0.9 and ureq 3 no
-  longer pull `webpki-roots` 0.26.11, so the `RUSTSEC-2026-0381` ignore in
-  `.cargo/audit.toml` is gone. The `RUSTSEC-2023-0071` ignore (`rsa`) is gone
-  too: the crate is no longer in the lockfile. SQLite is built without the
-  native extension loader (`load-extension`) and without `deserialize`.
+- **rustls-webpki 0.103.16 and webpki-roots 1.0.10** (RUSTSEC-2026-0382,
+  RUSTSEC-2026-0381): certificate verification could accept the distrusted emSign
+  intermediates. They verify the WhatsApp transport, the media CDN and sqlx's TLS.
+- **No more webpki-roots 0.26 shim or `rsa` in the tree** (#209), so both
+  advisory ignores are gone. SQLite is built without `load-extension` and
+  `deserialize`.
 
 ## [0.2.0] - 2026-10-19
 
+Most of this release is a new contract and a new store format. Read
+[0.1 to 0.2](docs/upgrading/0.1-to-0.2.md) before upgrading: a 0.1.0 store must
+be migrated first.
+
 ### Changed
 
-- **The migration guides are in English** (issue #82).
-  `docs/BREAKING-CHANGES-2026-06-11.md`, `docs/BREAKING-CHANGES-2026-09-02.md`
-  and `docs/DEFERRED.md` were the last documents in Portuguese, so an edge
-  author who does not read it could not follow the migrations. Same file names,
-  same content: code, field names and the proto copies are untouched, only the
-  prose and the Portuguese comments in two proto snippets are translated.
-  `CONTRIBUTING.md` now says documentation, code comments, commit messages and
-  issues are written in English, and a new `scripts/ci.sh` stage,
-  `scripts/check-doc-language.py`, fails on common Portuguese words in Markdown
-  prose and in `.rs`/`.proto` comments (string literals are test data and stay
-  out of it).
-
-- **The docs describe the daemon that exists** (issue #81). README, `docs/PRD.md`
-  and `docs/SPEC.md` were read end to end against the code and corrected: the
-  store is Postgres or SQLite (Turso behind the `turso` feature), connection is
-  edge-driven with no per-account policy, media is sent as streamed bytes only,
-  channels and interactive replies are in scope. SPEC now stays at the level of
-  crates and module directories, with no counts or migration names to go stale,
-  and the PRD's June "Status" section is gone. `docs/DEPLOYMENT.md` gets back the
-  native, Docker and troubleshooting sections an unrelated change had dropped,
-  checked against today's unit, compose file and image (create `./run` before
-  the first `docker compose up`). `wamux.toml.example` no longer suggests the
-  `@c.us` routing recipe and documents `store_key_file`. `docs/STATUS.md` and
-  `docs/BACKLOG.md` (June snapshots) are removed, and so are the edge project's
-  PRD and agent instructions, which live in that project. A new `scripts/ci.sh`
-  stage, `scripts/check-doc-links.py`, fails on a relative link, `#anchor` or
-  `docs/*.md` mention that points at nothing.
-
-- **Bounded defaults: metric labels and the replay ring** (issue #80; see
-  `docs/BREAKING-CHANGES-2026-10-13-bounded-defaults.md`). The `method` label of
-  `wamux_grpc_requests_total` and `wamux_grpc_request_duration_seconds` is the
-  method only for a path the daemon serves (read from the descriptor set, plus
-  reflection) and `unknown` otherwise, so made-up paths cannot create series;
-  the log keeps the label and adds the raw path, cut at 128 characters, for an
-  unknown one. `replay_max_event_bytes` now defaults to 256 KiB (was 0, no cap):
-  a bigger event is delivered live but not replayable. The send echo and the
-  event bridge share one ring gate. **Breaking:** a dashboard that filtered by an
-  invalid path uses `method="unknown"`; set `replay_max_event_bytes = 0` for the
-  old unbounded ring.
-
-- **Media is spooled to disk instead of held in memory** (issue #79; see
-  `docs/BREAKING-CHANGES-2026-10-13.md`). SendMedia and PostStatusMedia encrypt
-  each chunk into an unnamed file under the new `media_spool_dir` (default
-  `/var/cache/wamux`) and upload from it; DownloadMedia decrypts into one, checks
-  it, and streams it from there. Memory per transfer no longer depends on the
-  file size. Spool files are opened unlinked, so the directory stays empty. New
-  `media_spool_max_bytes` (default 2 GiB, 0 = unlimited) bounds what all
-  transfers hold together: past it a transfer gets `ResourceExhausted`.
-  **Breaking:** the spool directory must be writable or startup fails;
-  DownloadMedia refuses a file above `media_max_bytes` before fetching; an
-  invalid media type is refused before the bytes. `contrib/wamux.service` gains
-  `CacheDirectory=wamux`.
-- **Socket bind: no takeover, no permission window, a real `socket_group`, an
-  optional peer allowlist** (issue #77; see
-  `docs/BREAKING-CHANGES-2026-10-12.md`). The daemon probes a file at
-  `socket_path` before removing it: a live socket stops startup (`another wamux
-  is serving <path>`), a non-socket is left alone and refused, and only a socket
-  that refuses connections is replaced. The probe also runs before the store
-  opens, so a second daemon cannot migrate the live one's database. The socket
-  is bound in a private directory and renamed onto the path with its final mode
-  and group, so it is never visible wider than `socket_mode` (it used to be
-  0777 minus umask until the chmod). `socket_group` now does what it says: it
-  resolves a name or a numeric gid and `chown`s the socket, failing startup if
-  the group does not exist or the user is not a member. A parent directory the
-  daemon creates is `0750`. New keys `allowed_uids` and `allowed_gids` admit
-  only those `SO_PEERCRED` peers; others get `PermissionDenied`.
-
-- **The durability of each storage engine is documented** (no behavior change).
-  `docs/DEPLOYMENT.md` now says what survives a crash on each: SQLite runs WAL
-  with `synchronous = NORMAL` (inherited from the whatsapp-rust reference), so a
-  power loss can drop the last commits, which for Signal state can mean
-  decryption failures or a session reset; Turso runs `FULL`; Postgres is durable
-  with its defaults. Moving SQLite to `FULL` with group commit is #169.
-
-- **Group commit on the Turso engine** (issue #172, part 1 of #169). Writers
-  that queue for the one connection at the same moment now share a transaction
-  and one COMMIT (one fsync) instead of one each; durability is unchanged
-  (`synchronous = FULL`, nobody is answered before the COMMIT that carries their
-  write, a failed COMMIT fails every write of the batch, a failed write rolls
-  back alone through a savepoint). There is no timer: a lone writer still
-  commits on its own. Measured with the new `commit_bench` on NVMe, 30 writes
-  per account: 10 accounts went from 756 to ~5,800 writes/s and 100 accounts
-  from ~650 to ~16,000 writes/s (p99 from 460 ms to ~9 ms); one account is
-  unchanged. A batch carries at most 128 writes. The mechanism lives in
-  `storage::group_commit`, engine-neutral, for the SQLite part (#173). No wire
-  or config change; Turso stays a non-default cargo feature.
-
-- **SQLite runs at `synchronous = FULL` with group commit** (issue #173,
-  part 2 of #169, closes #169). The sqlx SQLite engine moves from one pooled
-  connection at `NORMAL` to two handles on the same file: one writer behind the
-  group commit of #172, and a pool of 4 read-only connections. `FULL` is fixed
-  (no setting): a power loss no longer drops the last acknowledged commits, and
-  accounts that write at the same moment share one COMMIT, so the fsync is not
-  paid per write. Reads no longer wait for writes: they run on the read-only
-  pool, so they never queue behind a batch and never see a write that has no
-  COMMIT yet. A SQLite DSN in memory (`:memory:`, `mode=memory`) is now refused
-  with a clear error, since the readers are other connections. No wire, config
-  or migration change. For code that uses the library (tests, the stress bins):
-  `SqlPool::Sqlite` now carries a `SqliteConn` instead of a `SqlitePool`; read
-  through `read_pool()` and write raw SQL through `lock()`. `commit_bench` takes
-  `batch_cap` on `sqlite://` too (a cap of 1 is the serial baseline).
-- **Group commit: a writer cancelled in the middle of a COMMIT, BEGIN or RELEASE
-  no longer breaks the next write** (issue #173, both file engines). sqlx-sqlite
-  runs a queued statement even after the caller's future is dropped, so the
-  batch could believe a transaction was open that had already committed, and the
-  next write failed with "cannot commit - no transaction is active" (5 runs in
-  150 of the dropped-writers test). The statement in flight is now marked, and
-  the next user of the connection puts it back in a known state first. A COMMIT
-  whose outcome nobody saw is retried: the jobs waiting on it get Ok only from a
-  COMMIT that really ran, and an error saying the outcome is unknown otherwise.
+- **Breaking: a 0.1.0 store must be migrated before 0.2 opens it** (#30, #31).
+  Run `migrate_0_7` and then `migrate_0_7_main` from commit `ac4c21b`; 0.2 then
+  converts the store's blobs from bincode to protobuf on its first open, in one
+  checked transaction. Back up first. See
+  [the store](docs/upgrading/0.1-to-0.2.md#the-store).
+- **Breaking: socket bind** (#77). A live socket at `socket_path` stops startup
+  instead of being taken over, a non-socket is refused, `socket_group` now
+  `chown`s the socket and fails startup when it cannot, and the socket is never
+  visible wider than `socket_mode`. New optional peer allowlist: `allowed_uids`,
+  `allowed_gids`. See [the socket](docs/upgrading/0.1-to-0.2.md#the-socket-77).
+- **Breaking: media is spooled to disk** (#79). `media_spool_dir` (default
+  `/var/cache/wamux`) must be writable or startup fails; DownloadMedia refuses a
+  file above `media_max_bytes`; `media_spool_max_bytes` (default 2 GiB) bounds all
+  transfers. Memory per transfer no longer grows with the file. See
+  [the media spool](docs/upgrading/0.1-to-0.2.md#the-media-spool-79).
+- **Breaking: bounded defaults** (#80). `replay_max_event_bytes` defaults to 256
+  KiB (was no cap), and the `method` metric label is `unknown` for a path the
+  daemon does not serve. See
+  [bounded defaults](docs/upgrading/0.1-to-0.2.md#bounded-defaults-80).
+- **SQLite runs at `synchronous = FULL` with group commit** (#173): a power loss
+  no longer drops acknowledged commits, reads never wait for writes, and an
+  in-memory DSN is refused. Turso gets the same group commit (#172).
+- **Breaking: `MarkRead` sends the read receipt** (#20), reading `message_ids`
+  and `sender`. It used to mark the chat read on the account's own devices,
+  which is now `MarkChatRead`.
+- **Breaking: every jid in the contract is the `Jid` message** (#120, #121,
+  #122). Each retyped field takes a new number and drops only its `_jid` suffix;
+  a missing required jid answers `"missing jid"`. See
+  [every jid](docs/upgrading/0.1-to-0.2.md#every-jid-is-the-jid-message-72).
+- **Breaking: free strings and Rust `Debug` output are proto enums** (#126, #127,
+  #128): receipt type, chat state, media type, presence state, sticker pack
+  origin, undecryptable reason, the channel fields, and the logout and ban
+  details that replace `ConnectionStateChanged.detail`. A request enum outside
+  its set is `InvalidArgument`. See
+  [enums](docs/upgrading/0.1-to-0.2.md#enums-instead-of-strings-73).
+- **Breaking: JSON inside `bytes` fields is typed** (#132, #133, #134, #135):
+  group metadata, membership requests, the business profile, and the group,
+  contact, app-state and call events. Times are milliseconds and absent values
+  are unset. Only `RawEvent.payload` stays JSON. See
+  [typed messages](docs/upgrading/0.1-to-0.2.md#typed-messages-instead-of-json-74).
+- **Breaking: `PresenceUpdate.online` is optional** (#24), set only on real
+  presence; it was a hard-coded `true` on chat states.
+- **Breaking: `ContactService.GetPushName` takes an `AccountRef`** (#1): it
+  always answered the account's own push name.
+- **Breaking: a malformed mention or participant on a send is `InvalidArgument`**
+  (#115), and so is an empty target message id or quote id; they used to be
+  relayed unparsed.
+- **A `@c.us` jid is parsed as `@s.whatsapp.net`** (#30), so it echoes that way.
+  Such sends used to be encrypted for nobody (#4).
+- **Media downloads verify the hashes the message declares** (#30).
+- **`DeleteMessage` for everyone on a status answers `InvalidArgument`** (#41),
+  naming `RevokeStatus`.
+- **Channel reads go through the library** (#56): a history answer without
+  `<messages>` is `Unavailable` (it was an empty page), and a missing channel's
+  error reads `newsletter <jid> not found` (#116).
+- **A `wa-text` trailer that is not ASCII is left out** (#114), and
+  `account <uuid> not found` names the uuid in lowercase.
+- **Store batches are atomic** (#104): batch writes run in one transaction, and
+  `commit_patch` writes the app-state version and its MACs together, so a crash
+  can no longer leave them out of step. SQLite maintenance truncates the WAL.
+- **whatsapp-rust `6f07e3ab`** (#86): every connection has its keepalive and
+  dead-socket watchdog again, and the store keeps the status audience.
+- **The repository is a Cargo workspace** (#62). The release build is
+  `cargo build --release -p wamux --bin wamux`; the tools are `-p wamux-tools`.
 
 ### Added
 
-- **`MessagingService.GetStatusAudience`: the status audience, read on demand**
-  (issue #89). The audience change itself already reaches the socket as
-  `AccountSettingUpdate.status_privacy` (#149), but only live or from the full
-  sync at pairing: an edge that started later, lost its own state or missed the
-  event beyond the replay ring had no way to get the current audience back. The
-  new RPC returns the `StatusPrivacySetting` the library holds for the account
-  (`client.status().audience()`, persisted since #86), through the same mapper
-  the event uses. It reads nothing from the server. `audience` unset means no
-  audience has been synced yet, which is not "all contacts", and neither is an
-  UNKNOWN mode; a status still goes to exactly the `recipients` the edge posts
-  it to. Additive: no field or RPC changes for existing clients.
-- **Comment policy, with a CI guard** (issue #85). `CONTRIBUTING.md` and
-  `CLAUDE.md` now say what a code comment is for: an invariant, a constraint or a
-  reason, with an issue number as a pointer next to it; history (what the code
-  used to do, which version changed what, who reviewed it) goes to the commit
-  message and this file. The comments of `crates/*/src` and of the `.proto`
-  contract were swept to match, with no code change. The new stage
-  `scripts/check-comment-provenance.py` in `scripts/ci.sh` fails on review
-  provenance (`code-review 2026-...`, `edge-review`) in those sources.
-
-- **`AdminService.Check` reports the store's blob format** (issue #84). New
-  `HealthResponse.blob_format` (enum `BlobFormat`: `BLOB_FORMAT_BINCODE`,
-  `BLOB_FORMAT_PROTOBUF`, or `BLOB_FORMAT_UNSPECIFIED` when the store does not
-  answer), read from the store's `blob_format` marker on every call. Check that it
-  reads `BLOB_FORMAT_PROTOBUF` before upgrading past 0.2.x. Additive: an edge that
-  ignores the field is unaffected.
-
-- **`commit_bench`** in `wamux-tools` (issue #172): N accounts write M sessions
-  at once on any `database_url`, every write waiting for its own commit, and it
-  prints writes per second, p50/p99 latency and writes per COMMIT. It refuses a
-  path on tmpfs, where an fsync costs nothing and the numbers would hide the
-  effect (`WAMUX_BENCH_ALLOW_TMPFS=1` runs anyway and marks the report).
-
-
-- **Encryption at rest, part 3 of 3: `wamux store rotate-key`** (issue #166,
-  closes #76). `wamux store rotate-key --new-key-file <path>` re-seals every
-  secret of an encrypted store under a new key: the old key comes from
-  `store_key_file`, the new one from a file with the same checks (64 hex
-  characters, mode `0600`). It verifies the old key against the store first,
-  refuses a new key equal to the old one, turns every account and replaces the
-  store's key id and verifier in one transaction (an interrupted run leaves the
-  store whole under the old key, so there is no half-rotated state and no new
-  migration), and then scrubs the old blobs out of the file like a conversion
-  does. Afterwards only the new key opens the store; the old one is refused with
-  "does not match". Plaintext stores and stores with an interrupted conversion
-  or decrypt are refused. Stop the daemon first. The rotation procedure is in
-  `docs/DEPLOYMENT.md`. No wire or config change.
-
-- **Encryption at rest, part 2 of 3: converting an existing store, and
-  `wamux store decrypt`** (issue #165, under #76). Turning `store_key_file` on
-  over a store that already has accounts now converts it when the daemon starts,
-  one transaction per account, instead of refusing. An interrupted conversion
-  resumes where it stopped and never seals a row twice (a new
-  `store_conversion_progress` table, migration 0006 in both directories); until
-  it finishes, a start without the key is refused ("interrupted") and a
-  different key is refused ("does not match"). When a conversion finishes the
-  daemon scrubs the plaintext the sealing left behind: SQLite and Turso run
-  `VACUUM` and a truncating WAL checkpoint (measured: an `UPDATE` alone leaves
-  the old bytes in free pages and in the WAL), Postgres runs `VACUUM FULL` on
-  the sealed tables. Backups, Postgres WAL archives and replicas made before the
-  conversion still hold plaintext and must be discarded. Turso's `VACUUM` is
-  experimental in turso 0.8.1 and is now switched on for that engine; the test
-  checks the file stays intact for sqlx afterwards.
-  `wamux store decrypt --yes` turns an encrypted store back into plaintext
-  (the same binary and config; it refuses without `--yes`, because it writes
-  every account's keys in the clear, and without `store_key_file`). Stop the
-  daemon before converting or decrypting with another process on the same store.
-  The pre-0.2 store fixture is converted in a test and reads back. Rotation is
-  #166.
-
-- **Encryption at rest for the store, part 1 of 3** (issue #164, under #76).
-  A new `store_key_file` setting (the PATH of a file with 64 hex characters,
-  mode `0600`; the key itself never comes from the environment or the TOML)
-  turns on XChaCha20-Poly1305 for the secret columns: the device record,
-  identities, sessions, prekeys, signed prekeys, sender keys, app-state keys,
-  versions and mutation MACs, base keys, tc tokens, message secrets and the
-  payload of sent messages. Each sealed blob carries a version, the key id and
-  a random nonce, and is bound to its device, table, column and row, so a blob
-  moved elsewhere does not open. Lookup keys (`app_state_keys.key_id`,
-  `app_state_mutation_macs.index_mac`), an empty tc token and the account
-  metadata stay in the clear. A new `store_encryption` table (migration 0005 in
-  both directories) records the state and a verifier, so a wrong key fails at
-  startup with "does not match", before the first account. A new store opened
-  with a key is born encrypted; an encrypted store without a key, or a store
-  with accounts that is still plaintext, refuses to start with an error that
-  says what to do (converting an existing store is #165, rotating the key is
-  #166). Without `store_key_file` nothing changes. New "Encryption at rest"
-  section in `docs/DEPLOYMENT.md`; losing the key means re-pairing every
-  account.
-
-- **The store file is created owner-only, and the docs say what it is** (issue
-  #75). The store holds every paired account's keys in plaintext, so a dump or a
-  copy of the file is a takeover of all of them. A new `sqlite://` or `turso://`
-  file is now created `0600` whatever the umask (its `-wal` and `-shm` inherit the
-  mode), and an existing file that group or others can read is reported with a
-  `WARN` naming the path, the mode and the `chmod 600` that fixes it. The daemon
-  does not change the mode or refuse to start. The Docker image now starts the
-  daemon through `sh -c 'umask 077 && exec wamux'` (the daemon is still PID 1 and
-  still gets SIGTERM); anyone who overrode the image's `ENTRYPOINT` is unaffected.
-  New "The store is a secret" section in `docs/DEPLOYMENT.md`, linked from the
-  README's security model. Encryption at rest is #76.
-
-- **MessagingService answers `InvalidArgument` for requests that can never
-  work** (issue #101). A poll the library refuses (fewer than 2 or more than 12
-  options, `selectable_count` outside `1..=options`, duplicate names) and a
-  `MuteChat` with a deadline in the past used to come back as `Unavailable`; both
-  are now `InvalidArgument` with the library's reason, and the core validates
-  nothing itself. `PostStatusText` and `PostStatusMedia` with no recipients are
-  refused the way `RevokeStatus` already was, before anything is uploaded, and a
-  malformed `remote_jid` on a delete-for-me is refused before the account is
-  looked up. Not changed: a status recipient given by phone number whose LID the
-  client does not know is still dropped silently by the library, so an edge that
-  posts statuses should send LIDs. `docs/BREAKING-CHANGES-2026-10-05.md`,
-  section 3j.
-
-- **Channel metadata and history refuse a jid that is not a channel** (issue
-  #99). `GetNewsletterMetadata` and `GetNewsletterMessages` answer
-  `InvalidArgument` for a valid jid on another server before anything is sent,
-  as the other three channel RPCs already did. Measured live: the server
-  answered metadata with 400 and never answered history, which waited the
-  library's 75 s IQ timeout and came back as `Unavailable`.
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3i.
-
-- **GroupService refuses a `group` that is not a group, and stops hiding three
-  refusals behind Unavailable** (issue #96). Every RPC that takes a group answers
-  `InvalidArgument` for a jid on another server before anything is sent; an
-  empty or unreadable invite code answers `InvalidArgument`; a `CreateGroup`
-  LID participant with no phone number in the store answers `FailedPrecondition`;
-  and the 409 on `SetGroupDescription` carries `wa-code=409` again (the library
-  rewrote it into an error with no code). New `GroupJidResponse.join_outcome`
-  (`JOINED` or `PENDING_APPROVAL`) tells a join from a request waiting for an
-  admin. `docs/BREAKING-CHANGES-2026-10-05.md`, section 3h.
-
-- **The raw element of group create, link, unlink and sub-group suggestions
-  crosses as a `StanzaNode`** (issue #146). Additive: `GroupCreated.stanza = 2`,
-  `GroupLinked.stanza = 2`, `GroupUnlinked.stanza = 3`, and the
-  `created_sub_group_suggestion` and `revoked_sub_group_suggestions` cases of
-  `GroupUpdate.action` carry a message with `stanza = 1` where they carried
-  `Empty` (same field numbers, so an older edge skips the field).
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3g. The linked or unlinked
-  group, a suggestion's creator and subject, and a subgroup's `<linked_parent>`
-  were dropped before. The core relays the element and interprets none of it.
-
-- **Server notifications about contacts and devices, the mex notification
-  and the missed call are typed instead of RawEvent** (issue #151, part 4 of
-  #141, which this closes). Additive: an edge that matched `RawEvent.kind` on
-  these eleven stops seeing them. `docs/BREAKING-CHANGES-2026-10-05.md`,
-  section 3f. Every library event that can fire in this build is now typed;
-  `RawEvent` keeps only the nine that cannot, and any event a later library
-  adds.
-  - `EventEnvelope.contact_notice = 35` (`ContactNotice`): a picture set or
-    removed (a person's or a group's), an about text, a profile to refresh, a
-    phone number change (`old_pn`/`new_pn` and the LIDs), a full contact
-    re-sync request, a contact's default disappearing-messages timer
-    (`duration_seconds`) and a business status change.
-  - `EventEnvelope.device_notice = 36` (`DeviceNotice`): someone's device list
-    (add, remove, update, with the key index and its signed bytes) and an
-    identity key change.
-  - `EventEnvelope.mex = 37` (`MexNotification`): a server GraphQL update.
-    `payload_json` is the server's JSON body, which the library parses; the
-    core writes it back out, so keys come sorted and the content is the same.
-    `scripts/check-wire-json.py` allows this one serializer by name, next to
-    the catch-all.
-  - A call that must not ring (today an offer replayed from the offline queue)
-    is a `CallEvent` whose action is the new `missed` (`CallMissed`, with
-    `MissedCallReason`), with `from`, `call_id`, `timestamp` and `offline`.
-  - Every time is ms; the server sends seconds (measured for pictures, the
-    disappearing timer and the key index).
-
-- **The connection and pairing lifecycle is typed instead of RawEvent**
-  (issue #150, part 3 of #141). Additive: an edge that matched
-  `RawEvent.kind` on these nine stops seeing them.
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
-  - `EventEnvelope.connection_notice = 34` (`ConnectionNotice`) has one case
-    per event: a refused connection that is not a logout or a ban
-    (`connect_failure`, its reason in the logout's `LogoutReason`), an outdated
-    build (`client_outdated`), a stream error the library keeps the connection
-    through (`stream_error`, the 429 among them), a session taken over
-    (`stream_replaced`), an app-state sync that left collections unsynced
-    (`app_state_sync_failed`) and a retirement deadline for the build
-    (`client_expiration`, `expires_at` in ms). The three that carried the
-    stanza keep it whole as a `StanzaNode` (#138). None of them changes the
-    account's state: a terminal end still arrives as `ConnectionStateChanged`.
-  - `PairingUpdate` gains `code_refresh = 5` (the pair code is no longer
-    valid), `code_error = 6` (the pair code was refused, with the server's
-    `PairCodeRejection`, open as #73 rules, and `backoff_ms`) and
-    `qr_codes_exhausted = 7`. They reach `SubscribeEvents` as `pairing` and
-    now also the PairWithQr and PairWithCode streams, which never saw them.
-  - **PairWithQr and PairWithCode end when nothing more can come**: after
-    `code_error`, `code_refresh`, or `qr_codes_exhausted` with `disconnected`
-    true, besides `paired` and `error`. Before, a refused code or used-up QR
-    refs left the stream open forever. With `disconnected` false a pair code is
-    still valid on the same connection, and the stream goes on. Asking again is
-    the edge's call.
-  - `DirtyState` (`<ib><dirty>`) is no longer relayed as RawEvent: it is an
-    informational hook, and the library already resyncs.
-
-- **The own push name, a removed contact and the call log are typed instead
-  of RawEvent** (issue #153, part 2b of #141). Two new events:
-  `EventEnvelope.self_push_name = 32` (`SelfPushNameUpdate`: this account's
-  own push name, old and new) and `call_log = 33` (`CallLogUpdate`: one entry
-  of the primary device's call log). A contact deleted on a linked device
-  arrives as `ContactUpdate` with the new `removed = 9` set and `action`
-  unset. Additive: an edge that matched `RawEvent.kind` on
-  `SelfPushNameUpdated`, `ContactRemoved` or `CallLogSync` stops seeing those
-  kinds. `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
-  - The call log is the only channel that shows a call placed on the phone:
-    such a call puts no signalling on the socket, so `CallEvent` never sees
-    it. Measured on 2026-10-08, only the companion of the account that placed
-    the call received one.
-  - Read `from_me` for the direction. The record's `isIncoming` is left out:
-    the library documents it as inverted in mutations WA Web wrote. So are the
-    record's copies of `call_id` and the creator.
-  - `start_time` crosses in ms (the server sends seconds); `duration_seconds`
-    crosses as sent, in seconds, as measured. `CallLogResult`,
-    `CallLogSilenceReason` and `CallLogType` are closed in the library: absent
-    or unknown crosses as UNSPECIFIED, and there is no code.
-  - `SelfPushNameUpdate` drops the library's `from_server`, which is always
-    true. The retired `PushNameUpdate` (`push_name = 17`) stays in the
-    contract and is still never emitted.
-
-- **Labels, quick replies and two account settings are typed instead of
-  RawEvent** (issue #149, part 2 of #141). Three new events:
-  `EventEnvelope.label = 29` (`LabelUpdate`: a label edited, or put on or
-  taken off a chat or a message; in the consumer app a label is a chat list),
-  `quick_reply = 30` (`QuickReplyUpdate`), and `account_setting = 31`
-  (`AccountSettingUpdate`: the link-preview setting and the status audience).
-  Additive: an edge that matched `RawEvent.kind` on `LabelEditUpdate`,
-  `LabelAssociationUpdate`, `MessageLabelAssociationUpdate`,
-  `QuickReplyUpdate`, `DisableLinkPreviewsUpdate` or `StatusPrivacyUpdate`
-  stops seeing those kinds. `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
-  - `LabelListType` is closed in the library, which drops an unknown number
-    when it decodes: it crosses as UNSPECIFIED, and there is no code. The
-    status audience is open there on purpose, so an unknown mode crosses as
-    UNKNOWN with the server's number in `mode_code` (#73's rule).
-  - A deleted list or quick reply is the same mutation with `deleted` true
-    and empty texts, as measured; check the flag.
-
-- **Six more app-state mutations are typed instead of RawEvent** (issue #148,
-  part 1 of #141). A chat locked or unlocked, cleared, a message deleted for
-  this account only, and a contact hidden from the status list become
-  `AppStateUpdate` cases (`lock`, `clear_chat`, `delete_message_for_me`,
-  `user_status_mute`). A sticker favorited, unfavorited or removed from the
-  recent list is the new `StickerUpdate` event (`EventEnvelope.sticker = 28`),
-  since stickers belong to the account, not to a chat. Additive: an edge that
-  matched `RawEvent.kind` on `LockChatUpdate`, `ClearChatUpdate`,
-  `DeleteMessageForMeUpdate`, `UserStatusMuteUpdate`, `FavoriteStickerUpdate`
-  or `RemoveRecentStickerUpdate` stops seeing those kinds.
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3f.
-  - A favorited sticker carries a `MediaDescriptor` (`media_type` STICKER)
-    that DownloadMedia takes as is, downloaded live. Its `file_sha256` is the
-    `filehash` decoded: the library checks the decrypted bytes against it.
-  - Units measured live: a deleted message's time and a cleared range are
-    seconds on the wire and cross in ms; a recent sticker's last-sent time is
-    already ms and crosses as sent.
-
-- **A forced logout and a ban carry the server's whole stanza** (issue #138,
-  found in #134). `LoggedOutInfo.stanza` and `TemporaryBanInfo.stanza` relay
-  the `<failure>` or `<stream:error>` the library kept, as the new generic
-  `StanzaNode` in `common.proto`: tag, attributes as text, and the content as
-  bytes, text or child elements. An account lock's one-time `appeal_token`,
-  `violation_reason` and `vt` reached the core and were dropped; reading them
-  is the edge's call, since `violation_reason` is not a closed set. Unset when
-  nothing was received (a local logout). Additive, no migration:
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3e.
-  - A jid-valued attribute crosses as its wire text.
-  - The core does not cut a deep stanza. A prost client decodes at most 100
-    nested messages, about 47 stanza levels; real ones have two or three.
-
-- **An experimental Turso storage engine, behind the `turso` cargo feature**
-  (issue #106). `database_url = "turso://<path>"` opens the store through the
-  native async `turso` crate (pinned `=0.8.1`, no default features), a second
-  engine family behind `StorageEngine` next to the sqlx one. Nothing changes
-  on the wire, and nothing changes for a build without the feature: it refuses
-  `turso://` with an error that names the feature, and the shipped daemon does
-  not carry the crate. See `docs/DEPLOYMENT.md`, "Turso (experimental)".
-  - A wamux SQLite file opens with `turso://` as it is, and a file Turso wrote
-    opens again with `sqlite://`: Turso applies `migrations_sqlite/` and
-    records them in `_sqlx_migrations` exactly as sqlx does, checksums
-    included, then runs the same bincode upgrade. Both directions are tested,
-    and were run live on a production store.
-  - Every store statement is now written once, in `storage::statements`, and
-    both families run that text. turso binds `$N` by order of first
-    appearance, not by number, which put values in the wrong columns with no
-    error; the Turso family rewrites `$N` to `?N`, and a test pins the upstream
-    behavior. `scripts/check-store-sql-shared.py` keeps SQL out of the
-    families.
-  - One connection behind a mutex, `foreign_keys` on (checked at open),
-    `synchronous = FULL`, a 30 s busy timeout. `maintenance` is the WAL
-    checkpoint alone: turso accepts `optimize` and does nothing with it.
-  - CI runs the engine-parity suite, the existing-store fixture, the bincode
-    upgrade and the service suites on Turso as well (`WAMUX_TEST_ENGINE=turso`).
-  - Adding the crate to `Cargo.lock` moved some crates the shipped daemon
-    already uses to newer compatible versions (`cc` 1.6, `icu_*` 2.3,
-    `zerovec` 0.11.8), because turso 0.8.1 requires them.
-
-- **A received sticker pack can be opened** (issue #58). A
-  `stickerPackMessage` reached the socket with no `MediaDescriptor`, and
-  `DownloadMedia` had no type that could fetch it: an edge saw that a pack
-  arrived and could not open it. Now:
-  - `InboundMessage.media` carries the pack's ZIP under the new `media_type`
-    `sticker_pack`, with `mime_type` empty (the message has no mimetype field),
-    and the pack's caption rides `caption`.
-  - `InboundMessage.sticker_pack` (field 18, `StickerPackInfo`) carries the
-    pack id, name, publisher, description, tray icon file name,
-    `stickerPackSize`, the origin as `first_party|third_party|user_created`,
-    the thumbnail's size, and each sticker's `file_name`, `is_animated`,
-    `emojis`, `accessibility_label`, `is_lottie` and `mime_type`.
-  - `StickerPackInfo.thumbnail` is the thumbnail's own descriptor, under
-    `media_type` `sticker_pack_thumbnail`: its own path and hashes, the pack's
-    media key, and `file_length` 0 because the message declares none.
-  - `DownloadMedia` accepts both new types and returns the decrypted ZIP or
-    thumbnail like any other file; unzipping is the edge's. `SendMedia` still
-    refuses them: sending a pack is not relayed.
-
-  Checked against the pack the issue was measured on (30 stickers, origin
-  `third_party`): both descriptors come out complete. Its entries carry no
-  `emojis` at all, so the list is empty there, not dropped.
-
-- **A channel poll can be voted on** (issue #26, upstream #1552 and #1555).
-  `SendPollVote` could never vote in a `@newsletter` poll: a channel is not
-  E2E, so its poll carries no `message_secret`, and the vote is a plaintext
-  stanza naming each option by `sha256(option_name)`, the hash the history
-  tallies already use. Three `NewsletterService` RPCs:
-  - `SendNewsletterPollVote{account, jid, server_id, option_hashes}` sends the
-    whole selection; it replaces the previous one, and an empty list removes
-    the vote. The answer is the stanza id, the `id` of the `ServerAckEvent`
-    that carries the server's verdict. No echo: a vote puts no message in the
-    channel. A hash that is not 32 bytes, a repeated one, more than 1000, a
-    `server_id` of 0 or a jid off `@newsletter` answer InvalidArgument before
-    anything is sent.
-  - `GetMyNewsletterAddOns{account, jid, limit}` reads this account's own
-    reaction and poll vote per message, timestamps in ms. The tallies count
-    every follower, so this is the only read-back of a vote. An absent
-    `poll_vote` means never voted; one with no hashes is a removed vote, which
-    the server keeps dated.
-  - `SubscribeNewsletterLiveUpdates(JidRequest)` asks the server to push the
-    channel's tallies (next entry) and answers how long for, in seconds (90
-    measured). Renewing is the caller's timer.
-
-  Measured live on 2026-09-25 through WA Web, on the WhatsApp channel's poll:
-  one and two options, a change of selection and a removal, all acked, the
-  server holding exactly the last list each time.
-  `NewsletterReactionCount` and `NewsletterPollVote` moved to
-  `newsletter_tallies.proto` so the event below can use them; same package,
-  same generated names, no wire change.
-
-- **`NewsletterLiveUpdate`: a subscribed channel's tallies are typed** (issue
-  #26, upstream #1554). They reached the socket as an untyped `RawEvent`
-  carrying reactions only. `EventEnvelope.newsletter_live_update` (field 27)
-  now carries, per message, `reactions`, `votes` (by option hash, polls only)
-  and `forwards_count` (absent when the server sent none). A push names only
-  the messages whose counts changed, after a first push of the latest ones. A
-  consumer matching the `Raw` kind `NewsletterLiveUpdate` should switch to the
-  typed event.
-
-- **`FavoritesChanged`: the favorite chats list is typed** (issue #48, upstream
-  #1544). When the favorites change on a linked device, the library emits the
-  whole list. It reached the socket as an untyped `RawEvent` (kind
-  `FavoritesUpdate`); it is now `EventEnvelope.favorites_changed` (field 26),
-  with `chats` (the JIDs in the phone's order, spelled as the phone sent them),
-  `timestamp` (ms), `from_full_sync`, and `raw` (the serialized
-  `FavoritesAction`). Each event replaces the previous list, and an empty
-  `chats` means no favorites. It is not an `AppStateUpdate` kind because it is
-  one list for the account, not one chat. An entry without an id is skipped
-  in `chats` and kept in `raw`. A consumer matching the `Raw` kind
-  `FavoritesUpdate` should switch to the typed event.
-
-- **`NewsletterMessage` says when a row was edited** (issue #51). #44 relayed
-  the row's `edit` token, so an edited row could be told apart but not dated.
-  `GetNewsletterMessages` now reads the two times the server puts on `<meta>`:
-  `original_timestamp` (field 9, from `original_msg_t`) and
-  `last_edit_timestamp` (field 10, from `msg_edit_t`). The server counts the
-  first in seconds and the second in milliseconds; both cross in milliseconds.
-  Measured live: an edited row carries both, a revoked row only the original,
-  an untouched row neither (0). An edited row's `message.timestamp` is the
-  edit time, so `original_timestamp` is where its posting time survives.
-
-- **`RevokeStatus`: a posted status can be taken down** (issue #41). A status
-  revoke is encrypted to the status's own recipients, so the request carries
-  them: `message_id` (the `PostStatus*` answer's `key.id`) and `recipients`,
-  the same list the status was posted with. The core keeps no record of it.
-  The answer's key is the revoke stanza's own, like `EditMessage`; the revoke
-  echoes in `status@broadcast` as a delete whose `protocol_target` is the
-  status.
-
-- **The six library-built sends echo too** (issue #38, upstream #1406, the
-  #15 queue). `SendPoll`, `SendPollVote`, `EditMessage`, `DeleteMessage` (for
-  everyone) and `PostStatusText`/`PostStatusMedia` now publish the same
-  from-me `InboundMessage` the other five sends do, so every consumer of the
-  socket sees them, not only the caller. The library now hands back the message
-  it built, which is what these lacked. An edit or revoke echoes as its
-  protocol message (`is_edit`/`is_delete`, `protocol_target`, `key.id` the
-  stanza's own id); a vote echoes encrypted, read from `raw_message` like any
-  vote; a status echoes in `status@broadcast`. Delete-for-me sends nothing to
-  the chat and still echoes nothing. No RPC response changed.
-
-- **`OfflineSyncInterrupted`: a resume that was cut says so** (issue #38,
-  upstream #1380, the #15 queue). When the connection ends mid-drain, the
-  library now emits `total` (what the preview announced) and `delivered` (what
-  was processed before the cut). It reached the socket as an untyped
-  `RawEvent`; it is now `EventEnvelope.offline_sync_interrupted` (field 25),
-  typed like its two siblings. It means "not caught up, the remainder comes
-  back", never "lost": the drain acked nothing, so the server redelivers all of
-  it behind a fresh `OfflineSyncPreview`. A consumer matching the `Raw` kind
-  `OfflineSyncInterrupted` should switch to the typed event.
-
-- **`PresenceUpdate.chat`: the conversation a chat state happened in** (issue
-  #24). `Event::ChatPresence` carries a whole `MessageSource`, and only
-  `sender` survived the mapping. Somebody typing in a group therefore arrived
-  as identical bytes to the same person typing in the direct chat, so a client
-  drawing a typing indicator had no choice but to draw it on the DM. Field 5
-  now carries `source.chat` (the group jid in a group, the contact's jid in a
-  direct chat) and is empty on real presence, which is not scoped to a
-  conversation.
-
-- **The LID↔phone mapping is reachable over the contract** (issue #1). A chat
-  whose only identity is a `@lid` was unnameable through the socket: the
-  library learns the phone side and kept it to itself. Three reads, all pure
-  relay of what the client already knows:
-  - `InboundMessage.sender_alt` / `recipient_alt` carry the other-namespace jids
-    the stanza itself supplied, which the core used to drop. No round trip.
-  - `ContactService.ResolveLidPn` resolves a batch of jids in either direction
-    against the live client (in-memory cache first, durable store on miss), so
-    it also answers for mappings learned during an offline history replay.
-  - `ContactService.ListLidMappings` dumps every pair persisted for the account,
-    for a consumer reconciling its own store in one pass. Storage-side, so it
-    answers for a disconnected account.
-
-  The core still never rewrites a JID onto the other namespace and never
-  invents a pair: an unknown jid answers `found=false`.
-
-- **Every store method is tested on both engines, and CI keeps it that way**
-  (issue #60). The Postgres and SQLite stores implement 59 methods of the
-  wacore traits, the Signal, app-state and protocol state of every account;
-  41 of them were never called by a test. Before the storage rewrite (#65)
-  touches that SQL, `crates/wamux/tests/store_parity/` pins what it does
-  today:
-  - Each behavior runs as a `postgres_` / `sqlite_` pair asserting the same
-    values: round-trip, overwrite, delete, and that one account never sees or
-    removes another's rows. Edge semantics are pinned too: the expiry sweeps
-    and their cut-off comparisons, `take_sent_message` consuming what it
-    returns, the three sender-key clears and their scopes,
-    `mark_prekeys_uploaded` never resurrecting a consumed prekey, the most
-    recent LID winning for a phone number, the latest sync key id in byte
-    order, and a `messageSecret` redelivery never shortening its retention.
-  - Three `both_engines_*` tests write the same state through both engines
-    and compare the stored columns byte for byte, for every table that holds
-    a blob, plus the device registry's JSON. The device blob already had one.
-  - `scripts/check-store-coverage.py`, run by `scripts/ci.sh` in both modes,
-    fails when a method of either engine's `*_store.rs` is never called
-    from `crates/wamux/tests/`, when the two engines declare different
-    methods, or when it finds fewer than 59, so a parser that finds nothing
-    cannot pass. `scripts/ci.sh --no-postgres` runs the `sqlite_` half.
-
-  No code changed: every new test passed against the stores as they were. The
-  methods the stores leave on the trait's default body are tracked in #93.
-
-- **The integration suites run on both engines, wait on conditions, and clean
-  up after themselves** (issue #67). The groundwork for the service suites
-  (#68 to #71):
-  - One `logged_in_client` and one Unix-socket connector in `tests/common`.
-    They replace three and three copies.
-  - The stress suites build their registry from `WAMUX_TEST_ENGINE`, so
-    `scripts/ci.sh` runs every stress stage on SQLite too, including the load
-    test and the 199-client scale test in `--full`. The SQLite pass skips the
-    tests that name their engine (`postgres_`, `sqlite_`, `both_engines_`),
-    because they already ran in the first pass.
-  - No test synchronizes on a fixed sleep. Retries go through one bounded
-    `poll_until`. Specific replacements:
-    - The poll-vote "nothing was sent" check now waits for a valid vote sent
-      after the malformed ones (a positive signal).
-    - The scale test samples its two-second hold instead of checking once at
-      the end.
-    - The shutdown tests run on a paused clock.
-
-    `scripts/check-test-sleeps.py`, run in both modes, fails on any `sleep(`
-    in a test that lacks a `not a sync point:` comment giving the reason.
-  - Every test that creates an account sweeps its own `<suite>/<test>/`
-    prefix first and deletes the account at the end. `scripts/ci.sh`
-    snapshots the shared Postgres before the first test and fails at the end
-    if any account or throwaway database created by the run survived.
-
-- **GroupService is tested through the socket** (issue #68). All 21 RPCs now
-  run over a real Unix socket and tonic client, on both engines, with the
-  account logged in against the mock. Before this they were only ever run by
-  hand.
-  - Each RPC has a success test that checks the relayed payload by value. For
-    the writes, it also checks the stanza the call put on the wire.
-  - Three table tests go through all 21 RPCs: an unknown account gets
-    `NotFound`, an account that is not connected gets `FailedPrecondition`,
-    and a server refusal (403) comes back as `PermissionDenied` with the
-    `wa-code` and `wa-text` trailers.
-  - Each `InvalidArgument` branch the core has today has its own test: an
-    empty or malformed group, a malformed participant, a subject over 100
-    characters, and a description over 2048.
-  - The five reads (GetGroupMetadata, GetInviteLink, GetMembershipRequests,
-    PreviewInvite, ListGroups) are answered with what WhatsApp's server sent
-    on 2026-10-02. The capture came from a throwaway group between the
-    owner's own two accounts, was anonymized, and is checked into
-    `crates/wamux/tests/group_service/`. A test proves the transcription
-    renders back to the captured stanzas. The writes are answered with the
-    shapes the whatsapp-rust parser accepts.
-  - The mock answers any IQ by namespace, type and first child, can answer
-    with a server error, and records every IQ a client sends. #69 to #71
-    reuse it.
-  - `scripts/check-service-coverage.py`, run in both modes, fails if an RPC
-    of the service is never called by its suite, or if the service's RPC
-    count changes from the 21 it pins.
-
-  Some behavior is pinned as it is today and is questioned in #96:
-  - a group RPC accepts any JID as the group;
-  - an empty invite code comes back as `Unavailable`;
-  - a 409 on the description loses its code;
-  - membership requests carry their `jid` as an object, not a string.
-
-- **DownloadMedia is tested through the socket** (issue #69). It is the one
-  MediaService RPC, and it now runs over a real Unix socket and tonic client,
-  on both engines. The media comes from `MockCdn`, a real HTTP server on
-  loopback, and is fetched by the production HTTP client.
-  - The stream is checked by value. A 150 000-byte file arrives as the meta
-    frame (mime, length) followed by chunks of 65 536, 65 536 and 18 928
-    bytes, equal to the plaintext.
-  - Every media type decrypts: image, video, audio, document, sticker, and
-    the two sticker-pack types from #58. Channel media without a key is
-    verified against `file_sha256` (#6).
-  - A tampered ciphertext, a keyless file whose hash does not match, and a
-    CDN 404 each end the call without a single frame.
-  - An unknown account gets `NotFound`, an account that is not connected
-    gets `FailedPrecondition`, and a missing descriptor or an unknown
-    `media_type` gets `InvalidArgument`. In all four cases nothing reaches
-    the CDN.
-  - The library always builds `https://` media URLs. Builds with the
-    `stress` feature therefore use `LoopbackHttpClient`, the same ureq
-    client with `https://` sent as `http://` only when the host is
-    `127.0.0.1`, `localhost` or `[::1]`. A lookalike host such as
-    `127.0.0.1.evil.example` is left alone. The production daemon, built
-    without `stress`, is unchanged.
-  - `scripts/check-service-coverage.py` pins MediaService at 1 RPC.
-
-- **NewsletterService is tested through the socket** (issue #70). All 6 RPCs
-  now run over a real Unix socket and tonic client, on both engines, with the
-  account logged in against the mock.
-  - The five reads (ListSubscribedNewsletters, GetNewsletterMetadata,
-    GetNewsletterMessages, GetMyNewsletterAddOns,
-    SubscribeNewsletterLiveUpdates) are answered with what WhatsApp's server
-    sent on 2026-10-02, together with its answers for a channel that does not
-    exist. The capture came from one public channel, was anonymized, and is
-    checked into `crates/wamux/tests/newsletter_service/`. A test proves the
-    transcription renders back to the captured stanzas.
-  - Each read is checked by value: every `Newsletter` field (a list entry
-    has no subscriber count and falls back to the preview picture), each
-    history row with its body in the event bus's shape and the server's
-    tallies, a cleared poll vote kept as a dated vote with no options, and the
-    live-update duration.
-  - The requests are checked on the wire. History goes to the server and
-    names the channel inside, and `before` 0 is left out. The add-ons query
-    carries its `limit`, and the subscription goes to the channel with an
-    empty `<live_updates/>`. The poll vote is checked against the stanza WA Web
-    sent on 2026-09-25 (#26). It was not captured again because a vote on a
-    real channel is a public write.
-  - Three table tests go through all 6 RPCs: an unknown account gets
-    `NotFound`, an account that is not connected gets `FailedPrecondition`,
-    and a missing account ref gets `InvalidArgument`. A server refusal (403)
-    comes back as `PermissionDenied` with the `wa-code` and `wa-text` trailers
-    on the five RPCs that use an IQ. The vote still returns its stanza id,
-    since the server's verdict on it arrives later as a `ServerAckEvent`.
-  - Each `InvalidArgument` branch has a test, and each confirms that nothing
-    reached the wire: an empty or malformed jid, a jid that is not a channel
-    (vote, add-ons, subscription), a vote with no poll, a hash that is not 32
-    bytes, a repeated option or 1001 options, and a page size of 0.
-  - The mock wire helpers and the capture comparison that #68 introduced now
-    live in `tests/common/mock_wire.rs`, shared by both suites.
-  - `scripts/check-service-coverage.py` pins NewsletterService at 6 RPCs.
-
-  GetNewsletterMetadata and GetNewsletterMessages still send a jid that is not
-  a channel to the server. This is pinned as it is today and is questioned in
-  #99.
-
-- **MessagingService is tested through the socket** (issue #71). All 23 RPCs
-  now run over a real Unix socket and tonic client, on both engines, with a
-  companion account logged in against the mock. Before this, the only test was
-  a status-revoke shape check.
-  - **What a send put on the wire is checked by value.** The mock gained
-    `MockPeer`, a parked whatsapp-rust client with a real Signal identity, and
-    serves its devices and prekey bundle. The test then opens what the
-    client sent with the peer's own session and compares the message.
-  - **Covered this way:**
-    - text (plain and with mentions, quote, link preview and timer);
-    - reaction, edit, revoke, contact, interactive reply, poll and poll vote;
-    - the copy every DM sends to the account's own phone;
-    - a group send, opened by both members through the sender key;
-    - the status text, media and revoke, opened by each recipient.
-  - **Media** goes through a real upload: `MockCdn` now accepts POST. The
-    uploaded body is proved to be the plaintext encrypted with the media key
-    the peer opened.
-  - **The `media_max_bytes` cut-off** and the stream framing errors (no
-    header, a chunk first, a second header) are refused before anything is
-    uploaded.
-  - **Chat actions** (archive, pin, mute, star, mark read and unread, delete
-    chat, delete for me) are read back from the app-state patch with the
-    seeded sync key, MACs checked, and the mutation is asserted.
-  - **Other wire checks:**
-    - `MarkRead` sends one read receipt listing every id;
-    - `SendPresence` sends the right `<presence>` or `<chatstate>`;
-    - `FetchMessageHistory` sends the on-demand request to the account's
-      own phone as a peer message, and the session id it returns is that
-      stanza's id;
-    - `AggregatePollVotes` tallies the vote this account sent.
-  - **Statuses:** an unknown account gets `NotFound`, an account that is not
-    connected gets `FailedPrecondition`, and a missing account ref gets
-    `InvalidArgument`, across all 23 RPCs. Each `InvalidArgument` branch has a
-    test that also proves nothing reached the wire.
-  - **The live capture.** Four DM sends between the owner's own accounts
-    (text, reaction, edit, revoke) were captured live on 2026-10-02 and
-    anonymized. A test holds the stanzas the client sends the mock to their
-    skeleton.
-  - **Mock changes:** `start_as` ends offline delivery, so a send does not
-    wait the library's 60 s timeout. Before `<success>`, it sends a contacts
-    notification for each served peer, which is how the server teaches a
-    client a LID. This matters because a status resolves its recipients from
-    local state only. The mock now answers usync and prekey queries per jid,
-    answers group metadata, and records receipts, presences and chat states.
-    The app-state fixture seeds and opens patches.
-  - `scripts/check-service-coverage.py` pins MessagingService at 23 RPCs.
-
-  Pinned as it is today and questioned in #101:
-  - a malformed poll (including the proto3 default `selectable_count` 0), a
-    mute deadline in the past, and a status with no recipients come back as
-    `Unavailable`;
-  - a delete-for-me checks the account before the jid;
-  - a status recipient given by phone number whose LID the client does not
-    know is dropped without a word.
-
-- **The two engines' migrations keep one numbering from now on** (issue #66).
-  Postgres 0002 has no SQLite counterpart, so the same change carried
-  different numbers (Postgres 0003/0004 are SQLite 0002/0003), and anyone
-  comparing the engines had to work out the mapping by hand.
-  - No applied migration is renumbered: sqlx stores each one's version and
-    checksum.
-  - From 0005 on, a change has the same number and name in both
-    directories. A change for one engine gets a no-op file of the same name
-    on the other, so SQLite's next migration is 0005.
-  - `tests/migration_alignment`, run by every `cargo test` with no database,
-    fails when a migration exists in only one directory, carries two numbers,
-    reuses a historical number, or when the applied history is edited. The
-    historical offset is its one named exception.
-  - The rule is written in CLAUDE.md.
-
-### Security
-
-- **`contrib/wamux.service` creates the store's directory `0700`** (issue
-  #188). `docs/DEPLOYMENT.md` promises the database's directory is `0700`, but
-  the unit had `StateDirectory=wamux` with no `StateDirectoryMode=`, and systemd
-  creates a state directory `0755` whatever `UMask=` says (measured with a
-  transient unit on systemd 261: `0755` without the directive, `0700` with it).
-  The database file itself was already `0600`, so this is defense in depth. An
-  existing install picks it up by copying the new unit, `daemon-reload` and a
-  restart: systemd tightens an existing `0755` state directory on start. The
-  socket stays reachable for the user unit, whose consumer is the same user.
-- **rustls 0.23.46** (RUSTSEC-2026-0346, -0347, -0348, -0349, published
-  2026-10-14). rustls reaches the daemon through the WhatsApp WebSocket
-  transport, the media CDN client and sqlx's TLS. The fixed advisories are
-  secrets in client session `Debug` output, data sent to the outer server after
-  an ECH rejection, a brotli certificate decompression of up to 1 GiB before
-  authentication, and an unauthenticated ServerHello downgrading later
-  connections to classical key exchange. Lockfile only; no code or wire change.
-
-- **The release pipeline publishes only what passed its gates, from fixed
-  inputs, with provenance** (issue #78). The image job now needs the release
-  job, so a tag that fails `scripts/ci.sh --no-postgres`, the tag/version check
-  or the CHANGELOG check publishes no image and no `:latest`. Every action in
-  both workflows is pinned by full commit SHA (the tag in a comment), and every
-  job runs on `ubuntu-26.04` instead of `ubuntu-latest`. The Docker build and
-  `scripts/release-tarball.sh` build `--locked`, and both `FROM` lines are
-  pinned by digest. `.github/dependabot.yml` opens update PRs for the actions,
-  the base images and the crates. The tarball and the image carry a build
-  provenance attestation; check them with `gh attestation verify` (see
-  "Verifying a release" in `docs/DEPLOYMENT.md`). `scripts/check-release-pins.py`
-  fails CI when any of this regresses. The actions also move to their Node 24
-  majors (`actions/checkout` v7, the Docker actions v4/v7,
-  `setup-rust-toolchain` v2); `rustsec/audit-check` has no Node 24 release yet
-  and keeps its Node 20 warning.
+- **Encryption at rest** (#164, #165, #166). `store_key_file` (a `0600` file with
+  64 hex characters) seals the store's secrets with XChaCha20-Poly1305. An
+  existing store is converted on start (resumable), `wamux store decrypt --yes`
+  reverses it, and `wamux store rotate-key --new-key-file <path>` changes the
+  key. Losing the key means re-pairing every account. See `docs/DEPLOYMENT.md`.
+- **The store file is created `0600`** (#75), and an existing file others can
+  read is reported with a `WARN` naming the `chmod 600` that fixes it.
+- **`AdminService.Check` reports the store's blob format** (#84):
+  `BLOB_FORMAT_PROTOBUF` means it is ready for 0.3.
+- **`MessagingService.GetStatusAudience`** (#89) returns the status audience the
+  library holds for the account.
+- **An experimental Turso storage engine** behind the `turso` cargo feature
+  (#106): `database_url = "turso://<path>"`, file-compatible with `sqlite://`
+  both ways. The shipped daemon does not include it.
+- **Events that were `RawEvent` are typed** (#148, #149, #150, #151, #153):
+  `EventEnvelope.sticker = 28`, `label = 29`, `quick_reply = 30`,
+  `account_setting = 31`, `self_push_name = 32`, `call_log = 33`,
+  `connection_notice = 34`, `contact_notice = 35`, `device_notice = 36`,
+  `mex = 37`, new `AppStateUpdate` cases, `ContactUpdate.removed`, a missed call
+  as `CallEvent.missed`, and three pairing updates. Each old `RawEvent.kind` stops
+  arriving. See
+  [RawEvent kinds](docs/upgrading/0.1-to-0.2.md#rawevent-kinds-that-became-typed-141).
+- **PairWithQr and PairWithCode end when nothing more can come** (#150): after a
+  refused or expired code, or used-up QR refs, besides `paired` and `error`.
+- **A forced logout and a ban carry the server's whole stanza** (#138) as a
+  `StanzaNode`, with an account lock's appeal token.
+- **The raw element of group create, link, unlink and sub-group suggestions**
+  (#146), as a `StanzaNode`.
+- **GroupService and channel RPCs refuse a jid of the wrong kind** (#96, #99), and
+  `GroupJidResponse.join_outcome` tells a join from a pending request.
+  MessagingService answers `InvalidArgument` for a poll, mute or status that can
+  never work (#101). See
+  [new refusals](docs/upgrading/0.1-to-0.2.md#new-refusals).
+- **Channel polls can be voted on** (#26): `SendNewsletterPollVote`,
+  `GetMyNewsletterAddOns` and `SubscribeNewsletterLiveUpdates`, with the tallies
+  typed as `EventEnvelope.newsletter_live_update`.
+- **`FavoritesChanged`** (#48): the favorite chats list, typed.
+- **`NewsletterMessage.original_timestamp` and `last_edit_timestamp`** (#51), in
+  ms.
+- **A received sticker pack can be opened** (#58): its ZIP and thumbnail are
+  descriptors `DownloadMedia` accepts, and `InboundMessage.sticker_pack` describes
+  the pack.
+- **`RevokeStatus`** (#41) takes a posted status down; send the same recipients.
+- **The six library-built sends echo** (#38): poll, vote, edit, revoke and status
+  posts publish a from-me `InboundMessage` like the other sends.
+- **`OfflineSyncInterrupted`** (#38), typed: the drain was cut and the remainder
+  comes back.
+- **`PresenceUpdate.chat`** (#24): the conversation a chat state happened in.
+- **The LID-phone mapping** (#1): `InboundMessage.sender_alt` and
+  `recipient_alt`, `ContactService.ResolveLidPn` and `ListLidMappings`.
 
 ### Deprecated
 
-- **Converting a bincode store** (issue #84, follow-up #179). 0.2.x is the last
-  release line that converts a store written before #31 (bincode blobs) to
-  protobuf when it opens it; 0.3.0 deletes the conversion and refuses such a
-  store. A conversion that touched any row now logs a warning saying so (a new
-  store's zero-row conversion stays at info). Upgrade through 0.2.x before 0.3;
-  see "Upgrading a store written before #31" in `docs/DEPLOYMENT.md`.
+- **Converting a bincode store** (#84, #179). 0.2.x is the last line that
+  converts a store written before #31; 0.3.0 refuses one. Upgrade through 0.2.x
+  before 0.3; see `docs/DEPLOYMENT.md`, "Upgrading a store written before #31".
 
 ### Fixed
 
-- **`pair_socket` and `pair_cli` send their self-message only after the
-  post-pairing reconnect** (issue #108). Right after pairing the server closes
-  the stream (515) and the library reconnects, and `pair_socket` sent into that
-  window and reported `[FAIL] Messaging.SendText(self)`. Waiting for
-  `GetAccountStatus` to say CONNECTED would not have helped: the daemon maps
-  `PairSuccess` to CONNECTED and the library announces no disconnect for an
-  expected 515, so the status reads CONNECTED the whole time. Both binaries now
-  subscribe to the account's events before pairing and send after the
-  `Connection(CONNECTED)` that follows `Paired` (the new `wamux_tools::post_pairing`
-  module); `pair_cli` drops the fixed 6 s sleep it used instead. When the
-  reconnect does not come within 30 s the self-message is skipped with a note
-  and no check, not counted as a failure: it was only ever `accepted`. No
-  daemon or wire change.
-- **CI: the store-defaults check no longer fails a PR's first hosted run**
-  (issue #140). `scripts/check-store-defaults.py` found wacore through
-  `cargo metadata --offline` with no platform filter, which wants the sources
-  of every target's packages (wasm, windows, redox). On a cold runner cache
-  only the build stages had downloaded anything, all of it for the host, so
-  cargo exited 101 (`failed to download atomic v0.6.1`, reproduced locally
-  with a cache holding only what the clippy stages fetch). A rerun passed
-  because the failed job saved its cache after a later script test had
-  downloaded the rest.
-  - The check asks for the host's packages only
-    (`--filter-platform host-tuple`), which a host build has already fetched.
-  - A cargo failure now prints cargo's own error, not just the exit code.
-  - It still fails when wacore cannot be resolved.
+- **SIGTERM stops the daemon** (#35) with event subscriptions open: they end
+  cleanly, anything else gets `shutdown_grace_ms`, and the socket is unlinked.
+  Before, systemd had to SIGKILL it.
+- **The Postgres engine no longer runs out of pool connections** (#107) after
+  `CheckOnWhatsApp`, `GetAbout` or `ListParticipating`. 0.1.0 on Postgres has
+  this bug.
+- **The stores override wacore defaults that were wrong for them** (#93):
+  `get_sent_message` reads without consuming, `base_keys` older than an hour are
+  pruned, and two tc-token writers no longer drop each other's field.
+- **`GetNewsletterMetadata` answers `NotFound` for a channel that does not exist**
+  (#56); a MEX error carries `wa-code`/`wa-text`, and `405` is `PermissionDenied`.
+- **`THIRD-PARTY-LICENSES.md` matches what ships** (#83).
 
-- **The Postgres engine no longer runs out of pool connections** (issue
-  #107). After a `CheckOnWhatsApp`, `GetAbout` or `ListParticipating`, the
-  daemon could spend minutes failing every store call with `pool timed out
-  while waiting for an open connection`. Signal state stopped flushing, and a
-  send could take minutes and answer `Unavailable`.
-  - The cause: those three RPCs run a library future that is not `Send`, and
-    they ran it on a throwaway runtime built per call. A Postgres connection
-    the pool opened during the call stayed bound to that runtime after it was
-    gone, and every later acquire that picked it waited out the 30-second
-    acquire timeout. Tasks the library started during the call died with the
-    runtime too.
-  - The call now runs on the daemon's own runtime, from a blocking thread, so
-    connections, timers and tasks outlive it.
-  - The SQLite engine was not affected: its connections do not use tokio's
-    I/O driver. The per-call runtime dates from before 0.1.0, so 0.1.0 on
-    Postgres has the same bug.
+### Security
 
-- **The stores override the wacore trait defaults that were wrong for them**
-  (issue #93). Both engines left every trait method with a default body on
-  that default, and four of those defaults do something other than what the
-  trait asks of a real backend. Now, on Postgres and SQLite alike:
-  - `get_sent_message` reads the sent-message row without consuming it. The
-    default errored, so a group repair or resend that missed the in-memory
-    cache logged a warning and found no payload.
-  - `delete_expired_base_keys` prunes `base_keys` older than the keepalive's
-    one-hour cutoff. The default deleted nothing, so the table only grew.
-  - `touch_tc_token_sender_timestamp` and `store_received_tc_token` are each
-    one upsert, atomic against each other as the trait requires. The default
-    read-modify-write let a concurrent history sync and send path drop one
-    writer's field: in the parity test, 63 (Postgres) and 64 (SQLite) of 64
-    contacts lost one.
-  - `docs/store-trait-defaults.md` classifies all 36 trait defaults: 5
-    overridden, 31 kept, each with the reason. `scripts/check-store-defaults.py`,
-    run by `scripts/ci.sh` in both modes, reads the pinned wacore and fails on
-    a default the table does not classify, which is how a whatsapp-rust bump
-    that adds one is caught. The throughput defaults (batches, `commit_patch`,
-    SQLite maintenance) are #104.
-
-  No migration and no wire change.
-
-- **`THIRD-PARTY-LICENSES.md` matches what ships, and CI holds it there**
-  (issue #83). The file in the image and the tarball still listed the
-  whatsapp-rust family at 0.6.0, and since the workspace split (#62) its
-  generator wrote a file with 0 crates and exited 0, because it read a graph
-  root a virtual manifest does not have. Now:
-  - The notices come from the shipped daemon's graph (`wamux`): the crates
-    only the tools use (`qrcode`, `image`, `ureq` 2) and the workspace's own
-    crates are no longer listed. 341 crates.
-  - The whatsapp-rust family, built from git, carries its MIT text. The
-    license lives at the root of the upstream repository rather than in each
-    crate's directory, so nine of those crates used to be listed without one.
-  - `scripts/check-third-party.sh`, run by `scripts/ci.sh` in both modes,
-    regenerates the file and fails on any difference, naming the command
-    that fixes it (`python3 scripts/gen-third-party.py`). It also demands an
-    absolute floor of crates and the whatsapp-rust version in `Cargo.lock`,
-    so an empty graph cannot pass. The output does not depend on the
-    machine: generated from a freshly downloaded `CARGO_HOME`, it is
-    identical byte for byte.
-
-- **`GetNewsletterMetadata` answers `NotFound` for a channel that does not
-  exist** (issue #56). The server answers such a JID with a node whose `id`
-  is null (`"state": {"type": "NON_EXISTING"}`), not with `null`, so the
-  core's own `is_null()` check never fired and it relayed an empty
-  `Newsletter` (`jid: ""`, `state: "non_existing"`) with `OK`. The stress test
-  that should have caught it answered `null`, which the server never sends; it
-  now plays the answer captured live. `ListSubscribedNewsletters` drops an
-  entry with no `id` instead of relaying it with an empty jid, as WA Web does.
-
-- **A MEX query the server refuses answers with the server's code** (issue
-  #56). A GraphQL error carrying a code (e.g. `405 Not Allowed`, measured on
-  `GetNewsletterMetadata` for a channel the account does not follow) came
-  back `Unavailable`, which reads as the core being down. It now lifts into
-  the same `wa-code` / `wa-text` trailers an IQ rejection carries, and `405`
-  (IQ `not-allowed` or MEX `Not Allowed`) maps to `PermissionDenied`.
-
-- **App-state writes work again after the main bump** (issue #36).
-  `MarkChatRead`, pin, archive, mute and star were all refused with "its
-  bootstrap has not completed" (330 `unavailable`, zero `ok`, since the #30
-  deploy). The #30 migration stored every app-state collection as not
-  bootstrapped, and whatsapp-rust never marked a collection that already has a
-  baseline and is at the server's head, so the flag stayed unset. Fixed
-  upstream in #1545, which the pin now includes: the first sync of such a
-  collection marks it, leaving its version and ltHash alone. The palliative
-  that bridged the gap (the #31 conversion marking every collection with
-  `version > 0`) is gone, so the conversion carries `bootstrapped` over as it
-  was. `tests/appstate_bootstrap.rs` runs the library's processor over both
-  engines and fails if the pin ever loses the fix.
-
-- **SIGTERM now stops the daemon** (issue #35). With any `SubscribeEvents`
-  stream open, a stop used to hang until systemd SIGKILLed the process after
-  90 s: tonic waits, with no deadline, for every connection to close, and an
-  event subscription never ends on its own. The socket file was left behind and
-  the WhatsApp clients died mid-write. Now every subscription ends with a clean
-  end of stream when shutdown starts (a subscriber sees status OK, not a torn
-  connection, and should reconnect when the socket is back), anything else gets
-  at most `shutdown_grace_ms` (default 10 s), then the accounts stop through
-  their graceful stop, the socket is unlinked and `wamux stopped` is logged.
-
-### Changed
-
-- **One helper turns a library jid into a wire jid** (issue #142, found in
-  #135's review). `lib_jid` and `optional_lib_jid` were copied in the event
-  mapping and the group metadata mapping, ten more sites wrote
-  `relay_jid(jid.to_string())` by hand, fourteen spelled the optional form
-  out, and three built the `Jid` message literally. All of them go through
-  `wamux_types::relay_lib_jid` and `relay_optional_lib_jid` now, beside
-  `relay_jid`, under the same rule (#120). Nothing changes on the wire: a
-  library jid always prints as text, never as an empty value.
-
-- **BREAKING: call events are typed, not JSON** (issue #135, part 4 of #74,
-  which it closes). `CallEvent` loses `raw` (the library's JSON), `action`
-  (the #126 enum, now redundant) and `action_raw`, all `reserved`, and the
-  `CallActionKind` enum is gone. JSON key to field:
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3d.
-  - `CallEvent` carries every field of the `<call>` stanza: `call_creator`,
-    `stanza_id`, `notify`, `platform`, `version`, `participant`, `recipient`,
-    the time in ms, `offline`, `caller_username`, `video_orientation` and the
-    group snapshot an offer carries.
-  - The action is a `oneof` with one case per library action (14), each with
-    its own fields: the offer's caller phone, country, codecs and video flag,
-    a reject's or terminate's `reason`, the video handshake state, and the
-    group-call snapshot, rekey, waiting room, raised hand and screen share. An
-    action the library adds later arrives as `unknown_action` with its tag.
-  - A group-call participant's phone number, a device's capability bitmask and
-    a rekey's ciphertext cross too; the library's JSON left them out.
-  - A terminate's `duration` and `audio_duration` cross verbatim: no capture
-    carries one (a linked device is dismissed before the call ends) and the
-    unit is not documented.
-  - `scripts/check-wire-json.py` (in `ci.sh`) keeps JSON off the wire: only
-    the `RawEvent` catch-all and the store's own rows may serialize it.
-
-- **BREAKING: app-state updates are typed, and a forced logout carries the
-  server's copy** (issue #134, part 3 of #74). `AppStateUpdate` loses `raw`
-  (the library's JSON) and `kind` (the #126 enum, now redundant), both
-  `reserved`, and the `AppStateKind` enum is gone. JSON key to field:
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 3c.
-  - `AppStateUpdate` carries `timestamp` and `action_timestamp` in ms,
-    `from_full_sync`, and a `oneof action`: `archive`, `pin`, `mute`, `star`,
-    `mark_read` or `delete_chat`, each with that action's own fields.
-  - A mute's end crosses in ms, as the server sends it. The message range's
-    times were unix seconds and are ms now. Both were measured live.
-  - A range message's key is a `MessageKey`, with `chat` and `participant` as
-    `Jid`s.
-  - `LoggedOutInfo` gains `logout_message` (`header`, `subtext`, `locale`), the
-    text the server wants shown on a forced logout, and `on_connect`. The raw
-    logout stanza (an account lock's appeal token) is #138.
-
-- **BREAKING: the group and contact update events are typed, not JSON**
-  (issue #133, part 2 of #74). `GroupUpdate` and `ContactUpdate` lose `raw`
-  (the library's JSON) and `kind` (a constant), both `reserved`. JSON key to
-  field: `docs/BREAKING-CHANGES-2026-10-05.md`, section 3b.
-  - `GroupUpdate` carries the notification's header (id, push name, offline
-    marker, action index, who caused it with the phone and username beside a
-    `@lid`, the time in ms, the addressing mode) and the action as a `oneof`
-    with one case per library action (44), named by its wire tag: `add`,
-    `remove`, `promote`, `subject`, `announcement`, `ephemeral`, `create`, ...
-    An action the library does not name arrives as `unknown` with its tag.
-  - The JSON spelled every jid as the library's struct
-    (`{"user":..,"server":"lid",..}`); each one is a `Jid` now.
-  - `create` carries the new group as the `GroupMetadata` GetGroupMetadata
-    answers with (#132), parsed by the library's own group parser. A member
-    who is re-added receives a `create` too.
-  - A notification participant's `participant` role is
-    `GROUP_PARTICIPANT_TYPE_MEMBER`, the same value GroupMetadata uses.
-  - `ContactUpdate` carries `timestamp` and `action_timestamp` in ms (unset
-    when the mutation had none, upstream #1562), `from_full_sync`, and the
-    contact action's names, username, and its `lid` and `pn` as `Jid`s.
-
-- **BREAKING: group metadata, membership requests and the business profile
-  are typed messages, not JSON** (issue #132, part 1 of #74).
-  `GroupJidResponse.metadata`, `GroupMetadataResponse.metadata` and
-  `GroupSummary.metadata` are a `GroupMetadata` message, and
-  `MembershipRequestsResponse.requests` and `BusinessProfileResponse.profile`
-  are typed too, each under a new number with the old one `reserved`. JSON key
-  to field for each: `docs/BREAKING-CHANGES-2026-10-05.md`, section 3a.
-  - `GroupMetadata` carries every field the library parses (56), not the five
-    the JSON picked, and each participant whole: jid, phone number, lid,
-    username, role and the roster details (join time, label, display name).
-  - A field the server left out is unset, never `0` or `""`. An absent subject
-    used to be `""` in the JSON; inside `GroupMetadata` it is unset now.
-    `GroupSummary.subject` keeps `""`.
-  - Times are milliseconds, like every timestamp in the contract: the creation,
-    subject, description, join and request times were unix seconds.
-    `appeal_update_time`, `participant_label_mtime` and the growth lock's
-    `expiration` cross as the server sent them, because their unit is not
-    verified.
-  - A membership request's `jid` was the library's struct serialized as an
-    object (`{"user":..,"server":"lid",..}`, #96); it is a `Jid` now.
-  - `BusinessProfileResponse.profile` is unset for a jid with no business
-    profile, where `raw` held `null`.
-  - A serialization failure no longer reaches the edge as an empty payload: the
-    projections cannot fail.
-
-- **BREAKING: the channel fields are proto enums** (issue #128, part 3 of #73,
-  which it closes). `Newsletter.verification`, `.state` and `.role`, and
-  `NewsletterMessage.type`, `.poll_type` and `.edit` are enums, each under a new
-  number with the old one `reserved`. Old string to new value for each:
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 2c.
-  - A value the library does not name is `UNKNOWN`, with the server's token
-    next to it in `verification_raw`, `state_raw`, `type_raw`, `poll_type_raw`
-    or `edit_raw`. The token is now verbatim: an unmodelled state used to relay
-    lowercased (`deleted`), and is now `DELETED`.
-  - `role` has no raw field: the library drops a role it does not model, so
-    that and "no role" are both `UNSPECIFIED`.
-  - An absent state still reads `ACTIVE` and an absent verification
-    `UNVERIFIED`, the library's defaults (#56).
-  - `type` names text, media and poll, the three the server sends. A history
-    row with no `type` is `UNSPECIFIED`, not `TEXT`.
-  - `poll_type` and `edit` were not on #73's list and joined it: `edit` is the
-    `EditAttribute` enum instead of `"3"` / `"8"`.
-
-- **BREAKING: the media type and the presence state are proto enums** (issue
-  #127, part 2 of #73). `MediaDescriptor.media_type`, `SendMediaHeader.media_type`
-  and `PostStatusMediaHeader.media_type` are `MediaType`, and
-  `SendPresenceRequest.state` is `PresenceState`, each under a new number with
-  the old one `reserved`. Old string to new value for each:
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 2b.
-  - `MediaType` names the seven kinds the core relays, the two download-only
-    sticker pack kinds included. The core builds every descriptor from those
-    seven, so `MEDIA_TYPE_UNKNOWN` is never emitted and there is no raw field.
-    `DownloadMedia` takes the descriptor back as it came.
-  - A request refuses every wrong value the same way: `UNSPECIFIED`, `UNKNOWN`,
-    a number outside the enum, or a value the operation does not take is
-    `InvalidArgument` with `<field> must be one of <A|B|...>, got <value>`,
-    where the value is its proto name or the bare number. It used to be
-    `unknown media_type '<v>'` and `unknown presence state '<v>'`.
-  - Request enums carry no raw field: the edge writes them, and there is no
-    value without a name that the core would act on.
-
-- **BREAKING: event fields that were free strings or Rust `Debug` output are
-  proto enums** (issue #126, part 1 of #73). `ReceiptEvent.type`,
-  `PresenceUpdate.chat_state`, `AppStateUpdate.kind`, `CallEvent.action`,
-  `StickerPackInfo.origin` and `UndecryptableEvent.reason` are enums, each under
-  a new number with the old one `reserved`. Old string to new value for each:
-  `docs/BREAKING-CHANGES-2026-10-05.md`, section 2a.
-  - Each enum has `*_UNSPECIFIED = 0` for "no value" and `*_UNKNOWN = 1` for a
-    value the library hands over that wamux does not name. Where the original
-    survives, it travels next to `UNKNOWN`: an unnamed receipt type in
-    `type_raw`, a call action added upstream in `action_raw`.
-  - `ConnectionStateChanged.detail`, the `Debug` of the logout reason or of the
-    whole ban, is replaced by `logged_out { reason, reason_code }` and
-    `ban { reason, reason_code, expire_seconds, message, url }`, each set only
-    in its own state. A server code the library does not name is `UNKNOWN`
-    with the number in `reason_code`.
-  - Every value the library names is an enum value. That includes the `sent`
-    receipt and eight call actions that used to relay as the library's wire tag.
-  - `scripts/check-wire-debug.py` fails CI on a `Debug` format spec in the
-    event mapping outside `variant_name`, the `RawEvent` catch-all.
-
-- **BREAKING: every jid an event carries is the `Jid` message** (issue #122,
-  part 3 of #72, which it closes). Eighteen fields of `events.proto`, with the
-  rules of parts 1 and 2: a new number with the old one `reserved`, and only
-  the `_jid` suffix dropped (`GroupUpdate.group_jid` is now `group`,
-  `NewsletterLiveUpdate.newsletter_jid` is now `newsletter`). Before and after
-  for each field: `docs/BREAKING-CHANGES-2026-10-05.md`, section 1c.
-  - A jid the event does not have is an unset field where it was an empty
-    string: `InboundMessage.sender_alt` and `.recipient_alt` when the stanza
-    carried none, `PresenceUpdate.chat` on real presence, `ServerAckEvent.from`
-    when the server sent none, the echo's `sender` while the account has no jid
-    of its own, and the `sender` of a channel-history row.
-  - A favorite whose id is empty is skipped like one with no id; `raw` still
-    carries both.
-  - `EventEnvelope.account_uuid` stays a `string`: it is not a jid, and no
-    other uuid in the contract is a message.
-  - An edge built against the old contract reads each retyped event field as
-    empty (the field is unknown to it), never as the bytes of a `Jid`.
-  - `scripts/check-proto-jids.py` has no pending list any more: any `string`
-    field named for a jid fails CI.
-
-- **BREAKING: every jid in `groups.proto`, `contacts.proto` and
-  `newsletters.proto` is the `Jid` message** (issue #121, part 2 of #72).
-  Twenty-five fields, with the rules of part 1: a new number with the old one
-  `reserved`, only the `_jid` suffix dropped (`group_jid` is now `group`), an
-  unset or empty required jid answers `"missing jid"`, and a jid the core
-  answers with is relayed verbatim or left unset. Before and after for each
-  field: `docs/BREAKING-CHANGES-2026-10-05.md`, section 1b.
-  - Every entry of a repeated jid field (`participants`, the `jids` of
-    CheckOnWhatsApp and ResolveLidPn) is still required; an empty one now
-    answers `"missing jid"` (it answered `"empty jid"`).
-  - `LidPnResult.query` and `CheckResult.query` are `Jid`s carrying the value
-    they carried before; ResolveLidPn still echoes each query as it was sent.
-  - Which jids an RPC accepts does not change (#96 and #99 decide that).
-  - `scripts/check-proto-jids.py` now lists only the event fields of #122.
-
-- **BREAKING: every jid in `common.proto` and `messaging.proto` is the `Jid`
-  message** (issue #120, part 1 of #72). Eleven fields that carried a jid as a
-  `string` are `Jid` now: `MessageKey.chat` (was `remote_jid`) and
-  `.participant`, `Mention.jid`, `QuoteContext.participant`, `poll_creator`
-  (was `poll_creator_jid`) on SendPollVote and AggregatePollVotes,
-  `PollVote.voter` (was `voter_jid`), `PollOptionResult.voters`, and the
-  `recipients` of the three status RPCs. The migration guide, with every
-  field's before and after, is `docs/BREAKING-CHANGES-2026-10-05.md`.
-  - Each retyped field took a new number and `reserved` the old one, so a
-    client built against the old contract is not misread: its field is
-    unknown, and the request answers `InvalidArgument("missing jid")`.
-  - A required jid that is unset or empty answers `"missing jid"`, the message
-    `to` and `chat` already gave; these fields answered `"empty jid"` as
-    strings. An unset or empty `participant` is still the DM.
-  - A jid the core answers with is relayed verbatim, and an absent one is an
-    unset field, never `Jid { value: "" }`.
-  - `scripts/check-proto-jids.py` fails CI on a `string` field named for a
-    jid. The fields #121 and #122 still have to convert are on its pending
-    list, which only shrinks.
-
-- **Groups, contacts, channels and LID lookups take named types too** (issue
-  #116, part 3 of #63, which it closes). No function in `domain/` or `state/`
-  takes a generated `pb::*` input struct or an identifier as a string any more,
-  except event construction (#74). `scripts/check-domain-inputs.py` now fails
-  on either.
-  - The new types: `NewsletterHistoryQuery`, `NewsletterPollVote`,
-    `NewsletterAddOnsQuery` and `LidPnQuery`. A group, a participant, a
-    contact and a channel are a `Jid`. `domain/jid_parse.rs` is gone; its
-    helpers were the `Jid` constructors.
-  - Nothing changes on the wire except one message. A channel that does not
-    exist still answers NotFound, but the message is now `newsletter <jid> not
-    found`; it read `account no newsletter metadata for <jid> not found`. It
-    has a `WamuxError::NotFound` variant of its own.
-  - A group RPC and GetNewsletterMetadata/GetNewsletterMessages still accept a
-    jid on any server, as before: whether to refuse one is #96 and #99.
-    ResolveLidPn still echoes each query as it was sent.
-  - `require_field<T>` and `groups::invalid<E>` are concrete now.
-    `run_isolated` stays generic, recorded as the one exception: each call
-    passes a closure of its own type, and the concrete form would be a boxed
-    trait object.
-
-- **The messaging domain takes its own types, not the wire's** (issue #115,
-  part 2 of #63). The services convert a request once, at the boundary, into a
-  `wamux-types` type, and `domain/` and `state/` never see a generated
-  `pb::*` input struct (`scripts/check-domain-inputs.py`, which lists the
-  newsletter files #116 still has to convert). The `.proto` does not change,
-  and well-formed input goes out exactly as before.
-  - The new types: `MessageTarget`, `QuotedRef`, `OutgoingContext`,
-    `OutgoingText`, `LinkPreview`, `OutgoingMedia`, `DownloadableMedia`,
-    `StatusText`, `StatusMedia`, `StatusRevoke`, `PollVoteCast`,
-    `PollVotesToTally`, `NewPoll`, `ContactCard`, `InteractiveReply` and
-    `ReplyChoice`. Every function of the messaging domain takes the
-    `wamux_types::Jid`.
-  - Every error that existed keeps its code, its message and the order the
-    checks run in.
-  - What changes, for input that was malformed or spelled the legacy way:
-    - a mention, a quote's participant, or a target's participant used to
-      relay unparsed; a malformed one is now `InvalidArgument`, and a `@c.us`
-      one goes out as `@s.whatsapp.net`, the library's parse, as a `@c.us`
-      recipient already did;
-    - an empty id on the target of SendReaction, EditMessage, DeleteMessage
-      or StarMessage is now `InvalidArgument("empty message id")`, where
-      before it reached the library;
-    - a quote whose key has an empty id is now
-      `InvalidArgument("empty quote.quoted.id; expected the id of the quoted
-      message")`;
-    - a quote with no key quotes nothing, as before, and a SendText whose only
-      extra was such a quote now goes as a plain `conversation` instead of an
-      extended text with no context.
-
-- **`wamux-types`: the domain's named types and its error, in a crate of
-  their own** (issue #114, part 1 of #63). For anyone using the `wamux` crate
-  as a library (today `crates/wamux-tools`). Nothing changes on the wire
-  except the two edge cases at the end of this entry.
-  - `Jid`, `GroupJid`, `NewsletterJid`, `AccountId`, `ExternalRef`,
-    `AccountRef` and `MessageId` are validated when they are built. `Jid`
-    wraps the library's parsed `Jid`, so the library's parse stays the one
-    normalization (`@c.us` comes out `@s.whatsapp.net`, as sends already did).
-  - One `MediaKind` replaces three: what SendMedia accepts, what a status can
-    be, and the two download-only sticker-pack types. Every `media_type`
-    token on the wire now comes from it.
-  - `WamuxError` and its `tonic::Status` mapping moved to the new crate, and
-    that mapping is now the only place a `Status` is built
-    (`scripts/check-status-sites.py`). The services no longer build any by
-    hand: "account is not connected" always goes through
-    `WamuxError::NotConnected`. The `Database(sqlx::Error)` variant is gone,
-    since nothing built it.
-  - `AccountRegistry::resolve` takes an `AccountRef`. `client_err` stays in
-    the daemon, which is the only crate that knows whatsapp-rust.
-  - The two edge cases that changed:
-    - a `wa-text` trailer whose text is not ASCII is now left out, where
-      before it carried the raw UTF-8 bytes in an ASCII trailer (the code
-      still rides `wa-code`, and the text stays in the status message);
-    - `account <uuid> not found` names the uuid in lowercase, whatever case
-      the request used.
-
-- **The stores write batches in one transaction and read them in one query
-  per hundred** (issue #104). Seventeen wacore store methods that were left on
-  their default, a loop over the one-row method, are now overridden on both
-  engines. Nothing changes on the wire, in the config or in the stored bytes.
-  - Batch writes (identities, sessions, prekeys, sender keys, LID mappings,
-    device lists) run the same one-row statement in one transaction: one
-    connection and one commit instead of one per row, and all or nothing. The
-    signal cache flush already treats a failed batch as wholly unwritten.
-  - Batch reads (sessions, prekeys, mutation MACs, device lists, tc-tokens)
-    send one query per 100 values with a fixed-size `IN` list.
-  - `commit_patch` writes the app-state version, the removed MACs and the
-    added MACs in one transaction. A crash between them could leave a new
-    version next to old MACs, and the next patch's ltHash was then computed
-    from the wrong set.
-  - `maintenance`, which the keepalive calls about hourly, now refreshes
-    SQLite's planner statistics (`PRAGMA optimize`) and truncates the `-wal`
-    file, which otherwise only grows between checkpoints. A busy checkpoint is
-    skipped, not failed. On Postgres it does nothing (autovacuum).
-  - Measured on a dev machine (release build): on Postgres a 200-session
-    flush, a 256-user device-list write and 100 `commit_patch` calls each took
-    300 to 650 ms, one commit per row. On SQLite, which runs in process on one
-    connection, the same work took 10 to 30 ms. See the PR for the numbers
-    after the change.
-
-- **The storage SQL is written once for Postgres and SQLite** (issue #65).
-  Nothing changes on the wire, in the config or in the stored bytes: an
-  existing database or file opens as it is, with no migration and no
-  re-pairing. This is for anyone using the `wamux` crate as a library (today
-  `crates/wamux-tools`).
-  - `storage/postgres/` and `storage/sqlite/` were the same code written twice
-    (about 1,400 lines each). They are now one family, `storage::sql`:
-    `SqlStore` (the `StorageEngine`), `SqlBackend` (the per-account wacore
-    backend) and `SqlPool { Pg, Sqlite }`. `PgStorage`, `SqliteStorage`,
-    `PgBackend` and `SqliteBackend` are gone, with no aliases. The engine is
-    still picked by the `database_url` scheme.
-  - Each statement is one `$N` string that runs on both drivers: sqlx-sqlite
-    binds `$N` by number, which a test pins. The dialect differences became
-    portable SQL (`CASE` instead of `GREATEST`/`MAX`, `length` instead of
-    `octet_length`, the empty blob passed as a bind). Three statements are
-    still written per driver, side by side: the prekey array update, the
-    `blob_format` row lock and the `accounts` uuid (UUID on Postgres, TEXT on
-    SQLite).
-  - `StorageEngine` stays the only plug point. A non-sqlx engine is a family
-    of its own behind it, and #106 adds Turso that way. The CI checks of store
-    coverage and trait defaults now count families, and fail on a
-    `*_store.rs` outside every listed family.
-  - `tests/existing_store` opens a store written by `0f40e34`, before this
-    change, on each engine, and reads every table back. The fixture is in
-    `crates/wamux/tests/fixtures/store-0f40e34/`.
-
-- **The development binaries share one client and fail for real** (issue
-  #64). Nothing here is shipped and nothing changes on the wire or in the
-  daemon's config; this is for anyone running the tools in
-  `crates/wamux-tools`, whose runbook is now
-  `crates/wamux-tools/README.md` (what each one needs, reads, proves and
-  writes to WhatsApp).
-  - One library, `wamux_tools`, holds the socket connection (17 copies
-    before), the wait for CONNECTED, the env contract, the check report, the
-    delivery judgement, QR rendering, the media helpers and the in-process
-    Postgres bootstrap. A binary that cannot connect its account stops
-    instead of carrying on.
-  - Configuration is environment only, validated before anything is opened:
-    `WAMUX_SOCKET_PATH` (default the production socket,
-    `$HOME/.local/state/wamux/wamux.sock`, instead of `/tmp/wamux.sock`),
-    `WAMUX_REF` (required, no default account), and `WAMUX_LIVE_DEST`
-    (required by every binary that writes to someone else's chat, refusing
-    the legacy `@c.us` spelling and the account's own number). No phone number
-    is hard-coded as a default any more; `e2e_all`, `e2e` and `send_types`
-    used to send to one when given no destination.
-  - Every binary exits non-zero on a failed check. A check is `PASS` only when
-    a returned value was asserted, `ACCEPTED` for an RPC that answers nothing,
-    `FAIL` otherwise, and a run is green only with no failure and at least one
-    pass. A send to someone else passes on its fan-out reaching the phone and
-    a `delivered` receipt, never on the ack.
-  - `e2e_all` is non-destructive and runs unattended; the human reception
-    window is opt-in (`WAMUX_E2E_INBOUND=1`). Its old destructive phase is the
-    new `e2e_destructive`, which needs `WAMUX_E2E_DESTRUCTIVE=yes` and no
-    longer logs out or deletes the paired account (`logout_e2e` does that).
-  - Removed: `whois` and `e2e` (superseded, and `whois` existed to probe the
-    `@c.us` forms #4 retired), `validate1` (covered by `pair_socket`, `set_pfp`
-    and `recv_media`), and `send_group` (it opened a second connection on a
-    device the daemon already held).
-  - `scripts/ci.sh` runs the tools' suites (`cargo test -p wamux-tools`),
-    including the built binaries refusing a bad configuration.
-
-- **whatsapp-rust moves to git main `6f07e3ab`** (issue #86), same nightly,
-  every crate of the family together. Brings upstream #1568, the fix for
-  #1567: since #30 every connection's keepalive loop exited at its first tick,
-  so a logged-in account had no idle ping and no dead-socket watchdog. It has
-  both again, and `scripts/ci.sh --full` is green through the keepalive stage
-  (M2b) for the first time since #30. Also carried:
-  - **`AppStateUpdate.raw` and `ContactUpdate.raw` gain `action_timestamp`**
-    (upstream #1562). The raw JSON is the library's struct, so the new key
-    reaches the socket with no mapping change: the instant the mutation itself
-    carried, or `null` when it carried none. `timestamp` keeps its old value,
-    which in that case is a fallback (the epoch or the dispatch time), so only
-    `action_timestamp` tells a real epoch from a missing one. Additive: a
-    consumer that ignores unknown keys sees no change. Applies to `archive`,
-    `pin`, `mute`, `star`, `mark_read`, `delete_chat` and the contact update.
-  - **The store keeps the status audience** app-state sync delivers (upstream
-    #1565, `Device.status_privacy`), as a new optional field in the device
-    blob, in the library's own bytes, so unknown modes and custom lists survive
-    a restart. A store written before it reads the audience as unknown until
-    the phone syncs it again; one that does not decode is also unknown, with a
-    warning, and never stops the account from loading. Nothing to run: the
-    blob is field-tagged. The new `StatusPrivacyUpdate` event is not relayed
-    yet.
-  - **The bincode conversion (#31) keeps working.** It read a legacy device
-    blob as the current `Device`, and bincode is positional: #1565 inserting a
-    field would have made every store still in bincode unconvertible, with
-    the tests green, because they built their "legacy" blobs from the current
-    type. It now reads a frozen mirror of the layout that wrote it, proved
-    against real blobs written by the previous build
-    (`crates/wamux/tests/fixtures/bincode-23846f7e/`).
-  - Also in the range, internal to the library: pairwise retries keep the
-    message's content metadata (#1566), dependency bumps (#1563).
-
-- **The repository is a Cargo workspace** (issue #62). Three crates under
-  `crates/`: `wamux-proto` (the `.proto` files, the build script that
-  generates them, and nothing of wamux), `wamux` (the daemon, its tests and
-  migrations) and `wamux-tools` (the development binaries that lived in
-  `src/bin/`, not shipped). For anyone building from source:
-  - `cargo build`, `cargo run` and `cargo test` at the root still mean the
-    daemon (`default-members`). The release build is
-    `cargo build --release -p wamux --bin wamux`; the tools build with
-    `-p wamux-tools`.
-  - The daemon no longer compiles `ureq` 2, `qrcode` or `image`, which only
-    the tools use. `scripts/check-crate-deps.sh`, run by `scripts/ci.sh`,
-    fails if any of them comes back, or if `wamux-proto` gains a dependency
-    on a wamux crate.
-  - `unsafe_code` is forbidden workspace-wide. The build script no longer
-    sets `PROTOC` in its environment: it hands the vendored protoc to
-    prost's config.
-
-  No wire or config change: the release tarball and the Docker image carry
-  the same single `wamux` binary.
-
-- **tonic and prost move to 0.14** (issue #61). `tonic`, `tonic-reflection`,
-  `prost` and `prost-types` go up one line, and the codegen moves from
-  `tonic-build` to `tonic-prost-build`, since 0.14 split the prost codec into
-  its own crates (`tonic-prost` at runtime). No wire change: the `.proto`
-  files are untouched, reflection lists the same eight services, and the
-  on-disk blob format (#31) encodes byte for byte as before, which the golden
-  and cross-engine parity tests pin. The lock no longer carries `tower` 0.4
-  next to 0.5, and `scripts/ci.sh` now fails if any crate of the gRPC/HTTP
-  stack (tonic, prost, http, hyper, h2, tower) resolves to two versions.
-
-- **whatsapp-rust moves to git main `23846f7e`** (issue #56), same nightly.
-  Brings the three newsletter fixes the core had been waiting on, all filed
-  from here: #1557 (channel state and verification read in the server's
-  spelling, unknown values kept), #1558 (history rows keep the server's
-  `type` and `polltype` tokens) and #1561 (a missing channel is `NotFound`,
-  one id-less list entry no longer fails the list). Also #1559, which makes a
-  channel's `send_reaction` return the stanza id: a breaking signature for
-  callers that bind the `()`, and the core never calls it. No other
-  dependency moved.
-
-- **Channel metadata and history go through the library** (issue #56, which
-  closes out #38 and #40). `ListSubscribedNewsletters`,
-  `GetNewsletterMetadata` and `GetNewsletterMessages` stopped issuing their
-  own MEX queries and history IQ: every reason they were hand-rolled is fixed
-  upstream (see the bump above). What the library still answers differently,
-  accepted on purpose:
-  - a `role` it has no variant for relays as `""` instead of its token;
-  - an absent `state` / `verification` relays as `"active"` / `"unverified"`
-    instead of `""`;
-  - a history answer without `<messages>` is an error (`Unavailable`), where
-    it used to be an empty page. WA Web's own parser requires the node and
-    throws, so this is the server's contract, not a new strictness.
-
-  Measured on production before the swap, read-only: 9 subscribed channels
-  (list and one get each), every role `SUBSCRIBER`, every state `ACTIVE`,
-  verification always present, so no row changes. The stress suites
-  (`stress_newsletter_parse`, `stress_newsletter_history`) now pin what the
-  core relays by value, with canaries on the two accepted losses.
-
-- **whatsapp-rust moves to git main `f9811768`** (issue #26), same nightly.
-  Brings the three channel-poll PRs the new newsletter RPCs sit on (#1552
-  `send_poll_vote`, #1554 live tallies, #1555 `get_my_addons`) and #1550,
-  opt-in history sharing on a group member add. #1550 touches the send and
-  retry paths; read before the bump: its sender-key repair now skips only
-  message ids registered as pairwise history bundles, which exist only when
-  `add_participants_with_history` is called, and the core never calls it. The
-  message-unwrapping list in `classify.rs` is the same 24 wrappers,
-  reorganised. No other dependency moved.
-
-- **whatsapp-rust moves to git main `f7468ae2`** (issue #36), same nightly.
-  Brings upstream #1545 (see **Fixed**), two keepalive fixes (#1543: pending
-  IQs are probed before the watchdog reconnects; #1547: an IQ's write is
-  bounded by its deadline), #1542 (a call offer teaches the caller's LID-PN
-  pair) and #1544, a new `FavoritesUpdate` event for the favorite-chats sync.
-  That event reached subscribers as a `RawEvent` until #48 typed it (see
-  **Added**, `FavoritesChanged`). The bump itself left the gRPC contract
-  unchanged.
-
-- **`DeleteMessage` on a status answers `InvalidArgument`** (issue #41).
-  With `for_everyone` on a `status@broadcast` key it used to reach the chat
-  revoke, which the library refuses there, and came back `Unavailable`, which
-  reads as the core being down. It now names `RevokeStatus`, and is checked
-  before the account is, so it answers the same whether or not the account is
-  connected. Delete-for-me on a status is unchanged.
-
-- **The store's structured blobs are protobuf, not bincode** (issue #31).
-  `Device`, app-state versions and app-state sync keys were positional
-  bincode: every field whatsapp-rust appended made every stored blob
-  unreadable until a one-shot migration, linking the old `wacore` next to the
-  new one, rewrote them. That happened on both of the last two upgrades. They
-  are now protobuf (`proto/store/blobs.proto`), field-tagged, so a field a blob
-  predates decodes as its default; a field upstream adds is a compile error in
-  `storage/blob_codec`, answered with a new field number, not an outage.
-  - **Operators: nothing to run.** The daemon converts the store on open,
-    before any account loads, in one transaction: every blob is converted and
-    decoded back against the original (for a `Device`, every persisted field
-    including the key material) before anything is written, and one that will
-    not convert stops the daemon with nothing changed, naming the row. A new
-    `blob_format` table records the result, so later starts skip it. Back up
-    the store before the first start, as with any storage change.
-  - **Removed:** the `migrate-0-7` and `migrate-0-7-main` features, their bins,
-    and the `wacore` 0.6.0 / 0.7.0 dependencies they linked. See the #30 entry
-    for a store that still needs them.
-
-- **whatsapp-rust moves from the crates.io 0.7.0 release to git main
-  `f4d73ebe`** (issue #30). No new upstream feature is exposed; the gRPC
-  contract is unchanged except as noted here.
-  - **Operators on a store written before this bump: migrate it with commit
-    `ac4c21b` first.** `Device` and `HashState` were positional bincode and main
-    changed both layouts. The one-shot bins that bridge them
-    (`migrate_0_7_main`, and `migrate_0_7` for a store still on 0.6) were
-    deleted by #31, so check out `ac4c21b`, stop the daemon, back up, run
-    `cargo run --release --features migrate-0-7-main --bin migrate_0_7_main`
-    (dry run) and again with `-- --apply`, then start this build, which
-    converts the result to protobuf on open (see #31 below). After it, each
-    account's first connect does one full Noise XX handshake (the cached server
-    chain is re-verified).
-  - **A `@c.us` recipient now echoes as `@s.whatsapp.net`.** The library parses
-    the legacy spelling as a phone user (upstream #1371), which is the fix for
-    #4: such sends used to be encrypted for nobody. The core still rewrites no
-    jid itself.
-  - `ListGroups` keeps its full metadata (participants, description): main's
-    new listing call returns a slim overview, so the core issues the full query
-    itself. An absent group subject still projects as `""`.
-  - Media downloads now verify the hashes the message declares (upstream
-    #1541): a file that used to download with a mismatching hash now fails.
-  - New upstream events (chat lock, sticker sync, and others) reach the socket
-    as `RawEvent`, like any variant the core does not type.
-
-- **Breaking (behaviour): `PresenceUpdate.online` is optional and absent on a
-  chat state** (issue #24). The field was a hardcoded `true` on every
-  `composing`/`recording`/`paused`: `Event::ChatPresence` measures no presence,
-  so a consumer lighting an "online" dot off a typing event was lighting it off
-  a literal. It is now `optional bool`, present only on real presence
-  (`Event::Presence`). Migration: read `online` only when it is set; a consumer
-  on the old generated code reads `false` where it used to read `true` on chat
-  states, so gate the indicator on presence events. `last_seen` stays `0` on a
-  chat state, as before.
-
-- **`GetGroupMetadata` now hands back each participant whole** (issue #1). The
-  JSON flattened every participant to its jid string, which in a LID-addressed
-  group meant discarding `phone_number` — the only phone jid the roster carries,
-  i.e. the answer to "who is this `@lid`" for every member — along with who is
-  admin. `participants` entries are now objects (`jid`, `phone_number`, `type`)
-  and the payload gained `addressing_mode`, so the edge can tell whether the
-  roster's jids are LIDs before it tries to name anyone. Wire shape change for a
-  consumer that read `participants[i]` as a string; `subject`, `id` and
-  `description` are untouched.
-
-- **Breaking: `ContactService.GetPushName` now takes an `AccountRef`, not a
-  `JidRequest`** (issue #1). It always answered the *account's own* push name —
-  the getter that pairs with `SetPushName` — while ignoring the `jid` field it
-  asked for, and the shape read as "what is this contact called". WhatsApp
-  gives a companion device no per-contact push-name store, so the field could
-  not be honoured; it is gone instead. Migration: send the same `AccountRef`
-  you were putting in `JidRequest.account` and drop the jid. A caller that was
-  using this to name contacts was stamping its own push name on them; the push
-  name of a *peer* arrives on the events that carry it
-  (`InboundMessage.push_name`, `PushNameUpdate`).
+- **`contrib/wamux.service` creates the store's directory `0700`** (#188). Copy
+  the new unit, `daemon-reload` and restart.
+- **rustls 0.23.46** (RUSTSEC-2026-0346 to -0349).
+- **The release publishes only what passed its gates, with provenance** (#78):
+  pinned actions and base images, `--locked` builds, and attestations you can
+  check with `gh attestation verify` (`docs/DEPLOYMENT.md`, "Verifying a
+  release").
 
 ## [0.1.0] - 2026-08-28
 
@@ -2132,37 +402,30 @@ process and serves a gRPC API over a Unix domain socket.
   covers the lifecycle: create, list, pair (QR and phone code), connect,
   disconnect, logout, delete.
 - **Event fan-out.** `EventService.SubscribeEvents` streams typed events per
-  account or across all accounts, with the all-accounts selector staying
-  dynamic (accounts paired later join an open stream). A per-account replay
-  ring lets a reconnecting subscriber pick up recent events; a subscriber that
-  falls too far behind gets an explicit `subscription_gap` marker rather than
-  silent loss.
-- **Messaging.** Text, media (image, video, audio, document, sticker, PTT voice
-  notes, PTV), reactions, edits, deletions, link previews, ephemeral messages,
-  contacts, polls, and status posting. Chat actions: read/unread, star,
-  archive, pin, mute, delete, presence.
+  account or across all accounts (accounts paired later join an open stream). A
+  per-account replay ring lets a reconnecting subscriber pick up recent events;
+  one that falls too far behind gets an explicit `subscription_gap` marker.
+- **Messaging.** Text, media (image, video, audio, document, sticker, PTT, PTV),
+  reactions, edits, deletions, link previews, ephemeral messages, contacts,
+  polls and status posting. Chat actions: read/unread, star, archive, pin, mute,
+  delete, presence.
 - **Groups.** Creation and membership, permissions and settings, ephemeral
   timers, invite previews, group photo, and membership approval.
 - **Contacts.** WhatsApp presence check, profile picture get/set/remove, push
   name get/set.
-- **Storage behind a `StorageEngine` trait**, with two implementations chosen
-  by the `database_url` scheme: `postgres://` for many accounts, `sqlite://`
-  for a single host with no database server. Both persist byte-identical
-  blobs, so a store is portable between them, and a test asserts exactly that.
+- **Storage behind a `StorageEngine` trait**: `postgres://` for many accounts,
+  `sqlite://` for a single host. Both store byte-identical blobs, so a store is
+  portable between them.
 - **Relay-pure persistence.** Only `whatsapp-rust`'s Signal/session/device
   state is stored. No message history, ever.
 - **Unix socket transport** with configurable mode (default `0660`) and owning
   group, graceful shutdown on SIGTERM/SIGINT, and socket unlink on exit.
 - **Observability.** Structured `tracing` logs (text or JSON), one span per
-  request with method, peer uid, latency and status, plus `AdminService` with
-  a Prometheus render and a health check that reports serving and readiness
-  separately.
-- **Install surface.** Multi-stage Docker image, `docker-compose.yml`, and a
-  hardened systemd unit in `contrib/`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- **CI on GitHub Actions**, running `scripts/ci.sh` so there is one definition
-  of "green", plus a database-free subset for fast feedback and `cargo audit`.
-- **Third-party attribution** (`THIRD-PARTY-LICENSES.md`), generated from the
-  resolved dependency graph and shipped inside the Docker image.
+  request, plus `AdminService` with a Prometheus render and a health check.
+- **Install surface.** Docker image, `docker-compose.yml`, and a hardened
+  systemd unit in `contrib/`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Third-party attribution** (`THIRD-PARTY-LICENSES.md`), shipped inside the
+  Docker image.
 
 ### Security
 

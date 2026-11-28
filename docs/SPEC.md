@@ -48,7 +48,8 @@ crates/
                        #   and scale tests (`stress` feature only)
     tests/             # integration tests (see Verification)
   wamux-tools/         # development binaries (src/bin/), never shipped
-docs/crate-notes/      # verbatim whatsapp-rust/wacore API extraction (reference)
+docs/upgrading/        # upgrade guides, one per version step
+docs/archive/          # historical notes, not maintained (the 0.6.0 crate-notes)
 ```
 
 ## gRPC services (package `wamux.v1`)
@@ -70,7 +71,7 @@ are noted here.
   - Read state is one WhatsApp operation per RPC and the edge composes: `MarkRead`
     sends the RECEIPT that turns the other person's ticks blue; `MarkChatRead` and
     `MarkUnread` are app-state mutations that only reach this account's own
-    devices (issue #20, [breaking changes](BREAKING-CHANGES-2026-09-02.md)).
+    devices (issue #20, [upgrade guide](upgrading/0.1-to-0.2.md#markread-sends-a-receipt-20)).
   - `AggregatePollVotes` sends no stanza: it opens the votes the edge supplies
     (issue #13).
   - `RevokeStatus` needs the edge to hand back the recipients it posted to
