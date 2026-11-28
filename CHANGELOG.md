@@ -14,6 +14,18 @@ may change in a minor release. Breaking changes are marked **Breaking** under
 
 ### Added
 
+- **A client snippet page** (#280), published at <https://llawli.github.io/wamux/>
+  and generated from the `.proto` files: pick any RPC, edit the request, and
+  get grpcurl, Python, Go, Rust or JavaScript code for it, with presets for
+  creating an account, pairing, sending a text and reading events. CI fails when
+  the page falls behind the protos.
+- **`SECURITY.md` and `docs/STABILITY.md`** (#280): vulnerabilities are reported
+  privately through GitHub security advisories, and the stability statement says
+  which RPCs are stable, which are provisional, and what is not a contract while
+  the version is `0.x`. Issue forms and a pull request template under `.github/`.
+- **A README hello world** (#280): create an account, pair it with a QR drawn in
+  the terminal (or a code), send a text and watch events with grpcurl, plus the
+  edges built on the core (`wamux-http`, `wamux-easy-bots`).
 - **Android (Termux) and Debian packages** (#277). Each release ships
   `wamux-<version>-aarch64-linux-android.tar.gz` and `wamux_<version>_aarch64.deb`
   (for Termux, with a `termux-services` service, disabled until
@@ -37,6 +49,11 @@ may change in a minor release. Breaking changes are marked **Breaking** under
 
 ### Changed
 
+- **Upgrade guides are named by version step** (#280), in
+  [docs/upgrading/](docs/upgrading/README.md), replacing the dated
+  `docs/BREAKING-CHANGES-*.md` files; this CHANGELOG is trimmed to what an
+  operator or edge author needs. The project rules moved to `CONTRIBUTING.md`,
+  and `scripts/ci.sh` now enforces file size, function length and banned names.
 - **SQLite creates the store's directory** (#277), mode `0700`, when it does not
   exist. An existing directory is not touched.
 - **Breaking: `DeleteMessage` for everyone refuses a key no revoke can be built
