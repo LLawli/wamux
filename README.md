@@ -124,6 +124,33 @@ systemctl --user daemon-reload && systemctl --user enable --now wamux
 The shipped unit uses the SQLite engine, so there is nothing else to install.
 Point `WAMUX_DATABASE_URL` at a `postgres://` DSN when you outgrow it.
 
+### Debian and Ubuntu (.deb)
+
+```sh
+curl -LO https://github.com/LLawli/wamux/releases/download/v<version>/wamux_<version>_amd64.deb
+sudo apt install ./wamux_<version>_amd64.deb
+systemctl --user enable --now wamux
+```
+
+The package installs `/usr/bin/wamux` and a systemd user unit that uses SQLite,
+and starts nothing; see the
+[Debian package section](docs/DEPLOYMENT.md#debian-package).
+
+### Android (Termux)
+
+Each release carries `wamux_<version>_aarch64.deb` and
+`wamux-<version>-aarch64-linux-android.tar.gz` for a phone running
+[Termux](https://termux.dev):
+
+```sh
+apt install ./wamux_<version>_aarch64.deb
+pkg install termux-services && sv-enable wamux
+```
+
+Its socket, spool and SQLite store default to paths under the Termux prefix, so
+it needs no configuration. [docs/TERMUX.md](docs/TERMUX.md) covers connecting a
+client and what Android does to a background process.
+
 ### macOS (PKG)
 
 Each release carries `wamux-<version>-macos-universal.pkg`, one installer for
@@ -278,6 +305,8 @@ writes to WhatsApp is in
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to get the gates green, and the one
   rule that overrides the others (the core is a pure relay).
 - [CHANGELOG.md](CHANGELOG.md): what changed per release.
+- [docs/TERMUX.md](docs/TERMUX.md): running on an Android phone in Termux:
+  install, the defaults, keeping it alive.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): reaching the socket (native,
   Docker, container-to-container), who may open it (mode, group, peer
   allowlist), the media spool, the storage engines, encryption at rest and

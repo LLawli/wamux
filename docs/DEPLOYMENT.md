@@ -365,11 +365,13 @@ stopped.
 
 ## Verifying a release
 
-Each release ships a tarball and a macOS PKG on the GitHub release page, and an
-image at `ghcr.io/llawli/wamux:<tag>`. The tarball and the image carry the same
-static musl binary (the linux job checks it has no dynamic dependency, and the
-image job checks the pushed image holds the very same file); the PKG carries a
-universal macOS binary. All three carry a build provenance attestation (#78):
+Each release ships tarballs, Debian packages and a macOS PKG on the GitHub
+release page, and an image at `ghcr.io/llawli/wamux:<tag>`. The Linux tarball,
+the Debian package and the image carry the same static musl binary (the linux
+job checks it has no dynamic dependency, packages that very file, and the image
+job checks the pushed image holds it too); the Android tarball and the Termux
+package carry one bionic binary (see [Termux](TERMUX.md)); the PKG carries a
+universal macOS binary. Every artifact carries a build provenance attestation (#78):
 a signed statement, made by the release workflow itself, of which commit and
 which workflow run produced the artifact. The `.sha256` next to the tarball and
 the PKG only proves the download matches the release page; the attestation
@@ -377,15 +379,39 @@ proves where it came from. Check it with the GitHub CLI before you deploy:
 
 ```
 gh attestation verify wamux-<version>-x86_64-unknown-linux-musl.tar.gz -R LLawli/wamux
+gh attestation verify wamux_<version>_amd64.deb -R LLawli/wamux
+gh attestation verify wamux-<version>-aarch64-linux-android.tar.gz -R LLawli/wamux
+gh attestation verify wamux_<version>_aarch64.deb -R LLawli/wamux
 gh attestation verify wamux-<version>-macos-universal.pkg -R LLawli/wamux
 gh attestation verify oci://ghcr.io/llawli/wamux:<tag> -R LLawli/wamux
 ```
 
-Nothing is published unless both builds (linux and macOS) passed their gates,
+Nothing is published unless the three builds (linux, android and macOS) passed their gates,
 and the image is built only after that, so a tag that failed them has no image.
 The builds are `--locked` to the tested `Cargo.lock`, and the base images are
 pinned by digest. The PKG is attested but not signed by Apple (see
 [macOS](#macos-launchagent)).
+
+## Debian package
+
+Each release carries `wamux_<version>_amd64.deb`, built from the same static
+binary as the Linux tarball, so it runs on any Debian or Ubuntu with no
+dependencies:
+
+```sh
+curl -LO https://github.com/LLawli/wamux/releases/download/v<version>/wamux_<version>_amd64.deb
+sudo apt install ./wamux_<version>_amd64.deb
+systemctl --user enable --now wamux
+```
+
+It installs `/usr/bin/wamux`, the user unit
+`/usr/lib/systemd/user/wamux.service` (the unit of [Native (systemd)](#native-systemd)
+with `ExecStart=/usr/bin/wamux`) and the docs, licenses and
+`wamux.toml.example` under `/usr/share/doc/wamux/`. It starts nothing: the
+`systemctl --user` line is yours. The database and the socket then live in
+`~/.local/state/wamux/`, the spool in `~/.cache/wamux/`, as in the native
+setup. The package is attested but not signed, and there is no apt repository:
+upgrade by installing the newer file.
 
 ## Native (systemd)
 
