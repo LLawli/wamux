@@ -11,6 +11,10 @@ runtime). It multiplexes **many WhatsApp accounts in one process** and exposes a
 gRPC API over a **Unix domain socket only** (no TCP, no TLS). It is fully async
 on tokio.
 
+It is for developers who want WhatsApp in their own software, from any
+language, as one small local daemon instead of a library linked into every
+program.
+
 > ⚠️ **Unofficial.** This project is not affiliated with, endorsed by, or
 > connected to WhatsApp or Meta. It talks to WhatsApp through the unofficial
 > `whatsapp-rust` library. Using it may violate WhatsApp's Terms of Service and
@@ -28,7 +32,8 @@ client picks which account(s)' events it wants
 
 Every stateful or opinionated behavior (auth, permissions, per-user filtering,
 retries, timeouts, fallbacks, webhooks, reconnection policy, an HTTP API) lives
-in a **separate edge project, out of scope here**. The core hands the edge the
+in a **separate edge project, out of scope here** (see
+[Edges and clients](#edges-and-clients)). The core hands the edge the
 primitives it needs (the message id in `SendResult.key`, the send's
 `recipient_fanout`, `ReceiptEvent` and `ConnectionStateChanged` events) and lets
 the edge compose the policy.
@@ -60,6 +65,32 @@ experimentally). It keeps no message history.
   [Encryption at rest](docs/DEPLOYMENT.md#encryption-at-rest).
 - Network exposure, if ever needed, is a separate front (a reverse proxy or a
   second binary), never a flag flipped here.
+
+To report a vulnerability without a public issue, see
+[SECURITY.md](SECURITY.md).
+
+## Edges and clients
+
+The core has no auth, no HTTP and no policy on purpose (see above), so anything
+that serves users or the network needs an **edge** in front of it: a program
+that holds the socket, decides who may do what, and composes retries, webhooks
+and reconnection from the core's primitives. A trusted local process can also
+talk to the socket directly, as the services in the table below do. Public
+edges:
+
+- [wamux-http](https://github.com/LLawli/wamux-http): a WAHA-compatible HTTP
+  API with a web panel. Software written against
+  [WAHA](https://waha.devlike.pro/) (n8n's WAHA nodes, scripts calling
+  `/api/sendText`, webhook receivers) points at it and keeps working.
+- [wamux-easy-bots](https://github.com/LLawli/wamux-easy-bots): WhatsApp bots
+  without code (one declarative file per bot, with conditions, loops and state
+  per contact), or with scripts in any language whose output becomes the reply.
+
+**Your own client.** The API is the `.proto` files in
+[`crates/wamux-proto/proto/`](crates/wamux-proto/proto/): generate a client
+with your language's gRPC tooling and connect it to the Unix socket. The
+[snippet generator](https://llawli.github.io/wamux/) builds any request and
+shows it as Python, Go, Rust, JavaScript or grpcurl code.
 
 ## Footprint in production
 
@@ -182,43 +213,101 @@ Gatekeeper steps above, and the LaunchAgent, as untested by hand.
 [from another container](docs/DEPLOYMENT.md#docker-consumer-in-another-container),
 and the [failure modes](docs/DEPLOYMENT.md#troubleshooting).
 
-## Quick start (from source)
+## Hello world
+
+Pair an account and send a message with
+[grpcurl](https://github.com/fullstorydev/grpcurl), from any of the installs
+above. The QR step also needs `jq` and `qrencode`. The
+[snippet generator](https://llawli.github.io/wamux/) shows each of these
+requests in Python, Go, Rust and JavaScript too.
+
+**1. Start the daemon.** Docker, and a native or `.deb` install (a systemd
+user unit), already run it: set `SOCK` as below and go to step 2. Otherwise
+run it in the foreground with SQLite (no database server). The built-in
+defaults (`/run/wamux.sock`, `/var/cache/wamux`) assume a system install, so a
+regular user points the socket and the media spool at paths they can write:
 
 ```sh
-# 1. Postgres (Docker example; port 5433 is what the tests and CI expect)
-docker run -d --name wamux-pg \
-  -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux -e POSTGRES_DB=wamux \
-  -p 5433:5432 postgres:16
-
-# 2. Configure. The defaults (/run/wamux.sock, /var/cache/wamux) assume a
-#    system install; as a regular user, point the socket and the media spool
-#    somewhere you can write. Every key can be set in wamux.toml (copied from
-#    wamux.toml.example) or overridden by an env var, WAMUX_<UPPERCASE_KEY>.
-mkdir -p "$HOME/.local/state/wamux"
-export WAMUX_DATABASE_URL=postgres://wamux:wamux@localhost:5433/wamux
-export WAMUX_SOCKET_PATH="$HOME/.local/state/wamux/wamux.sock"
-export WAMUX_MEDIA_SPOOL_DIR="$HOME/.cache/wamux"
-#    For a serverless setup, skip step 1 and use instead:
-#      export WAMUX_DATABASE_URL="sqlite://$HOME/.local/state/wamux/wamux.db"
-#    (sqlite creates the file, not its directory: hence the mkdir above.)
-
-# 3. Build (also regenerates protobuf) and run
-cargo run
+SOCK="$HOME/.local/state/wamux/wamux.sock"   # Docker: SOCK=./run/wamux.sock
+mkdir -p -m 700 "$HOME/.local/state/wamux"    # the store holds every account's keys
+WAMUX_DATABASE_URL="sqlite://$HOME/.local/state/wamux/wamux.db" \
+WAMUX_SOCKET_PATH="$SOCK" WAMUX_MEDIA_SPOOL_DIR="$HOME/.cache/wamux" \
+  wamux                                       # from a checkout: cargo run
 ```
 
-The server binds the Unix socket from `socket_path` with mode `socket_mode`
-(default `0660`), then serves the gRPC API. It creates the socket's parent
-directory and the media spool if they are missing, and refuses to start if
-either cannot be written. It shuts down gracefully on SIGTERM/SIGINT and unlinks
-the socket on the way out.
-
-Poke the socket by hand (needs `grpcurl`). gRPC reflection, which lets it list
-and describe the services, is development tooling: it is on by default, and
-`enable_reflection = false` turns it off.
+For Postgres, set `WAMUX_DATABASE_URL=postgres://...` instead. The daemon binds
+the socket with mode `socket_mode` (default `0660`), shuts down on
+SIGTERM/SIGINT and unlinks the socket on the way out. Set `SOCK` the same way
+in every terminal the steps below use. grpcurl finds the services through gRPC reflection,
+which is on by default (`enable_reflection = false` turns it off; then pass
+`-import-path crates/wamux-proto/proto -proto <file>.proto` to each call):
 
 ```sh
-grpcurl -unix -plaintext "$HOME/.local/state/wamux/wamux.sock" list
+grpcurl -unix -plaintext "$SOCK" list
 ```
+
+**2. Create an account.** `externalRef` is your own name for it; every call
+below addresses the account by it (or by the `uuid` this returns).
+
+```sh
+grpcurl -unix -plaintext -d '{"externalRef":"hello"}' \
+  "$SOCK" wamux.v1.AccountService/CreateAccount
+```
+
+**3. Pair it with a QR.** `PairWithQr` is a server stream: it sends a new
+`qrCode` about every 20 seconds, which this loop draws in the terminal. On the
+phone, open WhatsApp's **Linked devices** and choose **Link a device**.
+
+```sh
+grpcurl -unix -plaintext -d '{"account":{"externalRef":"hello"}}' \
+  "$SOCK" wamux.v1.AccountService/PairWithQr \
+  | jq --unbuffered -r '.qrCode // tojson' \
+  | while read -r line; do
+      case "$line" in
+        "{"*) echo "$line" ;;                      # paired, or why pairing stopped
+        *) clear; qrencode -t ansiutf8 "$line" ;;  # a fresh QR to scan
+      esac
+    done
+```
+
+On success the stream prints `{"paired":{"jid":...}}` and ends, and the account
+stays connected. The codes run out after a few minutes: the stream then ends
+with `qrCodesExhausted`, and running the command again starts over. To link
+with a code instead of a QR, call `PairWithCode` with
+`{"account":{"externalRef":"hello"},"phoneNumber":"<number>"}` (digits only,
+with the country code) and type the `pairCode` it streams under **Link with
+phone number instead**.
+
+```sh
+grpcurl -unix -plaintext -d '{"externalRef":"hello"}' \
+  "$SOCK" wamux.v1.AccountService/GetAccountStatus      # "state": "CONNECTED"
+```
+
+The core never connects an account on its own: after a daemon restart, call
+`ConnectAccount` with `{"account":{"externalRef":"hello"}}`.
+
+**4. Watch events, then send a text.** In a terminal of its own, subscribe
+(`{"allAccounts":{}}` instead follows every account):
+
+```sh
+grpcurl -unix -plaintext -d '{"account":{"externalRef":"hello"}}' \
+  "$SOCK" wamux.v1.EventService/SubscribeEvents
+```
+
+In the terminal of steps 2 and 3, send to `<number>` (digits only, with the
+country code):
+
+```sh
+grpcurl -unix -plaintext \
+  -d '{"account":{"externalRef":"hello"},"to":{"value":"<number>@s.whatsapp.net"},"text":"hello from wamux"}' \
+  "$SOCK" wamux.v1.MessagingService/SendText
+```
+
+The answer (`SendResult`) only says the message was accepted. The event stream
+shows the rest: a `receipt` of type `RECEIPT_TYPE_DELIVERED` once it reaches the
+recipient's phone, and their reply as a `message` event (`message.sender`,
+`message.text`). Your own send also comes back there, with `key.fromMe` true.
+Append `| jq --unbuffered 'select(.message)'` to see messages only.
 
 ## Configuration
 
@@ -237,6 +326,10 @@ without an error.
 ## Development
 
 ```sh
+# Postgres for the tests (port 5433 is what the tests and CI expect)
+docker run -d --name wamux-pg \
+  -e POSTGRES_USER=wamux -e POSTGRES_PASSWORD=wamux -e POSTGRES_DB=wamux \
+  -p 5433:5432 postgres:16
 cargo build                                    # build + regenerate proto
 cargo fmt                                      # format (law)
 cargo clippy --workspace --all-targets -- -D warnings  # lint, zero tolerance
@@ -311,18 +404,23 @@ writes to WhatsApp is in
   Docker, container-to-container), who may open it (mode, group, peer
   allowlist), the media spool, the storage engines, encryption at rest and
   verifying a release.
-- `docs/upgrading/`: what each breaking change asks of an edge or an
-  operator, and how to migrate. With the comments in the `.proto` files, they
-  are where the core's promises to an edge are written down.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability privately.
+- [docs/STABILITY.md](docs/STABILITY.md): which parts of the gRPC contract are
+  stable while the version is `0.x`.
+- [docs/upgrading/README.md](docs/upgrading/README.md): upgrade guides by
+  version, with what each breaking change asks of an edge or an operator and
+  how to migrate. With the comments in the `.proto` files, they are where the
+  core's promises to an edge are written down.
 - [docs/PRD.md](docs/PRD.md): product requirements and the relay-pure rationale.
 - [docs/SPEC.md](docs/SPEC.md): the technical spec.
 - [docs/store-trait-defaults.md](docs/store-trait-defaults.md): which default
   bodies of the `wacore` store traits the engines keep, and why.
-- `docs/archive/crate-notes/`: a snapshot of the `whatsapp-rust` 0.6.0 API taken during
-  the port; historical, so check the pinned revision's source before relying
-  on it.
-- `CLAUDE.md` / `AGENTS.md`: contributor conventions (also consumed by coding
-  agents).
+- `docs/archive/crate-notes/`: a snapshot of the `whatsapp-rust` 0.6.0 API
+  taken during the port; historical, so check the pinned revision's source
+  before relying on it.
+- [CONTRIBUTING.md](CONTRIBUTING.md): the project rules and how to get the
+  gates green.
+- `CLAUDE.md` / `AGENTS.md`: the layer coding agents read on top of it.
 
 ## License
 
