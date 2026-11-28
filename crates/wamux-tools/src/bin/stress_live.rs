@@ -250,7 +250,7 @@ async fn wait_for_handshakes(mock: &MockWaServer, n: usize) {
 
 /// Background task: record the first delivery-receipt arrival time per message
 /// id. Only `delivered`/`read`/`played` count; a `sender` or `retry` receipt
-/// is not a delivery (CLAUDE.md).
+/// is not a delivery (CONTRIBUTING.md).
 fn spawn_receipt_collector(
     mut events: tokio::sync::broadcast::Receiver<pb::EventEnvelope>,
     receipts: ReceiptMap,

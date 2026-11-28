@@ -194,7 +194,7 @@ fn make_options(phone: &str) -> PairCodeOptions {
 }
 
 /// After pairing, wait for the reconnect then send a self-message (#108). A
-/// self-chat has no receipt and no fan-out (CLAUDE.md), so it is `accepted`.
+/// self-chat has no receipt and no fan-out (CONTRIBUTING.md), so it is `accepted`.
 /// If the reconnect does not come in time the send is skipped, not failed.
 async fn send_self_message(
     handle: &Arc<AccountHandle>,

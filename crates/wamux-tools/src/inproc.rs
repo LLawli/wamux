@@ -13,7 +13,7 @@ use wamux_types::{AccountRef, ExternalRef};
 use crate::live_env::EnvLookup;
 
 pub const DATABASE_URL_VAR: &str = "DATABASE_URL";
-/// The dockerized dev database from CLAUDE.md.
+/// The dockerized dev database from CONTRIBUTING.md.
 pub const DEFAULT_DATABASE_URL: &str = "postgres://wamux:wamux@localhost:5433/wamux";
 
 /// `DATABASE_URL`, else the dev database.

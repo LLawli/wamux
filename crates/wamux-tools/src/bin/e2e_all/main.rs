@@ -11,7 +11,7 @@
 //!      WAMUX_SOCKET_PATH
 //!
 //! Requires the daemon running with the account already paired. The core
-//! relays to the JID verbatim (no routing, CLAUDE.md); a send passes only when
+//! relays to the JID verbatim (no routing, CONTRIBUTING.md); a send passes only when
 //! its fan-out reached the phone and `delivered` arrives, never on the ack.
 
 mod inbound;

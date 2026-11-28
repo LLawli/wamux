@@ -78,7 +78,8 @@ pub struct Config {
     /// Log output format: "json" for structured one-line-per-event, anything
     /// else for the human-readable text formatter.
     pub log_format: String,
-    /// Register gRPC reflection (dev tooling).
+    /// Register gRPC reflection, on by default so `grpcurl` can list and
+    /// describe the services; set false to hide the schema from socket clients.
     pub enable_reflection: bool,
 }
 

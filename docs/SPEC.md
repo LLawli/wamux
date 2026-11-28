@@ -21,7 +21,7 @@ crates/
                        #   WamuxError with its tonic::Status mapping
   wamux/               # the daemon (lib + `wamux` bin)
     migrations/        # Postgres schema  } same number and name per change from 0005
-    migrations_sqlite/ # SQLite schema    } on; one older offset (CLAUDE.md, Migrations)
+    migrations_sqlite/ # SQLite schema    } on; one older offset (CONTRIBUTING.md, Migrations)
     src/
       main.rs          # entry point. No arguments serves: load config, refuse if
                        #   another daemon serves the socket, prepare the spool,

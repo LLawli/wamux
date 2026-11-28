@@ -62,7 +62,7 @@ jobs:
           POSTGRES_PASSWORD: wamux
           POSTGRES_DB: wamux
         # 5433 on the host matches the port the project uses everywhere
-        # (CLAUDE.md, the test default DSN), so no override is needed.
+        # (CONTRIBUTING.md, the test default DSN), so no override is needed.
         ports:
           - 5433:5432
         options: >-

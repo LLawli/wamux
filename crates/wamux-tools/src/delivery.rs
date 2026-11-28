@@ -1,4 +1,4 @@
-//! Judging a send by delivery, never by the ack (CLAUDE.md, #47, #64).
+//! Judging a send by delivery, never by the ack (CONTRIBUTING.md, #47, #64).
 //!
 //! A `SendResult` means the library took the message and the server ack means
 //! the server took the stanza; neither means a person's phone got it. A DM

@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let creator = wait_connected(&mut account, &acct, Duration::from_secs(30)).await?;
     println!("connected as {creator}");
     // A poll to self is the one case this validation cannot read: a note to
-    // self gets no `delivered` receipt and no second party to vote (CLAUDE.md,
+    // self gets no `delivered` receipt and no second party to vote (CONTRIBUTING.md,
     // issue #4). Refuse it rather than print an inconclusive run.
     refuse_own_number(&creator, &chat)?;
 
