@@ -41,6 +41,10 @@ stress = [
 # it refuses `turso://` with a clear error. Experimental: see docs/DEPLOYMENT.md.
 turso = ["dep:turso"]
 
+# Termux defaults (#277): the socket, spool and SQLite store default to paths
+# under Termux's install prefix. The Termux artifacts are built with it.
+termux = []
+
 [[bin]]
 name = "wamux"
 path = "src/main.rs"

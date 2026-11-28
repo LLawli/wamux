@@ -1,0 +1,6 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# Hands the service's output to the logger that termux-services ships, which
+# writes it under $PREFIX/var/log/sv/wamux/ (the convention of every
+# termux-services package). The path is absolute because runit starts this with
+# a minimal environment.
+exec "/data/data/com.termux/files/usr/share/termux-services/svlogger" "$@"

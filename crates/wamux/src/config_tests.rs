@@ -4,7 +4,10 @@
 use figment::Figment;
 use figment::providers::{Format, Serialized, Toml};
 
-use super::{Config, default_socket_path};
+use super::{
+    Config, PLATFORM, TERMUX_PREFIX, default_database_url, default_media_spool_dir,
+    default_socket_path, require_platform_settings,
+};
 
 #[test]
 fn store_key_file_is_unset_by_default() {
@@ -50,7 +53,10 @@ fn allowed_uids_come_from_toml() {
 #[test]
 fn media_spool_defaults() {
     let config = Config::default();
-    assert_eq!(config.media_spool_dir, "/var/cache/wamux");
+    // A Termux build keeps its spool under the Termux prefix (#277).
+    if !cfg!(feature = "termux") {
+        assert_eq!(config.media_spool_dir, "/var/cache/wamux");
+    }
     assert_eq!(config.media_spool_max_bytes, 2 * 1024 * 1024 * 1024);
 }
 
@@ -83,21 +89,136 @@ fn replay_max_event_bytes_defaults_to_256_kib() {
 /// is cleared at boot.
 #[test]
 fn socket_path_default_on_macos_is_var_run() {
-    assert_eq!(default_socket_path("macos"), "/var/run/wamux.sock");
+    assert_eq!(default_socket_path("macos"), Some("/var/run/wamux.sock"));
 }
 
 #[test]
 fn socket_path_default_elsewhere_is_run() {
-    assert_eq!(default_socket_path("linux"), "/run/wamux.sock");
-    assert_eq!(default_socket_path("freebsd"), "/run/wamux.sock");
+    assert_eq!(default_socket_path("linux"), Some("/run/wamux.sock"));
+    assert_eq!(default_socket_path("freebsd"), Some("/run/wamux.sock"));
 }
 
 #[test]
 fn config_default_socket_path_follows_the_running_os() {
     assert_eq!(
-        Config::default().socket_path,
-        default_socket_path(std::env::consts::OS)
+        Some(Config::default().socket_path.as_str()),
+        default_socket_path(PLATFORM)
     );
+}
+
+/// #277: Android has no writable `/run`, `/var/cache` or Postgres. A Termux
+/// build (the `termux` feature) puts everything under Termux's fixed prefix, so
+/// the daemon starts there with no `WAMUX_*` variable at all. Plain Android has
+/// no default: an app that embeds the daemon owns a different directory, and a
+/// guessed Termux path would be wrong there, so the config must name each one.
+#[test]
+fn termux_prefix_is_the_fixed_termux_install_prefix() {
+    assert_eq!(TERMUX_PREFIX, "/data/data/com.termux/files/usr");
+}
+
+#[test]
+fn platform_is_the_running_os_without_the_termux_feature() {
+    if cfg!(feature = "termux") {
+        assert_eq!(PLATFORM, "termux");
+    } else {
+        assert_eq!(PLATFORM, std::env::consts::OS);
+    }
+}
+
+#[test]
+fn termux_defaults_live_under_the_termux_prefix() {
+    assert_eq!(
+        default_socket_path("termux"),
+        Some("/data/data/com.termux/files/usr/var/run/wamux.sock")
+    );
+    assert_eq!(
+        default_media_spool_dir("termux"),
+        Some("/data/data/com.termux/files/usr/var/cache/wamux")
+    );
+    assert_eq!(
+        default_database_url("termux"),
+        Some("sqlite:///data/data/com.termux/files/usr/var/lib/wamux/wamux.db")
+    );
+}
+
+#[test]
+fn plain_android_has_no_path_defaults() {
+    assert_eq!(default_socket_path("android"), None);
+    assert_eq!(default_media_spool_dir("android"), None);
+    assert_eq!(default_database_url("android"), None);
+}
+
+#[test]
+fn default_media_spool_dir_elsewhere_is_var_cache() {
+    for os in ["linux", "macos", "freebsd"] {
+        assert_eq!(
+            default_media_spool_dir(os),
+            Some("/var/cache/wamux"),
+            "{os}"
+        );
+    }
+}
+
+#[test]
+fn default_database_url_elsewhere_is_postgres() {
+    for os in ["linux", "macos", "freebsd"] {
+        assert_eq!(
+            default_database_url(os),
+            Some("postgres://wamux:wamux@localhost:5432/wamux"),
+            "{os}"
+        );
+    }
+}
+
+#[test]
+fn config_defaults_follow_the_platform() {
+    let config = Config::default();
+    assert_eq!(
+        Some(config.media_spool_dir.as_str()),
+        default_media_spool_dir(PLATFORM)
+    );
+    assert_eq!(
+        Some(config.database_url.as_str()),
+        default_database_url(PLATFORM)
+    );
+}
+
+#[test]
+fn require_platform_settings_accepts_a_config_with_every_path() {
+    assert!(require_platform_settings(&Config::default()).is_ok());
+}
+
+#[test]
+fn require_platform_settings_names_every_empty_setting_in_order() {
+    let config = Config {
+        socket_path: String::new(),
+        media_spool_dir: String::new(),
+        database_url: String::new(),
+        ..Config::default()
+    };
+    let error = require_platform_settings(&config).expect_err("nothing is set");
+    assert_eq!(
+        error.variables,
+        [
+            "WAMUX_SOCKET_PATH",
+            "WAMUX_MEDIA_SPOOL_DIR",
+            "WAMUX_DATABASE_URL"
+        ]
+    );
+    let message = error.to_string();
+    for variable in &error.variables {
+        assert!(message.contains(variable), "{message}");
+    }
+}
+
+#[test]
+fn require_platform_settings_names_only_what_is_empty() {
+    let config = Config {
+        media_spool_dir: String::new(),
+        ..Config::default()
+    };
+    let error = require_platform_settings(&config).expect_err("the spool is unset");
+    assert_eq!(error.variables, ["WAMUX_MEDIA_SPOOL_DIR"]);
 }
 
 /// #239: after the accounts stop, the runtime waits at most this long for its

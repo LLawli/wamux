@@ -392,5 +392,7 @@ fn prepare_sqlite_file(database_url: &str) -> StoreResult<()> {
              separate connections and each would see a database of its own; use a file"
         )));
     }
+    connect::create_store_directory(options.get_filename())
+        .map_err(|e| StoreError::Connection(Box::new(e)))?;
     file_mode::secure_store_file(options.get_filename())
 }

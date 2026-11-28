@@ -82,27 +82,117 @@ pub struct Config {
     pub enable_reflection: bool,
 }
 
-/// The default socket path on `target_os` (a `std::env::consts::OS` value, #231).
+/// The platform the defaults below are picked for (#277): `"termux"` in a build
+/// with the `termux` feature, the running OS otherwise.
+///
+/// Termux is a feature and not a `target_os` because the Termux prefix belongs
+/// to the Termux app, not to Android: an APK that embeds the daemon runs on the
+/// same target in a different directory, and must not inherit these paths.
+pub const PLATFORM: &str = if cfg!(feature = "termux") {
+    "termux"
+} else {
+    std::env::consts::OS
+};
+
+/// Spells the Termux install prefix once, so the const and the literal defaults
+/// below (which `concat!` needs as literals) cannot drift apart.
+macro_rules! termux_prefix {
+    () => {
+        "/data/data/com.termux/files/usr"
+    };
+}
+
+/// Termux's install prefix. Every Termux package is built for exactly this
+/// path, so it is a constant of the platform and not something to discover.
+pub const TERMUX_PREFIX: &str = termux_prefix!();
+
+/// The default socket path on `platform` (#231, #277), `None` where there is none.
 ///
 /// macOS cannot create `/run`: the system volume is read-only, so a bind there
 /// fails at startup. `/var/run` is the same root-only runtime directory there
-/// and is cleared at boot, which is the lifetime a socket file wants.
-pub fn default_socket_path(target_os: &str) -> &'static str {
-    match target_os {
-        "macos" => "/var/run/wamux.sock",
-        _ => "/run/wamux.sock",
+/// and is cleared at boot, which is the lifetime a socket file wants. Android
+/// has no writable `/run` either: Termux keeps its runtime directory under its
+/// prefix, and plain Android has no default (see `PLATFORM`).
+pub fn default_socket_path(platform: &str) -> Option<&'static str> {
+    match platform {
+        "macos" => Some("/var/run/wamux.sock"),
+        "termux" => Some(concat!(termux_prefix!(), "/var/run/wamux.sock")),
+        "android" => None,
+        _ => Some("/run/wamux.sock"),
     }
+}
+
+/// The default media spool directory on `platform` (#277), `None` where there is none.
+///
+/// Android has no `/var/cache`; the Termux one lives under the prefix. Plain
+/// Android has no default because the directory an embedding app owns is not
+/// known here.
+pub fn default_media_spool_dir(platform: &str) -> Option<&'static str> {
+    match platform {
+        "termux" => Some(concat!(termux_prefix!(), "/var/cache/wamux")),
+        "android" => None,
+        _ => Some("/var/cache/wamux"),
+    }
+}
+
+/// The default store DSN on `platform` (#277), `None` where there is none.
+///
+/// A phone has no Postgres to point at, so Termux defaults to a SQLite file
+/// under the prefix. Plain Android has no default, for the reason above.
+pub fn default_database_url(platform: &str) -> Option<&'static str> {
+    match platform {
+        "termux" => Some(concat!(
+            "sqlite://",
+            termux_prefix!(),
+            "/var/lib/wamux/wamux.db"
+        )),
+        "android" => None,
+        _ => Some("postgres://wamux:wamux@localhost:5432/wamux"),
+    }
+}
+
+/// Settings this platform has no default for and the config left empty (#277).
+#[derive(Debug, thiserror::Error)]
+#[error("no default on this platform for {}: set them (environment or wamux.toml)", .variables.join(", "))]
+pub struct UnsetPlatformSettings {
+    /// The `WAMUX_*` variables to set: socket, spool, database, in that order.
+    pub variables: Vec<&'static str>,
+}
+
+/// `Err` naming every platform setting that is still empty after the load (#277).
+///
+/// A platform without a default leaves the field empty, which would otherwise
+/// surface later as an unrelated bind or open error.
+pub fn require_platform_settings(config: &Config) -> Result<(), UnsetPlatformSettings> {
+    let settings = [
+        ("WAMUX_SOCKET_PATH", &config.socket_path),
+        ("WAMUX_MEDIA_SPOOL_DIR", &config.media_spool_dir),
+        ("WAMUX_DATABASE_URL", &config.database_url),
+    ];
+    let variables: Vec<&'static str> = settings
+        .into_iter()
+        .filter(|(_, value)| value.is_empty())
+        .map(|(name, _)| name)
+        .collect();
+    if variables.is_empty() {
+        return Ok(());
+    }
+    Err(UnsetPlatformSettings { variables })
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            socket_path: default_socket_path(std::env::consts::OS).to_string(),
+            socket_path: default_socket_path(PLATFORM)
+                .unwrap_or_default()
+                .to_string(),
             socket_mode: 0o660,
             socket_group: None,
             allowed_uids: Vec::new(),
             allowed_gids: Vec::new(),
-            database_url: "postgres://wamux:wamux@localhost:5432/wamux".to_string(),
+            database_url: default_database_url(PLATFORM)
+                .unwrap_or_default()
+                .to_string(),
             db_max_connections: 16,
             store_key_file: None,
             event_ring_capacity: 256,
@@ -113,7 +203,9 @@ impl Default for Config {
             shutdown_grace_ms: 10_000,
             blocking_shutdown_timeout_ms: 5000,
             media_max_bytes: 100 * 1024 * 1024,
-            media_spool_dir: "/var/cache/wamux".to_string(),
+            media_spool_dir: default_media_spool_dir(PLATFORM)
+                .unwrap_or_default()
+                .to_string(),
             media_spool_max_bytes: 2 * 1024 * 1024 * 1024,
             log_level: "info,wamux=debug".to_string(),
             log_format: "text".to_string(),
@@ -133,6 +225,7 @@ impl Config {
             .merge(Toml::file(path))
             .merge(Env::prefixed("WAMUX_"))
             .extract()?;
+        require_platform_settings(&config)?;
         Ok(config)
     }
 }

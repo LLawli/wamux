@@ -1,9 +1,11 @@
 # wamux configuration. Copy to wamux.toml (or set WAMUX_CONFIG to a path).
 # Every key can be overridden by an env var: WAMUX_<UPPERCASE_KEY>.
 
-# Unix socket the gRPC server binds. The default is /run/wamux.sock, and
-# /var/run/wamux.sock on macOS (the system volume is read-only there, so /run
-# cannot exist). A per-user LaunchAgent sets WAMUX_SOCKET_PATH instead.
+# Unix socket the gRPC server binds. The default depends on the platform:
+# /run/wamux.sock, /var/run/wamux.sock on macOS (the system volume is read-only
+# there, so /run cannot exist), $PREFIX/var/run/wamux.sock in the Termux build
+# (docs/TERMUX.md). A plain Android build has no default and needs this set. A
+# per-user LaunchAgent sets WAMUX_SOCKET_PATH instead.
 socket_path = "/run/wamux.sock"
 # Socket file mode: 432 == 0o660. TOML also accepts 0o660; env vars need decimal.
 socket_mode = 432
@@ -25,6 +27,10 @@ socket_mode = 432
 #   turso://    EXPERIMENTAL single file through the native turso crate; needs a
 #                 binary built with `--features turso` (see docs/DEPLOYMENT.md).
 #                 A path only, no query string: turso://<path>
+# The default also depends on the platform: the postgres DSN below, or a SQLite
+# file under the Termux prefix in the Termux build. A plain Android build has no
+# default and needs this set. A sqlite:// file's directory is created (mode
+# 0700) when it is missing.
 # e.g. database_url = "sqlite:///var/lib/wamux/wamux.db"
 #      database_url = "turso:///var/lib/wamux/wamux.db"
 database_url = "postgres://wamux:wamux@localhost:5432/wamux"
@@ -76,6 +82,8 @@ media_max_bytes = 104857600
 # Where media transfers are staged on disk (#79). Created 0700 at startup; the
 # daemon refuses to start if it cannot be written. Files in it have no name, so
 # it always looks empty. Use a real disk, never a tmpfs or /tmp (that is RAM).
+# The default depends on the platform: /var/cache/wamux, or $PREFIX/var/cache/wamux
+# in the Termux build; a plain Android build has no default and needs this set.
 media_spool_dir = "/var/cache/wamux"
 
 # The most all transfers in flight may hold in the spool, summed (#79). Past it
