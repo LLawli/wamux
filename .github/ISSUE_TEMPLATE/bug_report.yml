@@ -1,0 +1,80 @@
+name: Bug report
+description: The daemon does something wrong, refuses something it should take, or crashes.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A vulnerability does not go here: report it privately, see [SECURITY.md](https://github.com/LLawli/wamux/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release tag, or the commit when built from source. A running daemon reports it in `version` from `wamux.v1.AdminService/Check`.
+      placeholder: v0.2.4
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux tarball (static musl)
+        - Debian package
+        - Container image (ghcr.io/llawli/wamux)
+        - macOS PKG
+        - Android (Termux)
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Store engine
+      options:
+        - PostgreSQL
+        - SQLite
+        - Turso (experimental, --features turso)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: |
+        What you called or what arrived, what you expected, and what happened instead.
+        For a send that seems lost: the `SendResult` (its `recipient_fanout` included), and whether a `ServerAckEvent` and a `delivered` receipt arrived.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The smallest sequence that shows it, as `grpcurl` calls or client code. Say if it needs a second account, a group, or a phone action.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Daemon log lines around the failure. The default level logs wamux at debug; `RUST_LOG=debug` adds the library's lines.
+        Redact before pasting: phone numbers and jids, pairing codes and QR strings, database URLs with passwords, `store_key_file` contents, anything read from the store.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: The text and logs above carry no secrets and no real phone numbers.
+          required: true

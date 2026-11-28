@@ -1,0 +1,37 @@
+name: Feature request
+description: A WhatsApp mechanism the core does not expose yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The core is a pure relay: it exposes raw WhatsApp mechanisms and nothing else. Retries, timeouts, fallbacks, recipient rewriting, filtering, auth, webhooks and any HTTP API belong in an edge, not here. See "The rule that overrides the others" in [CONTRIBUTING.md](https://github.com/LLawli/wamux/blob/main/CONTRIBUTING.md).
+        If what you need is policy on top of what the core already exposes, an edge such as [wamux-http](https://github.com/LLawli/wamux-http) or [wamux-easy-bots](https://github.com/LLawli/wamux-easy-bots) is the place to ask.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what stops you today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: mechanism
+    attributes:
+      label: The mechanism
+      description: What WhatsApp does that the core would relay (an action, a stanza, an event). If whatsapp-rust already has it, name the API.
+
+  - type: textarea
+    id: edge-check
+    attributes:
+      label: Why an edge cannot do it
+      description: Could an edge build this from the RPCs and events the core already exposes? If yes, it does not belong in the core; if no, say what is missing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What you use today, or other ways you considered.
