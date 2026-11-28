@@ -3,6 +3,7 @@
 
 use super::*;
 use whatsapp_rust::buffa::MessageField;
+use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::waproto::whatsapp::message::sticker_message::Audio;
 
 const CHAT: &str = "5511888888888@s.whatsapp.net";

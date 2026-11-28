@@ -14,6 +14,11 @@ repository = "https://github.com/LLawli/wamux"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
+[workspace.lints.clippy]
+# #280: the function-length rule, enforced. The ceiling is in clippy.toml; a
+# function past it names its reason with #[expect(clippy::too_many_lines)].
+too_many_lines = "warn"
+
 [workspace.dependencies]
 # gRPC / protobuf (one version of the transport stack, see scripts/check-dup-deps.sh)
 tonic = "0.14"

@@ -74,6 +74,17 @@ class CheckWireDebug(unittest.TestCase):
         result = self.check('// format!("{:?}", reason) was the old shape\n' + VARIANT_NAME)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_debug_spec_in_a_submodule_fails_even_in_a_variant_name(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / MAPPING
+            path.parent.mkdir(parents=True)
+            path.write_text("use x;\n" + VARIANT_NAME)
+            sub = path.parent / "event_mapping" / "message_projection.rs"
+            sub.parent.mkdir()
+            sub.write_text("fn a() {}\n" + VARIANT_NAME)
+            result = run_check(root)
+        self.assert_reported_failure(result, "event_mapping/message_projection.rs:3:")
+
     def test_a_missing_mapping_fails(self):
         self.assert_reported_failure(self.check(None), "not found")
 

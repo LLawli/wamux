@@ -5,6 +5,7 @@
 
 use super::*;
 use whatsapp_rust::buffa::MessageField;
+use whatsapp_rust::waproto::whatsapp as wa;
 
 const CHAT: &str = "120363041234567281@g.us";
 const MENTIONED: &str = "55117770281@s.whatsapp.net";

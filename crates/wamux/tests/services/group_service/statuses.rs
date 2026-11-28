@@ -118,6 +118,10 @@ async fn every_group_rpc_rejects_an_empty_or_malformed_group_jid() {
 }
 
 /// The 21 RPCs that take a `group_jid`, all with `bad` as the group.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per group-scoped RPC (21), a flat list so a missing RPC shows as a missing entry"
+)]
 async fn group_scoped_statuses(f: &mut Fixture, bad: &str) -> Vec<(&'static str, tonic::Status)> {
     let a = || Some(f.account.clone());
     let gref = || pb::GroupRef {

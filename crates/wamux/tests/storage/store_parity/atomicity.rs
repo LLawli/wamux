@@ -253,6 +253,10 @@ fn arc(s: &str) -> Arc<str> {
     Arc::from(s)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one all-or-nothing case per signal batch method, each the same reject-then-read pattern"
+)]
 async fn signal_batches_are_all_or_nothing(b: &dyn Backend) {
     let key = [1u8; 32];
     rejected(

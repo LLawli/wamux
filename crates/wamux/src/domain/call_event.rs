@@ -271,6 +271,9 @@ fn waiting_room_user(user: &WaitingRoomUser) -> pb::WaitingRoomUser {
 
 // Tests live in sibling files to keep each one under the 500-line rule.
 #[cfg(test)]
+#[path = "call_event_action_tests.rs"]
+mod action_tests;
+#[cfg(test)]
 #[path = "call_event_capture_tests.rs"]
 mod capture_tests;
 #[cfg(test)]

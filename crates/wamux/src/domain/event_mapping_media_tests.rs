@@ -1,8 +1,8 @@
-//! Media-descriptor mapping tests, split out of event_mapping_tests.rs, which
-//! is past the 500-line rule.
+//! Media-descriptor mapping tests.
 
 use super::tests::mapped_media;
 use super::*;
+use whatsapp_rust::waproto::whatsapp as wa;
 
 /// The descriptor's enum value for each sub-message's kind (#127).
 fn wire_of(kind: &str) -> pb::MediaType {

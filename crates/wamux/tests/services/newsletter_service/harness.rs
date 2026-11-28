@@ -94,6 +94,10 @@ pub fn option_hash(option: &str) -> Vec<u8> {
 
 /// Every one of the 10 RPCs, for `account`, with arguments valid in shape. The
 /// name is the proto RPC, so a failure says which one.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per NewsletterService RPC (10), a flat list so a missing RPC shows as a missing entry"
+)]
 pub async fn call_every_rpc(
     channels: &mut NewsletterServiceClient<Channel>,
     account: &pb::AccountRef,

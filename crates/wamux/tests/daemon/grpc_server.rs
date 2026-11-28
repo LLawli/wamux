@@ -177,6 +177,10 @@ async fn admin_health_and_metrics_over_socket() {
 /// the client-side reads (`ResolveLidPn`, `GetPushName`) need a live client and
 /// say so instead of lying with an empty answer.
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario over the socket: seed a pair in the store, then read it through each of the three RPCs"
+)]
 async fn lid_mappings_are_readable_over_socket() {
     let (channel, engine) = common::spawn_server().await;
     let mut accounts = AccountServiceClient::new(channel.clone());
@@ -266,6 +270,10 @@ async fn lid_mappings_are_readable_over_socket() {
 /// `InvalidArgument` before the account is looked up: a disconnected account
 /// is enough, and the edge hears what to fix rather than "not connected".
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario over the socket: the two wrong shapes of a status revoke and the answer each gets"
+)]
 async fn status_revoke_is_refused_on_the_wrong_shape_over_socket() {
     let (channel, engine) = common::spawn_server().await;
     let prefix = common::test_prefix("grpc_server", "status_revoke_is_refused");

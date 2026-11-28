@@ -156,6 +156,18 @@ async fn store_rotate_key(new_key_file: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The registry's buffers and limits, as the config sets them.
+fn registry_tuning(config: &Config) -> RegistryTuning {
+    RegistryTuning {
+        ring_capacity: config.event_ring_capacity,
+        broadcast_capacity: config.broadcast_capacity,
+        replay_max_event_bytes: config.replay_max_event_bytes,
+        max_connected_accounts: config.max_connected_accounts,
+        graceful_stop_timeout: Duration::from_millis(config.graceful_stop_timeout_ms),
+        ws_url_override: None,
+    }
+}
+
 async fn serve(config: Config) -> anyhow::Result<()> {
     init_tracing(&config);
 
@@ -188,15 +200,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         tracing::info!(key_id = %key_id_hex(&key.id()), "store encryption on");
     }
 
-    let tuning = RegistryTuning {
-        ring_capacity: config.event_ring_capacity,
-        broadcast_capacity: config.broadcast_capacity,
-        replay_max_event_bytes: config.replay_max_event_bytes,
-        max_connected_accounts: config.max_connected_accounts,
-        graceful_stop_timeout: Duration::from_millis(config.graceful_stop_timeout_ms),
-        ws_url_override: None,
-    };
-    let registry = Arc::new(AccountRegistry::new(engine, tuning));
+    let registry = Arc::new(AccountRegistry::new(engine, registry_tuning(&config)));
     registry
         .load_existing()
         .await

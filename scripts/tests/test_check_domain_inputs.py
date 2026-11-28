@@ -14,7 +14,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 CHECK = REPO / "scripts" / "check-domain-inputs.py"
 DOMAIN = "crates/wamux/src/domain"
 PENDING_FILES = {
-    f"{DOMAIN}/event_mapping.rs": "pub fn map_sent(\n    key: pb::MessageKey,\n    chat: &str,\n",
+    f"{DOMAIN}/event_mapping/message_projection.rs": "pub fn map_sent(\n    key: pb::MessageKey,\n    chat: &str,\n",
 }
 
 
@@ -97,9 +97,10 @@ class CheckDomainInputs(unittest.TestCase):
 
     def test_a_pending_file_that_no_longer_takes_one_fails(self):
         files = clean_tree()
-        files[f"{DOMAIN}/event_mapping.rs"] = "pub fn map_sent(key: &SentKey) {}\n"
+        files[f"{DOMAIN}/event_mapping/message_projection.rs"] = "pub fn map_sent(key: &SentKey) {}\n"
         self.assert_reported_failure(
-            self.check(files), f"{DOMAIN}/event_mapping.rs takes no pb:: input any more"
+            self.check(files),
+            f"{DOMAIN}/event_mapping/message_projection.rs takes no pb:: input any more",
         )
 
     def test_each_string_identifier_fails(self):

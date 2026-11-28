@@ -1,0 +1,10 @@
+# Clippy configuration for the whole workspace (clippy reads it from the root).
+
+# The ceiling `clippy::too_many_lines` enforces (#280), in lines of code: blank
+# lines and comments do not count. The style rule aims at functions of 4-20
+# lines; 60 is the number the code meets with every longer function named, each
+# carrying `#[expect(clippy::too_many_lines, reason = "...")]` that says why it
+# stays whole (a match over every library variant, a table of fixtures, a live
+# scenario read top to bottom). Measured on 2026-11-28: 501 functions over 20,
+# 206 over 30, 97 over 40, 34 over 60.
+too-many-lines-threshold = 60

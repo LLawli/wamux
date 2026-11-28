@@ -136,21 +136,28 @@ Rust. Never the other way around, and never edit generated code.
 
 Enforced by the gates: `cargo fmt` is law (do not discuss style) and
 `cargo clippy --workspace --all-targets -- -D warnings` must pass. Fix a lint
-rather than `#[allow(...)]` it; an allow needs a comment with the reason.
+rather than silence it; an `#[expect(...)]` or `#[allow(...)]` needs a reason.
 
 The size and naming rules below are enforced by `scripts/ci.sh`
 (`check-file-size.py`, clippy `too_many_lines`, `check-banned-names.py`), with
 named exceptions: each exception is listed where it is granted, with the reason
 it holds.
 
-- **Files under 500 lines.** One service or one cohesive unit per file.
+- **Files under 500 lines,** test files included. One service or one cohesive
+  unit per file. `scripts/check-file-size.py` fails at 500; an exception is
+  named in the script with its reason.
 - **Short functions,** 4-20 lines as the target: split a longer one. Clippy's
-  `too_many_lines` fails CI past its threshold; a function that reads better
-  whole (a large `match` over every event variant) carries an
-  `#[allow(clippy::too_many_lines)]` with a comment saying why.
+  `too_many_lines` fails CI over 60 lines of code (blank lines and comments do
+  not count; the ceiling is in `clippy.toml`). A function that must stay
+  longer, such as a `match` with one arm per library variant or a fixture
+  table, carries `#[expect(clippy::too_many_lines, reason = "...")]` saying why.
 - **Specific names,** unique enough to return under 5 grep hits. Names are the
   navigation API of a codebase read by agents, so `handle`, `process`, `data`,
-  `util` and `manager` are banned.
+  `util` and `manager` are banned as the name of a `fn`, `mod` or
+  `macro_rules!` (`scripts/check-banned-names.py`). A compound that says what
+  it does (`handle_receipt`, `AccountHandle`) is fine. Local bindings,
+  parameters and fields are not checked: the type beside them names what they
+  hold.
 - **Explicit types at every boundary:** annotate public function signatures
   and the request/response types that cross a module edge. Do not lean on
   inference for anything another module touches.

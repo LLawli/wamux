@@ -1,7 +1,6 @@
 //! #126: the event fields with a closed set of values reach the wire as the
 //! contract's enums, never as free strings or `Debug` output, and a value the
-//! library does not name keeps its original token or code. Its own file because
-//! `event_mapping_tests.rs` is already past the 500-line rule.
+//! library does not name keeps its original token or code.
 
 use super::*;
 use wacore::types::events::{

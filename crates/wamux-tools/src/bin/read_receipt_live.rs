@@ -46,6 +46,10 @@ use wamux_tools::socket_client::{account_ref, connect_uds, wait_connected};
 const PROMPT: &str = "wamux #20: responda esta mensagem para eu marcar como lida";
 
 #[tokio::main]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a live probe: one scripted scenario against a real account, read top to bottom"
+)]
 async fn main() -> anyhow::Result<ExitCode> {
     let external_ref: String = account_ref_from(&process_env)?;
     let socket: String = socket_path_from(&process_env)?;

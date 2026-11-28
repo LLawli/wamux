@@ -53,6 +53,10 @@ const PROBE_WINDOW: Duration = Duration::from_secs(30);
 type ReceiptMap = Arc<Mutex<HashMap<String, Instant>>>;
 
 #[tokio::main]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a live probe: one scripted scenario against a real account, read top to bottom"
+)]
 async fn main() -> anyhow::Result<ExitCode> {
     // The whole config first: nothing is opened until every variable is valid.
     let external_ref: String = account_ref_from(&process_env)?;

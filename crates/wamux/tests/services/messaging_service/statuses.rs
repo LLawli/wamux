@@ -66,6 +66,10 @@ async fn every_rpc_answers_invalid_argument_without_an_account_ref() {
 }
 
 /// The 15 RPCs that name a chat (`to` or `chat`), all with `chat` as it.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per chat-scoped RPC (15), a flat list so a missing RPC shows as a missing entry"
+)]
 async fn chat_scoped(f: &mut Fixture, chat: Option<pb::Jid>) -> Vec<(&'static str, tonic::Status)> {
     let a = f.a();
     let m = &mut f.messages;
@@ -263,6 +267,10 @@ async fn every_chat_rpc_rejects_a_missing_or_malformed_jid() {
 }
 
 /// The 5 calls that act on a message by its key, with `target` as the key.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per RPC that acts on a message key, a flat list so a missing RPC shows as a missing entry"
+)]
 async fn target_scoped(
     f: &mut Fixture,
     target: Option<pb::MessageKey>,

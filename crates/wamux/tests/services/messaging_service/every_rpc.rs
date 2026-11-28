@@ -26,6 +26,10 @@ pub async fn call_every_rpc(
     out
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per send RPC, a flat list so a missing RPC shows as a missing entry"
+)]
 async fn sends(m: &mut MessagingServiceClient<Channel>, account: &pb::AccountRef) -> Vec<Outcome> {
     let a = || Some(account.clone());
     let target = || Some(key(peer(), "3EB0TARGET"));
@@ -192,6 +196,10 @@ async fn chat_actions(
     ]
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one call per rich-message RPC, a flat list so a missing RPC shows as a missing entry"
+)]
 async fn rich(m: &mut MessagingServiceClient<Channel>, account: &pb::AccountRef) -> Vec<Outcome> {
     let a = || Some(account.clone());
     let reply = pb::SendInteractiveReplyRequest {

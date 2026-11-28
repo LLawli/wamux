@@ -1,11 +1,11 @@
 //! Issue #48 (upstream #1544): `Event::FavoritesUpdate` maps to the typed
-//! `FavoritesChanged`, not the Raw catch-all. Its own file because
-//! `event_mapping_tests.rs` is already past the 500-line rule.
+//! `FavoritesChanged`, not the Raw catch-all.
 
 use super::*;
 use wa::sync_action_value::FavoritesAction;
 use wa::sync_action_value::favorites_action::Favorite;
 use wacore::types::events::FavoritesUpdate;
+use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::proto::v1::event_envelope::Event as PbEvent;
 

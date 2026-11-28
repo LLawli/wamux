@@ -203,6 +203,15 @@ scripts/check-test-sleeps.py
 stage "no review provenance in comments"
 scripts/check-comment-provenance.py
 
+# #280: the code-style rules that had no check, and rotted. Every Rust file is
+# under 500 lines and no fn, mod or macro is named handle, process, data, util
+# or manager; each script names its exceptions with a reason. The function
+# ceiling is clippy's too_many_lines, run by the clippy stages above. Pure text
+# checks, so both modes run them.
+stage "code style: file size and banned names"
+scripts/check-file-size.py
+scripts/check-banned-names.py
+
 # #81: the docs described a daemon that no longer existed; a deleted file or a
 # renamed heading must fail here, not in a reader. Pure text check.
 stage "doc links"

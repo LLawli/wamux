@@ -43,6 +43,10 @@ fn live_event(seq: i64) -> pb::EventEnvelope {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "scale/stress test; run explicitly with --ignored"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one load scenario end to end (flood, probe, gap, latency); its steps share state and read in order"
+)]
 async fn no_head_of_line_blocking_and_gap_under_load() {
     let engine = common::test_engine_with(8).await;
 
