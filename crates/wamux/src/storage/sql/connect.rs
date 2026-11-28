@@ -1,6 +1,9 @@
 //! Connecting each driver. The pool options are per engine on purpose: the
 //! engines differ in what a pool may safely do (see `connect_sqlite`).
 
+use std::fs::DirBuilder;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -62,7 +65,9 @@ pub async fn connect_sqlite_with_batch_cap(
     database_url: &str,
     batch_cap: usize,
 ) -> Result<SqliteConn, sqlx::Error> {
-    let writer = writer_options(database_url)?.connect().await?;
+    let writer_options = writer_options(database_url)?;
+    create_store_directory(writer_options.get_filename())?;
+    let writer = writer_options.connect().await?;
     let readers = SqlitePoolOptions::new()
         .max_connections(SQLITE_READERS)
         .connect_with(reader_options(database_url)?)
@@ -89,4 +94,32 @@ fn reader_options(database_url: &str) -> Result<SqliteConnectOptions, sqlx::Erro
         .create_if_missing(false)
         .pragma("temp_store", "memory")
         .busy_timeout(BUSY_TIMEOUT))
+}
+
+/// Create the store file's directory, mode 0700, when it is missing (#277).
+///
+/// SQLite creates the file but not its parent, and a fresh Termux has no
+/// `var/lib/wamux`. 0700 because the store holds every account's identity keys,
+/// and the mode is set on the builder so it does not depend on the umask. A
+/// directory that already exists is the operator's and is not touched. In-memory
+/// databases name no file, so there is nothing to create.
+pub(super) fn create_store_directory(file: &Path) -> Result<(), sqlx::Error> {
+    let in_memory = file.as_os_str().is_empty() || file == Path::new(":memory:");
+    let Some(dir) = file
+        .parent()
+        .filter(|dir| !in_memory && !dir.as_os_str().is_empty())
+    else {
+        return Ok(());
+    };
+    if dir.is_dir() {
+        return Ok(());
+    }
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .map_err(|source| {
+            let message = format!("creating the store directory {}: {source}", dir.display());
+            sqlx::Error::Io(std::io::Error::new(source.kind(), message))
+        })
 }
