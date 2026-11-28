@@ -14,6 +14,24 @@ has to follow them.
 
 ### Added
 
+- **Android (Termux) and Debian packages** (issue #277). Each release now ships:
+  - `wamux-<version>-aarch64-linux-android.tar.gz` and
+    `wamux_<version>_aarch64.deb`: one aarch64 binary built for Android's own C
+    library (a static musl binary cannot resolve names on Android), checked by
+    `scripts/check-android-binary.py`. The `.deb` is for Termux and installs a
+    `termux-services` service, disabled until `sv-enable wamux`. See
+    `docs/TERMUX.md`, which also lists what Android does to a background process
+    and how to turn it off.
+  - `wamux_<version>_amd64.deb`: the static musl binary, a systemd user unit and
+    the docs, for Debian and Ubuntu (`docs/DEPLOYMENT.md`, "Debian package").
+  - A `termux` cargo feature: the socket, the media spool and the SQLite store
+    default to paths under Termux's install prefix, so the daemon starts there
+    with no `WAMUX_*` variable. A plain Android build (an app that embeds the
+    daemon) has no defaults for them and refuses to start until `socket_path`,
+    `media_spool_dir` and `database_url` are set, naming each unset variable.
+  - `scripts/release-tarball.sh` takes the target as its third argument, and CI
+    builds, checks and packages the Android artifacts on every pull request.
+
 - **Sound stickers** (issue #278): a sticker with a short audio clip that
   plays when tapped (`audioStickerMessage`).
   - Sending: a `SendMedia` header with `media_type` STICKER and the new
@@ -50,6 +68,11 @@ has to follow them.
   carries in `key.id`. No proto change.
 
 ### Changed
+
+- **SQLite creates the store's directory** (issue #277). Opening a `sqlite://`
+  database whose directory does not exist now creates it, mode `0700` (the
+  store holds every account's keys), instead of failing with "No such file or
+  directory". A directory that already exists is not touched.
 
 - **`DeleteMessage` for everyone refuses a key no revoke can be built from**
   (issue #276): `from_me = false` outside a group, or in a group without a
